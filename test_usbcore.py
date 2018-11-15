@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+
+import unittest
 from unittest import TestCase
 from usbcore import *
 
@@ -1602,8 +1605,5 @@ class TestUsbFsTx_longer(TestCase):
         )
 
 
-
-
-
-
-
+if __name__ == '__main__':
+    unittest.main()
