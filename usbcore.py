@@ -5,7 +5,7 @@ from migen.genlib.cdc import MultiReg
 ###############################################################################
 ###############################################################################
 ######
-###### Physical Layer Recieve Path
+###### Physical Layer Receive Path
 ######
 ###############################################################################
 ###############################################################################
@@ -70,7 +70,7 @@ class RxClockDataRecovery(Module):
         #######################################################################
         # Line State Recovery State Machine
         #
-        # The recieve path doesn't use a differential reciever.  Because of
+        # The receive path doesn't use a differential receiver.  Because of
         # this there is a chance that one of the differential pairs will appear 
         # to have changed to the new state while the other is still in the old 
         # state.  The following state machine detects transitions and waits an 
@@ -2249,7 +2249,7 @@ class UsbDevice(Module):
 
         # Wait for ACK handshake from the host. If a valid packet other than ACK
         # is received, then the transfer failed and must be rolled back.  If a
-        # valid IN token is recieved, then move to the SEND_RESPONSE state.
+        # valid IN token is received, then move to the SEND_RESPONSE state.
         in_pe.act(
             "WAIT_ACK",
             If(self.rx_pkt_end,
