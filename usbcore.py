@@ -1669,8 +1669,6 @@ class UsbOutCpuInterface(Module):
     """
     def __init__(
         self,
-        num_endpoints = 8,
-
         o_out_ep_ready,
 
         i_out_start,
@@ -1684,6 +1682,8 @@ class UsbOutCpuInterface(Module):
 
         i_out_commit,
         i_out_rollback,
+
+        num_endpoints = 8,
     ):
         self.clock_domains.usb_48 = ClockDomain()
 
@@ -1743,13 +1743,10 @@ class UsbOutCpuInterface(Module):
         self.data_toggle = Array([Signal(1) for i in range(num_endpoints)])
         self.stall = Array([Signal(1) for i in range(num_endpoints)])
 
-        self.sync += [
-            self.buf_rp.adr.eq(self.bus.adr[0:8]),
-
-            If(self.bus.adr[],
-
-            )
-        ]
+        #self.sync += [
+        #    self.buf_rp.adr.eq(self.bus.adr[0:8]),
+        #    )
+        #]
 
 
 
@@ -1801,11 +1798,11 @@ class UsbOutCpuInterface(Module):
                 # software setup a new transfer, clear transfer complete
                 If(self.usb_48_ready_strobe[ep],
                     self.usb_48_transfer_complete[ep].eq(0)
-                )
+                ),
 
                 # transfer complete implies software owns the buffer and the
                 # device is not ready for more data from the USB host.
-                o_out_ep_ready[ep].eq(~self.usb_48_transfer_complete[ep])
+                o_out_ep_ready[ep].eq(~self.usb_48_transfer_complete[ep]),
             ]
 
 
