@@ -21,10 +21,10 @@ class TestRxClockDataRecovery(TestCase):
                 out = "%d%d%d%d" % (dj, dk, se0, se1)
 
                 return {
-                    "1000" : "j",   
-                    "0100" : "k",   
-                    "0010" : "0",   
-                    "0001" : "1",   
+                    "1000" : "j",
+                    "0100" : "k",
+                    "0010" : "0",
+                    "0001" : "1",
                 }[out]
 
             else:
@@ -44,10 +44,10 @@ class TestRxClockDataRecovery(TestCase):
             self.assertEqual(out_seq, "0" + seq)
 
         test_sequences = [
-            "j", 
-            "k", 
-            "0", 
-            "1", 
+            "j",
+            "k",
+            "0",
+            "1",
             "jk01",
             "jjjkj0j1kjkkk0k10j0k00011j1k1011"
         ]
@@ -92,7 +92,7 @@ class TestRxNRZIDecoder(TestCase):
                 yield i_dk.eq(value[i] == 'k')
                 yield i_se0.eq(value[i] == '_')
                 yield
-                
+
                 o_valid = yield dut.o_valid
                 if o_valid:
                     data = yield dut.o_data
@@ -101,8 +101,8 @@ class TestRxNRZIDecoder(TestCase):
                     out = "%d%d" % (data, se0)
 
                     output += {
-                        "10" : "1",   
-                        "00" : "0",   
+                        "10" : "1",
+                        "00" : "0",
                         "01" : "_",
                         "11" : "_"
                     }[out]
@@ -115,49 +115,49 @@ class TestRxNRZIDecoder(TestCase):
                 value  = "jkkkjjkkjkjjkjjjk",
                 output = "10110101000100110"
             ),
-            
+
             dict(
                 # USB2 Spec, 7.1.9.1
                 valid  = "--------------------",
                 value  = "jkjkjkjkkkkkkkjjjjkk",
                 output = "10000000111111011101"
             ),
-            
+
             dict(
                 # USB2 Spec, 7.1.9.1 (added pipeline stalls)
                 valid  = "------___--------------",
                 value  = "jkjkjkkkkjkkkkkkkjjjjkk",
                 output = "10000000111111011101"
             ),
-            
+
             dict(
                 # USB2 Spec, 7.1.9.1 (added pipeline stalls 2)
                 valid  = "-------___-------------",
                 value  = "jkjkjkjjjjkkkkkkkjjjjkk",
                 output = "10000000111111011101"
             ),
-            
+
             dict(
                 # USB2 Spec, 7.1.9.1 (added pipeline stalls 3)
                 valid  = "-------___-------------",
                 value  = "jkjkjkjkkkkkkkkkkjjjjkk",
                 output = "10000000111111011101"
             ),
-            
+
             dict(
                 # USB2 Spec, 7.1.9.1 (added pipeline stalls, se0 glitch)
                 valid  = "-------___-------------",
                 value  = "jkjkjkj__kkkkkkkkjjjjkk",
                 output = "10000000111111011101"
             ),
-            
+
             dict(
                 # Captured setup packet
                 valid  = "------------------------------------",
                 value  = "jkjkjkjkkkjjjkkjkjkjkjkjkjkjkkjkj__j",
                 output = "100000001101101000000000000001000__1"
             ),
-            
+
             dict(
                 # Captured setup packet (pipeline stalls)
                 valid  = "-___----___--------___-___-___-___----------------___-___---",
@@ -199,7 +199,7 @@ class TestRxBitstuffRemover(TestCase):
                 yield i_data.eq(value[i] == '1')
                 yield i_se0.eq(value[i] == '_')
                 yield
-                
+
                 o_valid = yield dut.o_valid
                 bitstuff_error = yield dut.o_bitstuff_error
                 if o_valid or bitstuff_error:
@@ -209,9 +209,9 @@ class TestRxBitstuffRemover(TestCase):
                     out = "%d%d%d" % (data, se0, bitstuff_error)
 
                     output += {
-                        "100" : "1",   
-                        "101" : "e",   
-                        "000" : "0",   
+                        "100" : "1",
+                        "101" : "e",
+                        "000" : "0",
                         "010" : "_",
                         "110" : "_"
                     }[out]
@@ -387,16 +387,16 @@ class TestRxPacketDetect(TestCase):
                 yield i_data.eq(value[i] == '1')
                 yield i_se0.eq(value[i] == '_')
                 yield
-                
+
                 pkt_start = yield dut.o_pkt_start
                 pkt_end = yield dut.o_pkt_end
 
                 out = "%d%d" % (pkt_start, pkt_end)
 
                 output_1 += {
-                    "10" : "S",   
-                    "01" : "E",    
-                    "00" : " ",    
+                    "10" : "S",
+                    "01" : "E",
+                    "00" : " ",
                 }[out]
 
                 pkt_active = yield dut.o_pkt_active
@@ -404,8 +404,8 @@ class TestRxPacketDetect(TestCase):
                 out = "%d" % (pkt_active)
 
                 output_2 += {
-                    "1" : "-",   
-                    "0" : "_",   
+                    "1" : "-",
+                    "0" : "_",
                 }[out]
 
             return output_1, output_2
@@ -503,7 +503,7 @@ class TestRxShifter(TestCase):
                 yield i_valid.eq(valid[i] == '-')
                 yield i_data.eq(value[i] == '1')
                 yield
-                
+
                 o_full = yield dut.o_full
                 put = yield dut.o_put
 
@@ -514,8 +514,8 @@ class TestRxShifter(TestCase):
                 out = "%d" % (o_full)
 
                 full += {
-                    "1" : "-",   
-                    "0" : "_",   
+                    "1" : "-",
+                    "0" : "_",
                 }[out]
 
             return full, output
@@ -550,14 +550,14 @@ class TestRxCrcChecker(TestCase):
                 yield i_valid.eq(valid[i] == '-')
                 yield i_data.eq(value[i] == '1')
                 yield
-                
+
                 o_crc_good = yield dut.o_crc_good
 
                 out = "%d" % (o_crc_good)
 
                 crc_good += {
-                    "1" : "-",   
-                    "0" : "_",   
+                    "1" : "-",
+                    "0" : "_",
                 }[out]
 
             return crc_good
@@ -586,7 +586,7 @@ class TestRxCrcChecker(TestCase):
                 value       = "00000011100000000001011100000000",
                 crc_good    = "_____________-________________--"
             ),
-            
+
             dict(
             # USB2 token with bad CRC5 (1)
                 width       = 5,
@@ -622,7 +622,7 @@ class TestRxCrcChecker(TestCase):
                 value       = "00010011011011101000",
                 crc_good    = "______-_____________"
             ),
-            
+
             dict(
                 # Two USB2 token with good CRC5 (1,2)
                 width       = 5,
@@ -672,12 +672,12 @@ class TestRxCrcChecker(TestCase):
                 i_reset = Signal()
 
                 dut = RxCrcChecker(
-                    vector["width"], 
-                    vector["polynomial"], 
-                    vector["initial"], 
-                    vector["residual"], 
-                    i_valid, 
-                    i_data, 
+                    vector["width"],
+                    vector["polynomial"],
+                    vector["initial"],
+                    vector["residual"],
+                    i_valid,
+                    i_data,
                     i_reset)
 
                 run_simulation(dut, stim(**vector), vcd_name="vcd/test_crc_%d.vcd" % i)
@@ -702,7 +702,7 @@ class TestRxPacketDecode(TestCase):
                 yield i_se0.eq(value[i] == '_')
                 yield i_bitstuff_error.eq(value[i] == 'B')
                 yield
-                
+
                 o_pkt_start = yield dut.o_pkt_start
                 o_pkt_pid = yield dut.o_pkt_pid
                 o_pkt_token_payload = yield dut.o_pkt_token_payload
@@ -954,8 +954,8 @@ class TestRxPacketDecode(TestCase):
                 i_bitstuff_error = Signal()
 
                 dut = RxPacketDecode(
-                    i_valid, 
-                    i_data, 
+                    i_valid,
+                    i_data,
                     i_se0,
                     i_bitstuff_error)
 
@@ -1035,26 +1035,26 @@ class TestTxShifter(TestCase):
         def send(shift, put, data):
             output = ""
             for i in range(len(shift)):
-                do_put = put[i] == '-' 
+                do_put = put[i] == '-'
 
                 if do_put:
                     yield i_data.eq(data.pop(0))
 
                 yield i_put.eq(do_put)
                 yield i_shift.eq(shift[i] == '-')
-                
+
                 yield
-                
+
                 o_empty = yield dut.o_empty
                 o_data = yield dut.o_data
 
                 out = "%d%d" % (o_empty, o_data)
 
                 output += {
-                    "00" : "0",   
-                    "01" : "1",   
-                    "10" : " ",   
-                    "11" : " ",   
+                    "00" : "0",
+                    "01" : "1",
+                    "10" : " ",
+                    "11" : " ",
                 }[out]
 
             return output
@@ -1139,11 +1139,11 @@ def create_tester(dut_type, **def_args):
 
             for name in sigs.keys():
                 output += "%20s: %s\n" % (name, sigs[name])
-            
+
             return output
 
 
-        
+
         actual_output = dict()
 
         # setup stimulus
@@ -1157,7 +1157,7 @@ def create_tester(dut_type, **def_args):
                     yield self.inputs[input_signal].eq(decode(test_args[input_signal][i]))
 
                 yield
-               
+
                 for output_signal in self.outputs.keys():
                     actual_value = yield self.outputs[output_signal]
                     actual_output[output_signal] += str(actual_value)
@@ -1216,7 +1216,7 @@ class TestTxCrcGenerator(TestCase):
             i_reset     = "-_______________",
             i_data      = "  00000000000   ",
             i_shift     = "__-----------___",
-            o_crc       = "             222" 
+            o_crc       = "             222"
         )
 
     def test_token_crc5_zeroes_alt(self):
@@ -1228,7 +1228,7 @@ class TestTxCrcGenerator(TestCase):
             i_reset     = "-______________",
             i_data      = " 00000000000   ",
             i_shift     = "_-----------___",
-            o_crc       = "            222" 
+            o_crc       = "            222"
         )
 
     def test_token_crc5_nonzero(self):
@@ -1240,7 +1240,7 @@ class TestTxCrcGenerator(TestCase):
             i_reset     = "-______________",
             i_data      = " 01100000011   ",
             i_shift     = "_-----------___",
-            o_crc       = "            ccc" 
+            o_crc       = "            ccc"
         )
 
     def test_token_crc5_nonzero_stall(self):
@@ -1252,7 +1252,7 @@ class TestTxCrcGenerator(TestCase):
             i_reset     = "-_____________________________",
             i_data      = " 0   1   111101110111000011   ",
             i_shift     = "_-___-___-___-___-___------___",
-            o_crc       = "                           ccc" 
+            o_crc       = "                           ccc"
         )
 
     def test_data_crc16_nonzero(self):
@@ -1264,20 +1264,20 @@ class TestTxCrcGenerator(TestCase):
             i_reset     = "-________________________________________________________________________",
             i_data      = " 00000001 01100000 00000000 10000000 00000000 00000000 00000010 00000000 ",
             i_shift     = "_--------_--------_--------_--------_--------_--------_--------_--------_",
-            o_crc       =("                                                                        *", [0x94dd]) 
+            o_crc       =("                                                                        *", [0x94dd])
         )
 
 
 
 
-@module_tester(        
+@module_tester(
     TxBitstuffer,
 
     i_valid     = (1,),
     i_oe        = (1,),
     i_data      = (1,),
     i_se0       = (1,),
-   
+
     o_stall     = (1,),
     o_data      = (1,),
     o_se0       = (1,),
@@ -1290,7 +1290,7 @@ class TestTxBitstuffer(TestCase):
             i_oe    = "_--------__",
             i_data  = "_--___---__",
             i_se0   = "___________",
-   
+
             o_stall = "___________",
             o_data  = "__--___---_",
             o_se0   = "___________",
@@ -1303,7 +1303,7 @@ class TestTxBitstuffer(TestCase):
             i_oe    = "_--------__",
             i_data  = "_--___---__",
             i_se0   = "____--_____",
-   
+
             o_stall = "___________",
             o_data  = "__--___---_",
             o_se0   = "_____--____",
@@ -1316,7 +1316,7 @@ class TestTxBitstuffer(TestCase):
             i_oe    = "_---------__",
             i_data  = "_---------__",
             i_se0   = "____________",
-   
+
             o_stall = "_______-____",
             o_data  = "__------_--_",
             o_se0   = "____________",
@@ -1329,7 +1329,7 @@ class TestTxBitstuffer(TestCase):
             i_oe    = "_-----------------------------------",
             i_data  = "_-----------------------------------",
             i_se0   = "____________________________________",
-   
+
             o_stall = "______________________----__________",
             o_data  = "__------------------------____------",
             o_se0   = "____________________________________",
@@ -1342,7 +1342,7 @@ class TestTxBitstuffer(TestCase):
             i_oe    = "_-----------__",
             i_data  = "_---------____",
             i_se0   = "__________--__",
-   
+
             o_stall = "_______-______",
             o_data  = "__------_--___",
             o_se0   = "___________---",
@@ -1355,7 +1355,7 @@ class TestTxBitstuffer(TestCase):
             i_oe    = "_---------____",
             i_data  = "_-------______",
             i_se0   = "________--____",
-   
+
             o_stall = "_______-______",
             o_data  = "__------______",
             o_se0   = "_________-----",
@@ -1368,23 +1368,23 @@ class TestTxBitstuffer(TestCase):
             i_oe    = "_----------------",
             i_data  = "_----------------",
             i_se0   = "_________________",
-   
+
             o_stall = "_______-______-__",
             o_data  = "__------_------_-",
             o_se0   = "_________________",
             o_oe    = "__---------------",
         )
 
-        
 
-@module_tester(        
+
+@module_tester(
     TxNrziEncoder,
 
     i_valid     = (1,),
     i_oe        = (1,),
     i_data      = (1,),
     i_se0       = (1,),
-   
+
     o_usbp      = (1,),
     o_usbn      = (1,),
     o_oe        = (1,)
@@ -1396,7 +1396,7 @@ class TestTxNrziEncoder(TestCase):
             i_oe    = "_----------------------------------____",
             i_data  = "_0000000110110100000000000000100000____",
             i_se0   = "_________________________________--____",
-   
+
             o_oe    = "___-----------------------------------_",
             o_usbp  = "   _-_-_-___---__-_-_-_-_-_-_-__-_-__- ",
             o_usbn  = "   -_-_-_---___--_-_-_-_-_-_-_--_-____ ",
@@ -1408,7 +1408,7 @@ def data(data):
     Converts array of 8-bit ints into string of 0s and 1s.
     """
     output = ""
-    
+
     for b in data:
         output += ("{0:08b}".format(b))[::-1]
 
@@ -1464,7 +1464,7 @@ def line(data):
 
     return (oe, usbp, usbn)
 
-            
+
 
 def sync():
     return "kjkjkjkk"
@@ -1480,7 +1480,7 @@ def idle():
 
 
 class TestUsbFsTx_longer(TestCase):
-    def do(self, clocks, pid, token_payload, data, expected_output): 
+    def do(self, clocks, pid, token_payload, data, expected_output):
         self.output = ""
         name = self.id()
 
@@ -1506,7 +1506,7 @@ class TestUsbFsTx_longer(TestCase):
             o_data_get = yield dut.o_data_get
             if o_data_get:
                 data.pop(0)
-            
+
             oe = yield dut.o_oe
             usbp = yield dut.o_usbp
             usbn = yield dut.o_usbn
@@ -1526,14 +1526,14 @@ class TestUsbFsTx_longer(TestCase):
         # setup stimulus
         def stim():
             # initiate packet transmission
-            yield i_pid.eq(pid) 
-            yield i_token_payload.eq(token_payload) 
+            yield i_pid.eq(pid)
+            yield i_token_payload.eq(token_payload)
             yield i_pkt_start.eq(1)
 
             yield from clock()
-            
-            yield i_pid.eq(0) 
-            yield i_token_payload.eq(0) 
+
+            yield i_pid.eq(0)
+            yield i_token_payload.eq(0)
             yield i_pkt_start.eq(0)
 
             # pump the clock and collect output
@@ -1547,7 +1547,7 @@ class TestUsbFsTx_longer(TestCase):
                 yield from clock()
                 yield from clock()
                 yield from clock()
-               
+
 
 
             import re
@@ -1568,7 +1568,7 @@ class TestUsbFsTx_longer(TestCase):
             pid             = 2,
             token_payload   = 0,
             data            = [],
-            expected_output = nrzi(sync() + pid(2) + eop()) 
+            expected_output = nrzi(sync() + pid(2) + eop())
         )
 
     def test_empty_data(self):
@@ -1577,7 +1577,7 @@ class TestUsbFsTx_longer(TestCase):
             pid             = 3,
             token_payload   = 0,
             data            = [],
-            expected_output = nrzi(sync() + pid(3) + data([0x00, 0x00]) + eop()) 
+            expected_output = nrzi(sync() + pid(3) + data([0x00, 0x00]) + eop())
         )
 
     def test_setup_data(self):
@@ -1588,7 +1588,7 @@ class TestUsbFsTx_longer(TestCase):
             pid             = 3,
             token_payload   = 0,
             data            = payload,
-            expected_output = nrzi(sync() + pid(3) + data(payload) + crc16(payload) + eop()) 
+            expected_output = nrzi(sync() + pid(3) + data(payload) + crc16(payload) + eop())
         )
 
     def test_setup_data_bitstuff(self):
@@ -1598,12 +1598,12 @@ class TestUsbFsTx_longer(TestCase):
             pid             = 3,
             token_payload   = 0,
             data            = payload,
-            expected_output = nrzi(sync() + pid(3) + data([0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40]) + "111111000" +crc16(payload) + eop()) 
+            expected_output = nrzi(sync() + pid(3) + data([0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40]) + "111111000" +crc16(payload) + eop())
         )
 
-  
 
- 
+
+
 
 
 

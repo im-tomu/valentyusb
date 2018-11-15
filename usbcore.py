@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from migen import *
 from migen.genlib.cdc import MultiReg
 
@@ -26,7 +27,7 @@ class RxClockDataRecovery(Module):
 
     usbn_raw : Signal(1)
         Raw USB- input from the FPGA IOs, no need to synchronize.
-        
+
     Output Ports
     ------------
     Output ports are data members of the module. All output ports are flopped.
@@ -36,19 +37,19 @@ class RxClockDataRecovery(Module):
         Asserted for one clock when the output line state is ready to be sampled.
 
     line_state_dj : Signal(1)
-        Represents Full Speed J-state on the incoming USB data pair. 
+        Represents Full Speed J-state on the incoming USB data pair.
         Qualify with line_state_valid.
 
     line_state_dk : Signal(1)
-        Represents Full Speed K-state on the incoming USB data pair. 
+        Represents Full Speed K-state on the incoming USB data pair.
         Qualify with line_state_valid.
 
     line_state_se0 : Signal(1)
-        Represents SE0 on the incoming USB data pair. 
+        Represents SE0 on the incoming USB data pair.
         Qualify with line_state_valid.
 
     line_state_se1 : Signal(1)
-        Represents SE1 on the incoming USB data pair. 
+        Represents SE1 on the incoming USB data pair.
         Qualify with line_state_valid.
     """
     def __init__(self, usbp_raw, usbn_raw):
@@ -66,15 +67,15 @@ class RxClockDataRecovery(Module):
         self.specials += MultiReg(usbp_raw, usbp, n=3)
         self.specials += MultiReg(usbn_raw, usbn, n=3)
 
-        
+
         #######################################################################
         # Line State Recovery State Machine
         #
         # The receive path doesn't use a differential receiver.  Because of
-        # this there is a chance that one of the differential pairs will appear 
-        # to have changed to the new state while the other is still in the old 
-        # state.  The following state machine detects transitions and waits an 
-        # extra sampling clock before decoding the state on the differential 
+        # this there is a chance that one of the differential pairs will appear
+        # to have changed to the new state while the other is still in the old
+        # state.  The following state machine detects transitions and waits an
+        # extra sampling clock before decoding the state on the differential
         # pair.  This transition period # will only ever last for one clock as
         # long as there is no noise on the line.  If there is enough noise on
         # the line then the data may be corrupted and the packet will fail the
@@ -83,8 +84,8 @@ class RxClockDataRecovery(Module):
         self.submodules.lsr = lsr = FSM()
 
         dpair = Signal(2)
-        self.comb += dpair.eq(Cat(usbn, usbp))        
-        
+        self.comb += dpair.eq(Cat(usbn, usbp))
+
         # output signals for use by the clock recovery stage
         line_state_dt = Signal()
         line_state_dj = Signal()
@@ -92,15 +93,15 @@ class RxClockDataRecovery(Module):
         line_state_se0 = Signal()
         line_state_se1 = Signal()
 
-        # If we are in a transition state, then we can sample the pair and 
+        # If we are in a transition state, then we can sample the pair and
         # move to the next corresponding line state.
         lsr.act("DT",
             line_state_dt.eq(1),
             Case(dpair, {
-                0b10 : NextState("DJ"),    
-                0b01 : NextState("DK"),    
-                0b00 : NextState("SE0"),    
-                0b11 : NextState("SE1")    
+                0b10 : NextState("DJ"),
+                0b01 : NextState("DK"),
+                0b00 : NextState("SE0"),
+                0b11 : NextState("SE1")
             })
         )
 
@@ -110,20 +111,20 @@ class RxClockDataRecovery(Module):
         lsr.act("DK",  line_state_dk.eq(1),  If(dpair != 0b01, NextState("DT")))
         lsr.act("SE0", line_state_se0.eq(1), If(dpair != 0b00, NextState("DT")))
         lsr.act("SE1", line_state_se1.eq(1), If(dpair != 0b11, NextState("DT")))
-        
+
 
         #######################################################################
         # Clock and Data Recovery
-        #  
-        # The DT state from the line state recovery state machine is used to align to 
+        #
+        # The DT state from the line state recovery state machine is used to align to
         # transmit clock.  The line state is sampled in the middle of the bit time.
-        # 
+        #
         # Example of signal relationships
         # -------------------------------
         # line_state        DT  DJ  DJ  DJ  DT  DK  DK  DK  DK  DK  DK  DT  DJ  DJ  DJ
         # line_state_valid  ________----____________----____________----________----____
         # bit_phase         0   0   1   2   3   0   1   2   3   0   1   2   0   1   2
-        # 
+        #
 
         line_state_phase = Signal(2)
 
@@ -144,7 +145,7 @@ class RxClockDataRecovery(Module):
                 self.line_state_valid.eq(0),
             ).Else(
                 # keep tracking the clock by incrementing the phase
-                line_state_phase.eq(line_state_phase + 1)    
+                line_state_phase.eq(line_state_phase + 1)
             ),
 
             # flop all the outputs to help with timing
@@ -154,15 +155,15 @@ class RxClockDataRecovery(Module):
             self.line_state_se1.eq(line_state_se1),
         ]
 
-        
-        
+
+
 class RxNRZIDecoder(Module):
     """
     NRZI decode
-  
+
     In order to ensure there are enough bit transitions for a receiver to recover
     the clock usb uses NRZI encoding.  This module processes the incoming
-    dj, dk, se0, and valid signals and decodes them to data values.  It 
+    dj, dk, se0, and valid signals and decodes them to data values.  It
     also pipelines the se0 signal and passes it through unmodified.
 
     https://www.pjrc.com/teensy/beta/usb20.pdf, USB2 Spec, 7.1.8
@@ -187,11 +188,11 @@ class RxNRZIDecoder(Module):
     i_se0 : Signal(1)
         Indicates the bus is currently in a SE0 state.
         Qualified by valid.
-        
+
     Output Ports
     ------------
     Output ports are data members of the module. All output ports are flopped.
-    
+
     o_valid : Signal(1)
         Qualifier for all of the output signals. Indicates one bit of valid
         data is present on the outputs.
@@ -208,11 +209,11 @@ class RxNRZIDecoder(Module):
     def __init__(self, i_valid, i_dj, i_dk, i_se0):
         o_valid = Signal(1)
         o_data = Signal(1)
-       
+
 
         # simple state machine decodes a JK transition as a '0' and no
         # transition as a '1'.  se0 is ignored.
-        self.submodules.nrzi = nrzi = FSM()    
+        self.submodules.nrzi = nrzi = FSM()
 
         nrzi.act("DJ",
             If(i_valid,
@@ -240,7 +241,7 @@ class RxNRZIDecoder(Module):
             )
         )
 
-        
+
         # pass all of the outputs through a pipe stage
         self.o_valid = Signal(1)
         self.o_data = Signal(1)
@@ -251,13 +252,13 @@ class RxNRZIDecoder(Module):
             self.o_valid.eq(o_valid),
             self.o_data.eq(o_data),
         ]
-        
 
-        
+
+
 class RxBitstuffRemover(Module):
     """
     Bitstuff Removal
-  
+
     Long sequences of 1's would cause the receiver to lose it's lock on the
     transmitter's clock.  USB solves this with bitstuffing.  A '0' is stuffed
     after every 6 consecutive 1's.  This extra bit is required to recover the
@@ -265,11 +266,11 @@ class RxBitstuffRemover(Module):
 
     https://www.pjrc.com/teensy/beta/usb20.pdf, USB2 Spec, 7.1.9
     https://en.wikipedia.org/wiki/Bit_stuffing
-     
+
     Input Ports
     ------------
     Input ports are passed in via the constructor.
-    
+
     i_valid : Signal(1)
         Qualifier for all of the output signals. Indicates one bit of valid
         data is present on the outputs.
@@ -285,7 +286,7 @@ class RxBitstuffRemover(Module):
     Output Ports
     ------------
     Output ports are data members of the module. All output ports are flopped.
-    
+
     o_valid : Signal(1)
         Qualifier for all of the output signals. Indicates one bit of valid
         data is present on the outputs.
@@ -308,10 +309,10 @@ class RxBitstuffRemover(Module):
 
     def __init__(self, i_valid, i_data, i_se0):
         # This statemachine recognizes sequences of 6 bits and drops the 7th bit.
-        # The fsm implements a counter in a series of several states.  This is 
+        # The fsm implements a counter in a series of several states.  This is
         # intentional to help absolutely minimize the levels of logic used.
-        self.submodules.stuff = stuff = FSM()    
-        
+        self.submodules.stuff = stuff = FSM()
+
         drop_bit = Signal(1)
 
         for i in range(6):
@@ -326,7 +327,7 @@ class RxBitstuffRemover(Module):
                     )
                 )
             )
-            
+
         stuff.act("D6",
             drop_bit.eq(1),
             If(i_valid,
@@ -334,7 +335,7 @@ class RxBitstuffRemover(Module):
                 NextState("D0")
             )
         )
-        
+
         # pass all of the outputs through a pipe stage
         self.o_valid = Signal(1)
         self.o_data = Signal(1)
@@ -347,13 +348,13 @@ class RxBitstuffRemover(Module):
             self.o_data.eq(i_data),
             self.o_bitstuff_error.eq(drop_bit & i_data)
         ]
-        
 
-        
+
+
 class RxPacketDetect(Module):
     """
     Packet Detection
-  
+
     Full Speed packets begin with the following sequence:
 
         KJKJKJKK
@@ -363,12 +364,12 @@ class RxPacketDetect(Module):
         00000001
 
     The bus idle condition is signaled with the J state:
-      
+
         JJJJJJJJ
 
     This translates to a series of '1's since there are no transitions.  Given
     this information, it is easy to detect the beginning of a packet by looking
-    for 00000001. 
+    for 00000001.
 
     The end of a packet is even easier to detect.  The end of a packet is
     signaled with two SE0 and one J.  We can just look for the first SE0 to
@@ -377,11 +378,11 @@ class RxPacketDetect(Module):
     Packet detection can occur in parallel with bitstuff removal.
 
     https://www.pjrc.com/teensy/beta/usb20.pdf, USB2 Spec, 7.1.10
-     
+
     Input Ports
     ------------
     Input ports are passed in via the constructor.
-    
+
     i_valid : Signal(1)
         Qualifier for all of the output signals. Indicates one bit of valid
         data is present on the outputs.
@@ -409,8 +410,8 @@ class RxPacketDetect(Module):
     """
 
     def __init__(self, i_valid, i_data, i_se0):
-        self.submodules.pkt = pkt = FSM()    
-        
+        self.submodules.pkt = pkt = FSM()
+
         pkt_start = Signal()
         pkt_active = Signal()
         pkt_end = Signal()
@@ -427,7 +428,7 @@ class RxPacketDetect(Module):
                     )
                 )
             )
-            
+
         pkt.act("D5",
             If(i_valid,
                 # once we get a '1', the packet is active
@@ -438,7 +439,7 @@ class RxPacketDetect(Module):
                 )
             )
         )
-            
+
         pkt.act("PKT_ACTIVE",
             pkt_active.eq(1),
             If(i_valid,
@@ -450,7 +451,7 @@ class RxPacketDetect(Module):
                 )
             )
         )
-        
+
         # pass all of the outputs through a pipe stage
         self.o_pkt_start = Signal(1)
         self.o_pkt_active = Signal(1)
@@ -462,14 +463,14 @@ class RxPacketDetect(Module):
             self.o_pkt_end.eq(pkt_end),
         ]
 
-        
+
 
 class RxShifter(Module):
     """
     Shifter
 
     A shifter is responsible for shifting in serial bits and presenting them
-    as parallel data.  The shifter knows how many bits to shift and has 
+    as parallel data.  The shifter knows how many bits to shift and has
     controls for resetting the shifter.
 
     Parameters
@@ -509,7 +510,7 @@ class RxShifter(Module):
     """
     def __init__(self, width, i_valid, i_data, i_reset):
         # Instead of using a counter, we will use a sentinal bit in the shift
-        # register to indicate when it is full.  
+        # register to indicate when it is full.
         shift_reg = Signal(width + 1)
 
         self.o_full = Signal(1)
@@ -525,7 +526,7 @@ class RxShifter(Module):
                 shift_reg.eq(1 << width),
             ).Else(
                 If(i_valid & ~self.o_full,
-                    shift_reg.eq(Cat(shift_reg[1:width + 1], i_data))      
+                    shift_reg.eq(Cat(shift_reg[1:width + 1], i_data))
                 )
             )
         ]
@@ -569,11 +570,11 @@ class RxCrcChecker(Module):
 
     residual : int
         Value of the CRC register if all the shifted in data is valid.
-     
+
     Input Ports
     ------------
     Input ports are passed in via the constructor.
-    
+
     i_valid : Signal(1)
         Qualifier for input data and se0 signals. Indicates one bit of valid
         data is present on those inputs.
@@ -626,13 +627,13 @@ class RxCrcChecker(Module):
         self.sync += [
             self.o_crc_good.eq(crc_good)
         ]
-        
+
 
 
 class RxPacketDecode(Module):
     """
     Packet Decode
-  
+
     Packet decode is responsible for extracting packet fields and emitting
     control signals that indicate which portion of the packet is currently
     being received.
@@ -640,11 +641,11 @@ class RxPacketDecode(Module):
     Packet decode must occur after bitstuff removal.
 
     https://www.pjrc.com/teensy/beta/usb20.pdf
-     
+
     Input Ports
     ------------
     Input ports are passed in via the constructor.
-    
+
     i_valid : Signal(1)
         Qualifier for input data and se0 signals. Indicates one bit of valid
         data is present on those inputs.
@@ -671,14 +672,14 @@ class RxPacketDecode(Module):
         Packet PID. Qualified with o_pkt_pid_good.
 
     o_pkt_token_payload : Signal(11)
-        Token packet payload.  
+        Token packet payload.
 
     o_pkt_data : Signal(8)
         From data packet payload. Qualified by o_pkt_data_put.
 
     o_pkt_data_put : Signal(1)
         Asserted for one clock to indicate o_pkt_data is valid.
-        
+
     o_pkt_good : Signal(1)
         Indicates the packet has passed all relevant consistency checks for
         PID, CRC5, CRC16, and Bitstuff Errors.
@@ -699,7 +700,7 @@ class RxPacketDecode(Module):
         data = Signal()
         se0 = Signal()
         bitstuff_error = Signal()
-        
+
         self.sync += [
             valid.eq(i_valid),
             data.eq(i_data),
@@ -708,8 +709,8 @@ class RxPacketDecode(Module):
         ]
 
         self.submodules.pkt_det = pkt_det = RxPacketDetect(
-            i_valid, 
-            i_data, 
+            i_valid,
+            i_data,
             i_se0
         )
 
@@ -735,7 +736,7 @@ class RxPacketDecode(Module):
         )
 
         # check that the PID is consistent
-        pid_good = pid_shifter.o_output[0:4] == (pid_shifter.o_output[4:8] ^ 0b1111) 
+        pid_good = pid_shifter.o_output[0:4] == (pid_shifter.o_output[4:8] ^ 0b1111)
 
         # decode packet format type
         pkt_is_handshake = pid_shifter.o_output[0:2] == 0b10
@@ -760,14 +761,14 @@ class RxPacketDecode(Module):
         # check token payload crc5
         #
         self.submodules.tok_crc5 = tok_crc5 = RxCrcChecker(
-            width = 5, 
-            polynomial = 0b00101, 
-            initial = 0b11111, 
-            residual = 0b01100, 
-            i_valid = pid_shifter.o_full & valid & ~tok_shifter.o_full, 
-            i_data = data, 
+            width = 5,
+            polynomial = 0b00101,
+            initial = 0b11111,
+            residual = 0b01100,
+            i_valid = pid_shifter.o_full & valid & ~tok_shifter.o_full,
+            i_data = data,
             i_reset = pkt_start
-        ) 
+        )
 
 
         #######################################################################
@@ -793,14 +794,14 @@ class RxPacketDecode(Module):
         # check data payload crc16
         #
         self.submodules.data_crc16 = data_crc16 = RxCrcChecker(
-            width       = 16, 
-            polynomial  = 0b1000000000000101, 
-            initial     = 0b1111111111111111, 
-            residual    = 0b1000000000001101, 
-            i_valid     = pid_shifter.o_full & valid & pkt_active, 
-            i_data      = data, 
+            width       = 16,
+            polynomial  = 0b1000000000000101,
+            initial     = 0b1111111111111111,
+            residual    = 0b1000000000001101,
+            i_valid     = pid_shifter.o_full & valid & pkt_active,
+            i_data      = data,
             i_reset     = pkt_start
-        ) 
+        )
 
 
         #######################################################################
@@ -808,7 +809,7 @@ class RxPacketDecode(Module):
         # track bitstuff errors within the packet
         #
         pkt_bitstuff_good = Signal()
-        
+
         # record bitstuff error
         self.sync += [
             If(pkt_start,
@@ -828,12 +829,12 @@ class RxPacketDecode(Module):
 
         self.sync += [
             If(self.o_pkt_data_put,
-                crc16_good.eq(data_crc16.o_crc_good)    
+                crc16_good.eq(data_crc16.o_crc_good)
             )
         ]
 
         pkt_good = (
-            pid_good & 
+            pid_good &
             pkt_bitstuff_good &
             (tok_crc5.o_crc_good | ~pkt_is_token) &
             (crc16_good | ~pkt_is_data)
@@ -888,14 +889,14 @@ class UsbFsRx(Module):
         Packet PID. Qualified with o_pkt_pid_good.
 
     o_pkt_token_payload : Signal(11)
-        Token packet payload.  
+        Token packet payload.
 
     o_pkt_data : Signal(8)
         From data packet payload. Qualified by o_pkt_data_put.
 
     o_pkt_data_put : Signal(1)
         Asserted for one clock to indicate o_pkt_data is valid.
-        
+
     o_pkt_good : Signal(1)
         Indicates the packet has passed all relevant consistency checks for
         PID, CRC5, CRC16, and Bitstuff Errors.
@@ -905,7 +906,7 @@ class UsbFsRx(Module):
     """
     def __init__(self, usbp_raw, usbn_raw):
         self.submodules.clock_data_recovery = clock_data_recovery = RxClockDataRecovery(
-            usbp_raw, 
+            usbp_raw,
             usbn_raw
         )
 
@@ -915,22 +916,22 @@ class UsbFsRx(Module):
         self.raw_se0 = clock_data_recovery.line_state_se0
 
         self.submodules.nrzi = nrzi = RxNRZIDecoder(
-            i_valid = clock_data_recovery.line_state_valid, 
-            i_dj = clock_data_recovery.line_state_dj, 
-            i_dk = clock_data_recovery.line_state_dk, 
+            i_valid = clock_data_recovery.line_state_valid,
+            i_dj = clock_data_recovery.line_state_dj,
+            i_dk = clock_data_recovery.line_state_dk,
             i_se0 = clock_data_recovery.line_state_se0
         )
 
         self.submodules.bitstuff = bitstuff = RxBitstuffRemover(
-            i_valid = nrzi.o_valid, 
-            i_data = nrzi.o_data, 
+            i_valid = nrzi.o_valid,
+            i_data = nrzi.o_data,
             i_se0 = nrzi.o_se0
         )
 
         self.submodules.decode = decode = RxPacketDecode(
-            i_valid = bitstuff.o_valid, 
-            i_data = bitstuff.o_data, 
-            i_se0 = bitstuff.o_se0, 
+            i_valid = bitstuff.o_valid,
+            i_data = bitstuff.o_data,
+            i_se0 = bitstuff.o_se0,
             i_bitstuff_error = bitstuff.o_bitstuff_error
         )
 
@@ -984,7 +985,7 @@ class UsbFsRx(Module):
 
 class TxShifter(Module):
     """
-    Transmit Shifter 
+    Transmit Shifter
 
     TxShifter accepts parallel data and shifts it out serially.
 
@@ -1021,7 +1022,7 @@ class TxShifter(Module):
     """
     def __init__(self, width, i_put, i_shift, i_data):
         shifter = Signal(width + 1)
-        
+
         self.sync += [
             If(i_put,
                 shifter.eq(Cat(i_data[0:width], C(1, 1)))
@@ -1069,7 +1070,7 @@ class TxCrcGenerator(Module):
 
     initial : int
         Initial value of the CRC register before data starts shifting in.
-     
+
     Input Ports
     ------------
     Input ports are passed in via the constructor.
@@ -1080,7 +1081,7 @@ class TxCrcGenerator(Module):
     i_data : Signal(1)
         Serial data to generate CRC for.
         Qualified by i_shift.
-    
+
     i_shift : Signal(1)
         Qualifier for input data and se0 signals. Indicates one bit of valid
         data is present on those inputs.
@@ -1131,22 +1132,22 @@ class TxCrcGenerator(Module):
 class TxBitstuffer(Module):
     """
     Bitstuff Insertion
-  
+
     Long sequences of 1's would cause the receiver to lose it's lock on the
     transmitter's clock.  USB solves this with bitstuffing.  A '0' is stuffed
     after every 6 consecutive 1's.
 
     The TxBitstuffer is the only component in the transmit pipeline that can
-    delay transmission of serial data.  It is therefore responsible for 
+    delay transmission of serial data.  It is therefore responsible for
     generating the bit_strobe signal that keeps the pipe moving forward.
 
     https://www.pjrc.com/teensy/beta/usb20.pdf, USB2 Spec, 7.1.9
     https://en.wikipedia.org/wiki/Bit_stuffing
-     
+
     Input Ports
     ------------
     Input ports are passed in via the constructor.
-    
+
     i_valid : Signal(1)
         Qualifies oe, data, and se0.
 
@@ -1181,8 +1182,8 @@ class TxBitstuffer(Module):
         Indicates that the transmit pipeline should be driving USB.
     """
     def __init__(self, i_valid, i_oe, i_data, i_se0):
-        self.submodules.stuff = stuff = FSM()    
-        
+        self.submodules.stuff = stuff = FSM()
+
         stuff_bit = Signal(1)
 
         for i in range(6):
@@ -1197,17 +1198,17 @@ class TxBitstuffer(Module):
                     )
                 )
             )
-            
+
         stuff.act("D6",
             # stuff a bit
             stuff_bit.eq(1),
 
             If(i_valid,
-                # Reset the bitstuff counter 
+                # Reset the bitstuff counter
                 NextState("D0")
             )
         )
-        
+
         self.o_stall = Signal(1)
         self.o_valid = Signal(1)
         self.o_data = Signal(1)
@@ -1227,15 +1228,15 @@ class TxBitstuffer(Module):
             )
         ]
 
-     
-        
+
+
 class TxNrziEncoder(Module):
     """
     NRZI Encode
-  
+
     In order to ensure there are enough bit transitions for a receiver to recover
     the clock usb uses NRZI encoding.  This module processes the incoming
-    dj, dk, se0, and valid signals and decodes them to data values.  It 
+    dj, dk, se0, and valid signals and decodes them to data values.  It
     also pipelines the se0 signal and passes it through unmodified.
 
     https://www.pjrc.com/teensy/beta/usb20.pdf, USB2 Spec, 7.1.8
@@ -1244,7 +1245,7 @@ class TxNrziEncoder(Module):
     Input Ports
     -----------
     Input ports are passed in via the constructor.
-    
+
     i_valid : Signal(1)
         Qualifies oe, data, and se0.
 
@@ -1257,11 +1258,11 @@ class TxNrziEncoder(Module):
     i_se0 : Signal(1)
         Overrides value of o_data when asserted and indicates that SE0 state
         shoulde be asserted on USB. Qualified by o_valid.
-        
+
     Output Ports
     ------------
     Output ports are data members of the module. All output ports are flopped.
-    
+
     o_usbp : Signal(1)
         Raw value of USB+ line.
 
@@ -1274,7 +1275,7 @@ class TxNrziEncoder(Module):
 
     def __init__(self, i_valid, i_oe, i_data, i_se0):
         # Simple state machine to perform NRZI encoding.
-        self.submodules.nrzi = nrzi = FSM()    
+        self.submodules.nrzi = nrzi = FSM()
 
         usbp = Signal(1)
         usbn = Signal(1)
@@ -1366,8 +1367,8 @@ class TxNrziEncoder(Module):
             self.o_usbn.eq(usbn),
         ]
 
-     
-        
+
+
 class UsbFsTx(Module):
     """
     Input Ports
@@ -1392,13 +1393,13 @@ class UsbFsTx(Module):
 
     i_data_payload : Signal(8)
         Data to transmit for a data packet. Qualified by i_data_valid.
-        
+
     Output Ports
     ------------
     Output ports are data members of the module. All output ports are flopped.
-    
+
     o_data_get : Signal(1)
-        Asserted for one clock to indicate the data present on i_data_payload 
+        Asserted for one clock to indicate the data present on i_data_payload
         has been consumed.
 
     o_pkt_end : Signal(1)
@@ -1415,18 +1416,18 @@ class UsbFsTx(Module):
     """
 
     def __init__(self, i_bit_strobe, i_pkt_start, i_pid, i_token_payload, i_data_valid, i_data_payload):
-        self.submodules.pkt = pkt = FSM()  
+        self.submodules.pkt = pkt = FSM()
 
         bitstuff_stall = Signal(1)
         pkt_active = Signal(1)
         shift_sync = Signal(1)
         shift_pid = Signal(1)
-        shift_eop = Signal(1)  
+        shift_eop = Signal(1)
         load_data = Signal(1)
         shift_data = Signal(1)
         load_crc16 = Signal(1)
-        shift_crc16 = Signal(1)  
-        pkt_end = Signal(1)  
+        shift_crc16 = Signal(1)
+        pkt_end = Signal(1)
 
         # the sync shifter is responsible for generating the packet sync.
         # it shifts out its data first.
@@ -1460,7 +1461,7 @@ class UsbFsTx(Module):
             width      = 16,
             polynomial = 0b1000000000000101,
             initial    = 0b1111111111111111,
-            
+
             i_reset = i_pkt_start,
             i_data = data_shifter.o_data,
             i_shift = shift_data & i_bit_strobe & ~bitstuff_stall
@@ -1488,7 +1489,7 @@ class UsbFsTx(Module):
                 NextState("SYNC")
             )
         )
-            
+
         pkt.act("SYNC",
             pkt_active.eq(1),
             shift_sync.eq(1),
@@ -1497,7 +1498,7 @@ class UsbFsTx(Module):
                 NextState("PID")
             )
         )
-            
+
         pkt.act("PID",
             pkt_active.eq(1),
             shift_pid.eq(1),
@@ -1516,7 +1517,7 @@ class UsbFsTx(Module):
                 )
             )
         )
-            
+
         pkt.act("DATA",
             pkt_active.eq(1),
             shift_data.eq(1),
@@ -1530,7 +1531,7 @@ class UsbFsTx(Module):
                 )
             )
         )
-            
+
         pkt.act("CRC16",
             pkt_active.eq(1),
             shift_crc16.eq(1),
@@ -1539,7 +1540,7 @@ class UsbFsTx(Module):
                 NextState("EOP_0")
             )
         )
-            
+
         pkt.act("EOP_0",
             pkt_active.eq(1),
             shift_eop.eq(1),
@@ -1548,7 +1549,7 @@ class UsbFsTx(Module):
                 NextState("EOP_1")
             )
         )
-            
+
         pkt.act("EOP_1",
             pkt_active.eq(1),
             shift_eop.eq(1),
@@ -1559,7 +1560,7 @@ class UsbFsTx(Module):
             )
         )
 
-        
+
         ######################################################################
         #
         # Mux shifter output together and select based on pkt state machine.
@@ -1568,7 +1569,7 @@ class UsbFsTx(Module):
         mux_stuff_data = Signal(1)
         mux_stuff_se0 = Signal(1)
         mux_stuff_bit_strobe = Signal(1)
-        
+
         self.sync += [
             mux_stuff_bit_strobe.eq(i_bit_strobe),
 
@@ -1599,7 +1600,7 @@ class UsbFsTx(Module):
             )
         ]
 
-        
+
         ######################################################################
         #
         # Bitstuff as necessary
@@ -1615,7 +1616,7 @@ class UsbFsTx(Module):
              bitstuff_stall.eq(bitstuffer.o_stall)
         ]
 
-        
+
         ######################################################################
         #
         # NRZI Encoding
@@ -1627,7 +1628,7 @@ class UsbFsTx(Module):
             i_se0 = bitstuffer.o_se0
         )
 
-        
+
         ######################################################################
         #
         # Flop all outputs
@@ -1667,13 +1668,13 @@ class UsbOutCpuInterface(Module):
     Implements the SW->HW interface for UsbDevice.
     """
     def __init__(
-        self, 
+        self,
         num_endpoints = 8,
 
         o_out_ep_ready,
 
         i_out_start,
-        
+
         i_out_tok_pid,
         i_out_ep_num,
         i_out_data_pid,
@@ -1691,7 +1692,7 @@ class UsbOutCpuInterface(Module):
         #
         # Register Space
         #   [10:7] - Endpoint Number
-        #   [6:1]  - Reserved Zero 
+        #   [6:1]  - Reserved Zero
         #   [0]    - 1: OUT_EPx_CTRL, 0: OUT_EPx_STAT
         #
         # Buffer Space
@@ -1729,7 +1730,7 @@ class UsbOutCpuInterface(Module):
         #######################################################################
         self.bus = bus = wishbone.Interface()
         self.buf_rp = buf.get_port(write_capable=False)
-        
+
 
         # sys clock domain status registers
         self.transfer_length = Array([Signal(7) for i in range(num_endpoints)])
@@ -1749,7 +1750,7 @@ class UsbOutCpuInterface(Module):
 
             )
         ]
-        
+
 
 
         #######################################################################
@@ -1769,7 +1770,7 @@ class UsbOutCpuInterface(Module):
         self.usb_48_buffer = Array([Signal(1) for i in range(num_endpoints)])
         self.usb_48_data_toggle = Array([Signal(1) for i in range(num_endpoints)])
         self.usb_48_stall = Array([Signal(1) for i in range(num_endpoints)])
-        
+
         ### endpoint status and control
         buf_put_offset = Signal(7)
         for ep in range(num_endpoints):
@@ -1778,8 +1779,8 @@ class UsbOutCpuInterface(Module):
                     # reset the buffer pointer on new packet
                     If(i_out_start,
                         buf_put_offset.eq(0),
-                        
-                    # reset the buffer pointer on packet replay or when the 
+
+                    # reset the buffer pointer on packet replay or when the
                     # data toggle doesn't match the expected value
                     ).Elif(i_out_rollback | (i_out_commit & (i_out_data_pid[3] != usb_48_data_toggle[ep])),
                         buf_put_offset.eq(0)
@@ -1790,7 +1791,7 @@ class UsbOutCpuInterface(Module):
                         self.usb_48_transfer_complete[ep].eq(1),
                         self.usb_48_token_type[ep].eq(i_out_tok_pid == 0b1101)
                     ),
-    
+
                     # update out buffer write pointer
                     If(i_out_data_put and not self.usb_48_transfer_complete[ep],
                         buf_put_offset.eq(buf_put_offset + 1)
@@ -1802,7 +1803,7 @@ class UsbOutCpuInterface(Module):
                     self.usb_48_transfer_complete[ep].eq(0)
                 )
 
-                # transfer complete implies software owns the buffer and the 
+                # transfer complete implies software owns the buffer and the
                 # device is not ready for more data from the USB host.
                 o_out_ep_ready[ep].eq(~self.usb_48_transfer_complete[ep])
             ]
@@ -1819,9 +1820,9 @@ class UsbOutCpuInterface(Module):
             self.buf_wp.adr.eq(Cat(buf_put_offset[2:6], self.usb_48_buffer, i_out_ep_num)),
             self.buf_wp.dat_w.eq(Cat(i_out_data, i_out_data, i_out_data, i_out_data)),
             self.buf_wp.we(Cat(
-                (buf_put_offset[0:2] == 0) & out_we, 
-                (buf_put_offset[0:2] == 1) & out_we, 
-                (buf_put_offset[0:2] == 2) & out_we, 
+                (buf_put_offset[0:2] == 0) & out_we,
+                (buf_put_offset[0:2] == 1) & out_we,
+                (buf_put_offset[0:2] == 2) & out_we,
                 (buf_put_offset[0:2] == 3) & out_we)),
         ]
 
@@ -1838,7 +1839,7 @@ class UsbDevice(Module):
         #### out ep interface
         #######################################################################
         #######################################################################
-        # 
+        #
         self.o_out_ep_num = Signal(4)
         self.o_out_data_pid = Signal(4)
         self.i_out_ep_ready = Array([Signal() for i in range(16)])
@@ -1847,7 +1848,7 @@ class UsbDevice(Module):
         self.o_out_rollback = Signal()
         self.o_out_data = Signal(8)
         self.o_out_data_put = Signal()
-        
+
         #######################################################################
         #######################################################################
         #### in ep interface
@@ -1863,7 +1864,7 @@ class UsbDevice(Module):
         self.i_in_data = Signal(8)
         self.i_in_data_valid = Signal()
         self.o_in_data_get = Signal()
-       
+
 
 
 
@@ -1875,7 +1876,7 @@ class UsbDevice(Module):
         self.out_tx_pid = Signal(4)
 
 
-                         
+
 
         # usb_tx interface
         self.tx_pkt_start   = Signal(1)
@@ -1902,7 +1903,7 @@ class UsbDevice(Module):
         #######################################################################
         #######################################################################
         self.comb += [
-            If(self.usb_tx_en, 
+            If(self.usb_tx_en,
                 self.usb_p_rx.eq(0b1),
                 self.usb_n_rx.eq(0b0)
             ).Else(
@@ -1935,7 +1936,7 @@ class UsbDevice(Module):
             )
         ]
 
-        
+
         #######################################################################
         #######################################################################
         #### RX Phy
@@ -1945,7 +1946,7 @@ class UsbDevice(Module):
             usbp_raw = self.usb_p_rx,
             usbn_raw = self.usb_n_rx
         )
-        
+
         ## usb_rx interface
         self.rx_pkt_start   = usbfsrx.o_pkt_start
         self.rx_pkt_end     = usbfsrx.o_pkt_end
@@ -1961,7 +1962,7 @@ class UsbDevice(Module):
             self.rx_addr.eq(usbfsrx.o_pkt_token_payload[4:11]),
             self.rx_endp.eq(usbfsrx.o_pkt_token_payload[0:4])
         ]
-       
+
 
         #######################################################################
         #######################################################################
@@ -1986,7 +1987,7 @@ class UsbDevice(Module):
         ]
 
 
-        
+
         #######################################################################
         #######################################################################
         #### Protocol Engine to TX Phy Mux
@@ -2004,12 +2005,12 @@ class UsbDevice(Module):
         #######################################################################
         #######################################################################
         #
-        # Protocol Engine Support is responsible for basic functionality 
+        # Protocol Engine Support is responsible for basic functionality
         # required by both the OUT and IN protocol engines.  This includes
         # keeping track of the current transfer address, endpoint number,
         # and start of frame tokens.
         #
-        
+
         # USB Packet IDs
         PID_OUT     = 0b0001
         PID_IN      = 0b1001
@@ -2027,7 +2028,7 @@ class UsbDevice(Module):
         # Endpoint number from most recent token
         self.current_endp = Signal(4)
 
-        # True if most recent packet received was a valid token directed 
+        # True if most recent packet received was a valid token directed
         # towards this usb device
         self.valid_request_token_pre = Signal(1)
         self.valid_request_token = Signal(1)
@@ -2037,7 +2038,7 @@ class UsbDevice(Module):
                 (self.rx_pkt_valid == 0b1) and
                 (self.rx_pid[0:2] == 0b01) and
                 (self.rx_addr == self.dev_addr)
-            )    
+            )
         ]
 
         self.sync += [
@@ -2054,18 +2055,18 @@ class UsbDevice(Module):
         #### OUT Protocol Engine
         #######################################################################
         #######################################################################
-        # 
+        #
         # The OUT Protocol Engine handles data transfer OUT from the USB host
         # to the USB device. It is responsible for acknowledging valid data
         # from the host by sending ACK handshake packets, applying back-pressure
         # with NAK handshake packets, and rejecting bad data packets by not
         # responding.
         #
-        # The OUT PE explicitly does not check data toggle.  It is up to the 
+        # The OUT PE explicitly does not check data toggle.  It is up to the
         # endpoint buffer to track, handle, and reset data toggle.
         #
 
-        # Qualify with rx_pkt_end to indicate a valid out token has 
+        # Qualify with rx_pkt_end to indicate a valid out token has
         # been received.
         self.valid_out_token = Signal(1)
 
@@ -2087,7 +2088,7 @@ class UsbDevice(Module):
             self.valid_data_packet.eq(
                 self.rx_pkt_valid == 0b1 and
                 self.rx_pid[0:3] == 0b011
-            )       
+            )
         ]
 
 
@@ -2100,8 +2101,8 @@ class UsbDevice(Module):
         # immediately whether any coming data needs to be NAKed or not.
         out_pe.act(
             "WAIT_OUT_TOK",
-            If(self.rx_pkt_end & self.valid_out_token, 
-                If(self.out_ep_ready[self.current_endp], 
+            If(self.rx_pkt_end & self.valid_out_token,
+                If(self.out_ep_ready[self.current_endp],
                     NextState("WAIT_DATA")
                 ).Else(
                     NextState("WAIT_DATA_NAK")
@@ -2117,20 +2118,20 @@ class UsbDevice(Module):
             If(self.rx_pkt_end,
                 If(self.valid_data_packet,
                     NextState("SEND_ACK")
-                    
+
                 ).Else(
                     NextState("ROLLBACK")
                 ),
-                
+
                 NextState("WAIT_OUT_TOK")
             )
         )
 
         out_pe.act(
             "SEND_ACK",
-            self.out_tx_pid.eq(PID_ACK), 
+            self.out_tx_pid.eq(PID_ACK),
             self.out_tx_pkt_start.eq(1),
-            self.o_out_commit.eq(1), 
+            self.o_out_commit.eq(1),
             NextState("WAIT_OUT_TOK")
         )
 
@@ -2142,14 +2143,14 @@ class UsbDevice(Module):
                 If(self.valid_data_packet,
                     NextState("SEND_NAK")
                 ).Else(
-                    NextState("ROLLBACK")    
+                    NextState("ROLLBACK")
                 )
             )
         )
 
         out_pe.act(
             "SEND_NAK",
-            self.out_tx_pid.eq(PID_NAK), 
+            self.out_tx_pid.eq(PID_NAK),
             self.out_tx_pkt_start.eq(1),
             NextState("ROLLBACK")
         )
@@ -2174,10 +2175,10 @@ class UsbDevice(Module):
         #### IN Protocol Engine
         #######################################################################
         #######################################################################
-        # 
+        #
         # The IN Protocol Engine handles data transfer IN to the USB host
         # from the USB device. It is responsible for sending data packets to the
-        # host in response to IN tokens, applying back-pressure with NAK 
+        # host in response to IN tokens, applying back-pressure with NAK
         # handshake packets, and replaying data packets that were not yet
         # acknowledged by the host
         #
@@ -2185,7 +2186,7 @@ class UsbDevice(Module):
         # to the endpoint buffer to set the data toggle to the IN PE.
         #
 
-        # Qualify with rx_pkt_end to indicate a valid in token has 
+        # Qualify with rx_pkt_end to indicate a valid in token has
         # been received.
         self.valid_in_token = Signal(1)
 
@@ -2204,7 +2205,7 @@ class UsbDevice(Module):
             self.valid_ack_packet.eq(
                 self.rx_pkt_valid == 0b1 and
                 self.rx_pid == PID_ACK
-            )       
+            )
         ]
 
 
@@ -2216,7 +2217,7 @@ class UsbDevice(Module):
         # Wait for a valid IN token then move on to the next state.
         in_pe.act(
             "WAIT_IN_TOK",
-            If(self.rx_pkt_end & self.valid_in_token, 
+            If(self.rx_pkt_end & self.valid_in_token,
                 NextState("SEND_RESPONSE")
             )
         )
@@ -2224,7 +2225,7 @@ class UsbDevice(Module):
         # Decide whether a data packet or NAK handshake should be sent.
         in_pe.act(
             "SEND_RESPONSE",
-            If(self.in_ep_ready[self.current_endp], 
+            If(self.in_ep_ready[self.current_endp],
                 NextState("SEND_DATA")
             ).Else(
                 NextState("SEND_NAK")
@@ -2234,7 +2235,7 @@ class UsbDevice(Module):
         # Send a data packet to the host
         in_pe.act(
             "SEND_DATA",
-            self.in_tx_pid.eq(Mux(self.in_ep_data_pid[self.current_endp], PID_DATA1, PID_DATA0)), 
+            self.in_tx_pid.eq(Mux(self.in_ep_data_pid[self.current_endp], PID_DATA1, PID_DATA0)),
             self.in_tx_pkt_start.eq(1),
             NextState("WAIT_ACK")
         )
@@ -2265,4 +2266,4 @@ class UsbDevice(Module):
                 )
             )
         )
-        
+
