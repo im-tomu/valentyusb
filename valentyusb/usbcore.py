@@ -2099,7 +2099,7 @@ class UsbDevice(Module):
         out_pe.act(
             "WAIT_OUT_TOK",
             If(self.rx_pkt_end & self.valid_out_token,
-                If(self.out_ep_ready[self.current_endp],
+                If(self.i_out_ep_ready[self.current_endp],
                     NextState("WAIT_DATA")
                 ).Else(
                     NextState("WAIT_DATA_NAK")
@@ -2154,17 +2154,16 @@ class UsbDevice(Module):
 
         out_pe.act(
             "ROLLBACK",
-            self.out_rollback.eq(1),
+            self.o_out_rollback.eq(1),
             NextState("WAIT_OUT_TOK")
         )
 
         self.sync += [
-            self.o_out_start.eq(out_start),
-
-            If(out_start,
-                self.o_out_ep_num.eq(self.current_endp),
-                self.o_out_data_pid.eq()
-            )
+#            self.o_out_start.eq(out_start),
+#            If(out_start,
+#                self.o_out_ep_num.eq(self.current_endp),
+#                self.o_out_data_pid.eq()
+#            )
         ]
 
         #######################################################################
@@ -2222,7 +2221,7 @@ class UsbDevice(Module):
         # Decide whether a data packet or NAK handshake should be sent.
         in_pe.act(
             "SEND_RESPONSE",
-            If(self.in_ep_ready[self.current_endp],
+            If(self.i_in_ep_ready[self.current_endp],
                 NextState("SEND_DATA")
             ).Else(
                 NextState("SEND_NAK")
@@ -2232,7 +2231,7 @@ class UsbDevice(Module):
         # Send a data packet to the host
         in_pe.act(
             "SEND_DATA",
-            self.in_tx_pid.eq(Mux(self.in_ep_data_pid[self.current_endp], PID_DATA1, PID_DATA0)),
+            self.in_tx_pid.eq(Mux(self.o_in_ep_data_pid[self.current_endp], PID_DATA1, PID_DATA0)),
             self.in_tx_pkt_start.eq(1),
             NextState("WAIT_ACK")
         )
@@ -2252,15 +2251,18 @@ class UsbDevice(Module):
             "WAIT_ACK",
             If(self.rx_pkt_end,
                 If(self.valid_ack_packet,
-                    self.in_commit.eq(1),
+                    self.o_in_commit.eq(1),
                     NextState("WAIT_IN_TOK")
                 ).Elif(self.valid_in_token,
-                    self.in_rollback.eq(1),
+                    self.o_in_rollback.eq(1),
                     NextState("SEND_RESPONSE")
                 ).Else(
-                    self.in_rollback.eq(1),
+                    self.o_in_rollback.eq(1),
                     NextState("WAIT_IN_TOK")
                 )
             )
         )
+
+
+
 
