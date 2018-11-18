@@ -1825,74 +1825,18 @@ class UsbOutCpuInterface(Module):
 
 
 
-
-class UsbDevice(Module):
+class UsbIoBuf(Module):
     def __init__(self, usbp, usbn, dev_addr):
-        self.dev_addr = dev_addr
-
-
-        #######################################################################
-        #######################################################################
-        #### out ep interface
-        #######################################################################
-        #######################################################################
-        #
-        self.o_out_ep_num = Signal(4)
-        self.o_out_data_pid = Signal(4)
-        self.i_out_ep_ready = Array([Signal() for i in range(16)])
-        self.o_out_start = Signal()
-        self.o_out_commit = Signal()
-        self.o_out_rollback = Signal()
-        self.o_out_data = Signal(8)
-        self.o_out_data_put = Signal()
-
-        #######################################################################
-        #######################################################################
-        #### in ep interface
-        #######################################################################
-        #######################################################################
-        #
-        self.o_in_ep_num = Signal(4)
-        self.o_in_ep_data_pid = Array([Signal() for i in range(16)])
-        self.i_in_ep_ready = Array([Signal() for i in range(16)])
-        self.o_in_start = Signal()
-        self.o_in_commit = Signal()
-        self.o_in_rollback = Signal()
-        self.i_in_data = Signal(8)
-        self.i_in_data_valid = Signal()
-        self.o_in_data_get = Signal()
-
-
-
-
-        ## protocol engine -> tx mux
-        self.in_tx_pkt_start = Signal()
-        self.in_tx_pid = Signal(4)
-
-        self.out_tx_pkt_start = Signal()
-        self.out_tx_pid = Signal(4)
-
-
-
-
-        # usb_tx interface
-        self.tx_pkt_start   = Signal(1)
-        self.tx_pkt_end     = Signal(1)
-        self.tx_pid         = Signal(4)
-        self.tx_data_avail  = Signal(1)
-        self.tx_data_get    = Signal(1)
-        self.tx_data        = Signal(8) # FIXME: this needs to be synchronized with tx_data_avail/get
-
-
         # tx/rx io interface
         self.usb_tx_en = Signal()
         self.usb_p_tx = Signal()
         self.usb_n_tx = Signal()
+
         self.usb_p_rx = Signal()
         self.usb_n_rx = Signal()
+
         self.usb_p_rx_io = Signal()
         self.usb_n_rx_io = Signal()
-
 
         #######################################################################
         #######################################################################
@@ -1934,30 +1878,94 @@ class UsbDevice(Module):
         ]
 
 
+
+
+
+class UsbDevice(Module):
+    def __init__(self, iobuf, dev_addr):
+        self.submodules.iobuf = iobuf
+        self.dev_addr = dev_addr
+
+
+        #######################################################################
+        #######################################################################
+        #### out ep interface
+        #######################################################################
+        #######################################################################
+        #
+        self.o_out_ep_num = Signal(4)
+        self.o_out_data_pid = Signal(4)
+        self.i_out_ep_ready = Array([Signal() for i in range(16)])
+        self.o_out_start = Signal()
+        self.o_out_commit = Signal()
+        self.o_out_rollback = Signal()
+        self.o_out_data = Signal(8)
+        self.o_out_data_put = Signal()
+
+        #######################################################################
+        #######################################################################
+        #### in ep interface
+        #######################################################################
+        #######################################################################
+        #
+        self.o_in_ep_num = Signal(4)
+        self.o_in_ep_data_pid = Array([Signal() for i in range(16)])
+        self.i_in_ep_ready = Array([Signal() for i in range(16)])
+        self.o_in_start = Signal()
+        self.o_in_commit = Signal()
+        self.o_in_rollback = Signal()
+        self.i_in_data = Signal(8)
+        self.i_in_data_valid = Signal()
+        self.o_in_data_get = Signal()
+
+        ## protocol engine -> tx mux
+        self.in_tx_pkt_start = Signal()
+        self.in_tx_pid = Signal(4)
+
+        self.out_tx_pkt_start = Signal()
+        self.out_tx_pid = Signal(4)
+
+        # usb_tx interface
+        self.tx_pkt_start   = Signal(1)
+        self.tx_pkt_end     = Signal(1)
+        self.tx_pid         = Signal(4)
+        self.tx_data_avail  = Signal(1)
+        self.tx_data_get    = Signal(1)
+        self.tx_data        = Signal(8) # FIXME: this needs to be synchronized with tx_data_avail/get
+
+
+
         #######################################################################
         #######################################################################
         #### RX Phy
         #######################################################################
         #######################################################################
         self.submodules.usbfsrx = usbfsrx = UsbFsRx(
-            usbp_raw = self.usb_p_rx,
-            usbn_raw = self.usb_n_rx
+            usbp_raw = self.iobuf.usb_p_rx,
+            usbn_raw = self.iobuf.usb_n_rx
         )
 
         ## usb_rx interface
-        self.rx_pkt_start   = usbfsrx.o_pkt_start
-        self.rx_pkt_end     = usbfsrx.o_pkt_end
-        self.rx_pid         = usbfsrx.o_pkt_pid
+        self.rx_pkt_start   = Signal(1)
+        self.rx_pkt_end     = Signal(1)
+        self.rx_pid         = Signal(4)
         self.rx_addr        = Signal(7)
         self.rx_endp        = Signal(4)
-        self.rx_frame_num   = usbfsrx.o_pkt_token_payload
-        self.rx_data_put    = usbfsrx.o_pkt_data_put
-        self.rx_data        = usbfsrx.o_pkt_data
-        self.rx_pkt_valid   = usbfsrx.o_pkt_good
+        self.rx_frame_num   = Signal(11)
+        self.rx_data_put    = Signal(1)
+        self.rx_data        = Signal(8)
+        self.rx_pkt_valid   = Signal(1)
 
         self.comb += [
+            self.rx_pkt_start.eq(usbfsrx.o_pkt_start),
+            self.rx_pkt_end.eq(usbfsrx.o_pkt_end),
+            self.rx_pid.eq(usbfsrx.o_pkt_pid),
             self.rx_addr.eq(usbfsrx.o_pkt_token_payload[4:11]),
-            self.rx_endp.eq(usbfsrx.o_pkt_token_payload[0:4])
+            self.rx_endp.eq(usbfsrx.o_pkt_token_payload[0:4]),
+            self.rx_frame_num.eq(usbfsrx.o_pkt_token_payload),
+            self.rx_data_put.eq(usbfsrx.o_pkt_data_put),
+            self.rx_data.eq(usbfsrx.o_pkt_data),
+            self.rx_pkt_valid.eq(usbfsrx.o_pkt_good),
         ]
 
 
@@ -1976,14 +1984,12 @@ class UsbDevice(Module):
         )
 
         self.comb += [
-            self.usb_tx_en.eq(usbfstx.o_oe),
-            self.usb_p_tx.eq(usbfstx.o_usbp),
-            self.usb_n_tx.eq(usbfstx.o_usbn),
+            self.iobuf.usb_tx_en.eq(usbfstx.o_oe),
+            self.iobuf.usb_p_tx.eq(usbfstx.o_usbp),
+            self.iobuf.usb_n_tx.eq(usbfstx.o_usbn),
             self.tx_pkt_end.eq(usbfstx.o_pkt_end),
             self.tx_data_get.eq(usbfstx.o_data_get)
         ]
-
-
 
         #######################################################################
         #######################################################################
@@ -1994,7 +2000,6 @@ class UsbDevice(Module):
             self.tx_pkt_start.eq(self.in_tx_pkt_start | self.out_tx_pkt_start),
             self.tx_pid.eq(Mux(self.out_tx_pkt_start, self.out_tx_pid, self.in_tx_pid)),
         ]
-
 
         #######################################################################
         #######################################################################
@@ -2099,11 +2104,11 @@ class UsbDevice(Module):
         out_pe.act(
             "WAIT_OUT_TOK",
             If(self.rx_pkt_end & self.valid_out_token,
-                If(self.i_out_ep_ready[self.current_endp],
+#                If(self.i_out_ep_ready[self.current_endp],
                     NextState("WAIT_DATA")
-                ).Else(
-                    NextState("WAIT_DATA_NAK")
-                )
+#                ).Else(
+#                    NextState("WAIT_DATA_NAK")
+#                )
             )
         )
 
@@ -2115,12 +2120,9 @@ class UsbDevice(Module):
             If(self.rx_pkt_end,
                 If(self.valid_data_packet,
                     NextState("SEND_ACK")
-
                 ).Else(
                     NextState("ROLLBACK")
                 ),
-
-                NextState("WAIT_OUT_TOK")
             )
         )
 

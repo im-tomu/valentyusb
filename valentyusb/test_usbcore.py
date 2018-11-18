@@ -1481,6 +1481,11 @@ def eop():
 def idle():
     return r"\s+"
 
+# FIXME: SETUP and DATA0 are the same!?
+PID_SETUP = 0b1101
+PID_DATA0 = 0b0011
+PID_ACK   = 0b0010
+
 
 class TestUsbFsTx_longer(TestCase):
     def do(self, clocks, pid, token_payload, data, expected_output):
@@ -1568,19 +1573,19 @@ class TestUsbFsTx_longer(TestCase):
     def test_ack_handshake(self):
         self.do(
             clocks          = 100,
-            pid             = 2,
+            pid             = PID_ACK,
             token_payload   = 0,
             data            = [],
-            expected_output = nrzi(sync() + pid(2) + eop())
+            expected_output = nrzi(sync() + pid(PID_ACK) + eop())
         )
 
     def test_empty_data(self):
         self.do(
             clocks          = 100,
-            pid             = 3,
+            pid             = PID_DATA0,
             token_payload   = 0,
             data            = [],
-            expected_output = nrzi(sync() + pid(3) + data([0x00, 0x00]) + eop())
+            expected_output = nrzi(sync() + pid(PID_DATA0) + data([0x00, 0x00]) + eop())
         )
 
     def test_setup_data(self):
@@ -1588,21 +1593,119 @@ class TestUsbFsTx_longer(TestCase):
 
         self.do(
             clocks          = 200,
-            pid             = 3,
+            pid             = PID_SETUP,
             token_payload   = 0,
             data            = payload,
-            expected_output = nrzi(sync() + pid(3) + data(payload) + crc16(payload) + eop())
+            expected_output = nrzi(sync() + pid(PID_SETUP) + data(payload) + crc16(payload) + eop())
         )
 
     def test_setup_data_bitstuff(self):
         payload = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x3F]
         self.do(
             clocks          = 200,
-            pid             = 3,
+            pid             = PID_SETUP,
             token_payload   = 0,
             data            = payload,
-            expected_output = nrzi(sync() + pid(3) + data([0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40]) + "111111000" +crc16(payload) + eop())
+            expected_output = nrzi(sync() + pid(PID_SETUP) + data([0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40]) + "111111000" +crc16(payload) + eop())
         )
+
+
+class TestIoBuff(Module):
+    def __init__(self):
+        self.usb_tx_en = Signal()
+        self.usb_p_tx = Signal()
+        self.usb_n_tx = Signal()
+
+        self.usb_p_rx = Signal()
+        self.usb_n_rx = Signal()
+
+        self.usb_p_rx_io = Signal()
+        self.usb_n_rx_io = Signal()
+
+        self.comb += [
+            If(self.usb_tx_en,
+                self.usb_p_rx.eq(0b1),
+                self.usb_n_rx.eq(0b0)
+            ).Else(
+                self.usb_p_rx.eq(self.usb_p_rx_io),
+                self.usb_n_rx.eq(self.usb_n_rx_io)
+            )
+        ]
+
+    def recv(self, v):
+        if v == '_':
+            yield self.usb_p_rx_io.eq(0)
+            yield self.usb_n_rx_io.eq(0)
+        elif v == '-':
+            yield self.usb_p_rx_io.eq(1)
+            yield self.usb_n_rx_io.eq(0)
+        elif v == 'j':
+            yield self.usb_p_rx_io.eq(1)
+            yield self.usb_n_rx_io.eq(0)
+        elif v == 'k':
+            yield self.usb_p_rx_io.eq(0)
+            yield self.usb_n_rx_io.eq(1)
+        else:
+            assert False, "Unknown value: %s" % v
+
+
+
+class TestUsbDevice(TestCase):
+    def do(self, packets):
+        name = self.id()
+
+        iobuf = TestIoBuff()
+
+        dut = UsbDevice(iobuf, 0)
+        iobuf.submodules += iobuf
+
+        def clock(data):
+            for v in data:
+                yield from dut.iobuf.recv(v)
+                yield
+
+        # setup stimulus
+        def stim():
+            yield from dut.iobuf.recv('-')
+            for i in range(0, 256):
+                yield
+            for p in packets:
+                yield from clock(p)
+                yield from dut.iobuf.recv('-')
+                for i in range(0, 32):
+                    yield
+
+        # run simulation
+        run_simulation(dut, stim(), vcd_name="vcd/%s.vcd" % name)
+
+    def test_setup_data(self):
+        packets = []
+
+        # setup addr 0 ep 0
+        packets.append(nrzi(sync() + pid(PID_SETUP) + data([0x00, 0x10]) + eop()))
+
+        # data0 - ???
+        payload = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00]
+        packets.append(nrzi(sync() + pid(PID_DATA0) + data(payload) + crc16(payload) + eop()))
+
+        packets.append("________________________")
+        packets.append("________________________")
+        # ack
+
+        # up addr 0 ep 0
+
+        # data 1 [12 01 00 02 02 00 00 20 50 1D 30 61 00 00 00 00 00 01]
+
+        # ack
+
+        # out addr 0 ep 0
+
+        # data 1 []
+
+        # ack
+        self.do(packets)
+
+
 
 
 if __name__ == '__main__':
