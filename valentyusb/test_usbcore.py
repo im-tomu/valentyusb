@@ -1898,6 +1898,8 @@ class TestUsbDevice(TestCase):
             for recv, send in packets:
                 if recv is None and send is None:
                     print("-"*50)
+                    for i in range(0, 256):
+                        yield from idle()
                     continue
 
                 if recv is not None:
@@ -1934,7 +1936,7 @@ class TestUsbDevice(TestCase):
         # ----------------------------
 
         packets.append((
-            (wrap_packet(token_packet(PID.SETUP, 0, 0)), []),
+            (wrap_packet(token_packet(PID.SETUP, 28, 2)), []),
             None,
         ))
         d = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
@@ -1953,7 +1955,7 @@ class TestUsbDevice(TestCase):
         # ----------------------------
         # ->pid:setup
         packets.append((
-            (wrap_packet(token_packet(PID.SETUP, 0, 0)), []),
+            (wrap_packet(token_packet(PID.SETUP, 20, 0)), []),
             None,
         ))
         # ->pid:data0 [80 06 00 06 00 00 0A 00] # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
@@ -1980,7 +1982,7 @@ class TestUsbDevice(TestCase):
         # First 8 bytes
         # ->pid:in
         packets.append((
-            (wrap_packet(token_packet(PID.IN, 0, 0)), []),
+            (wrap_packet(token_packet(PID.IN, 20, 0)), []),
             None,
         ))
         # <-pid:data1 [00 01 02 03 04 05 06 07]
@@ -1998,7 +2000,7 @@ class TestUsbDevice(TestCase):
         # Remaining 4 bytes + padding
         # ->pid:in
         packets.append((
-            (wrap_packet(token_packet(PID.IN, 0, 0)), []),
+            (wrap_packet(token_packet(PID.IN, 20, 0)), []),
             None,
         ))
         # <-pid:data0 [08 09 0A 0B 00 00 00 00]
@@ -2022,7 +2024,7 @@ class TestUsbDevice(TestCase):
         # ----------------------------
         # ->pid:out
         packets.append((
-            (wrap_packet(token_packet(PID.OUT, 0, 0)), []),
+            (wrap_packet(token_packet(PID.OUT, 20, 0)), []),
             None,
         ))
         # ->pid:data1 []

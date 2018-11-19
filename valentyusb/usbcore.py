@@ -1977,6 +1977,9 @@ class UsbDevice(Module):
         self.current_pid = Signal(4)
         self.current_addr = Signal(7)
         self.current_endp = Signal(4)
+        self.r_current_pid = Signal(4)
+        self.r_current_addr = Signal(7)
+        self.r_current_endp = Signal(4)
 
         pe.act(
             "WAIT_TOK",
@@ -2010,6 +2013,14 @@ class UsbDevice(Module):
                 ),
             ),
         )
+
+        self.sync += [
+            If(self.usbfsrx.o_pkt_end,
+                self.r_current_pid.eq(self.usbfsrx.o_pkt_pid),
+                self.r_current_addr.eq(self.usbfsrx.o_pkt_token_payload[4:11]),
+                self.r_current_endp.eq(self.usbfsrx.o_pkt_token_payload[0:4]),
+            )
+        ]
 
         # Host->Device data path (Out data path)
         # --------------------------
