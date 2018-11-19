@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import CrcMoose3 as crc
+
 import unittest
 from unittest import TestCase
 from usbcore import *
@@ -1406,7 +1408,7 @@ class TestTxNrziEncoder(TestCase):
         )
 
 
-def data(data):
+def encode_data(data):
     """
     Converts array of 8-bit ints into string of 0s and 1s.
     """
@@ -1417,12 +1419,43 @@ def data(data):
 
     return output
 
+
+# width=5 poly=0x05 init=0x1f refin=true refout=true xorout=0x1f check=0x19 residue=0x06 name="CRC-5/USB"
+def crc5_token(addr, ep):
+    """
+    >>> hex(crc5_token(0, 0))
+    '0x2'
+    >>> hex(crc5_token(92, 0))
+    '0x1c'
+    """
+    reg = crc.CrcRegister(crc.CRC5_USB)
+    reg.takeWord(addr, 7)
+    reg.takeWord(ep, 4)
+    return reg.getFinalValue()
+
+
+def crc5_sof(v):
+    """
+    >>> hex(crc5_sof(1429))
+    '0x1'
+    >>> hex(crc5_sof(1013))
+    '0x5'
+    """
+    reg = crc.CrcRegister(crc.CRC5_USB)
+    reg.takeWord(v, 11)
+    return reg.getFinalValue()
+
+
 def crc16(input_data):
-    import crcmod
-    crc16_func = crcmod.mkCrcFun(0x18005, initCrc=0x0000, xorOut=0b1111111111111111, rev=True)
-    crc16 = crc16_func(bytearray(input_data))
-    hex(crc16)
-    return data([crc16 & 0xff, (crc16 >> 8) & 0xff])
+    # width=16 poly=0x8005 init=0xffff refin=true refout=true xorout=0xffff check=0xb4c8 residue=0xb001 name="CRC-16/USB"
+    # CRC appended low byte first.
+    reg = crc.CrcRegister(crc.CRC16_USB)
+    for d in input_data:
+        assert d < 256, input_data
+        reg.takeWord(d, 8)
+    crc16 = reg.getFinalValue()
+    return [crc16 & 0xff, (crc16 >> 8) & 0xff]
+
 
 def nrzi(data, clock_width=4):
     """
@@ -1448,6 +1481,7 @@ def nrzi(data, clock_width=4):
 
     return output
 
+
 def line(data):
     oe = ""
     usbp = ""
@@ -1472,14 +1506,18 @@ def line(data):
 def sync():
     return "kjkjkjkk"
 
-def pid(value):
-    return data([value | ((0b1111 ^ value) << 4)])
+
+def encode_pid(value):
+    return encode_data([value | ((0b1111 ^ value) << 4)])
+
 
 def eop():
     return "__j"
 
+
 def idle():
     return r"\s+"
+
 
 # FIXME: SETUP and DATA0 are the same!?
 PID_SETUP = 0b1101
@@ -1556,8 +1594,6 @@ class TestUsbFsTx_longer(TestCase):
                 yield from clock()
                 yield from clock()
 
-
-
             import re
             m = re.fullmatch(idle() + expected_output + idle(), self.output)
             if m:
@@ -1573,19 +1609,19 @@ class TestUsbFsTx_longer(TestCase):
     def test_ack_handshake(self):
         self.do(
             clocks          = 100,
-            pid             = PID_ACK,
+            pid             = PID.ACK,
             token_payload   = 0,
             data            = [],
-            expected_output = nrzi(sync() + pid(PID_ACK) + eop())
+            expected_output = nrzi(sync() + encode_pid(PID.ACK) + eop())
         )
 
     def test_empty_data(self):
         self.do(
             clocks          = 100,
-            pid             = PID_DATA0,
+            pid             = PID.DATA0,
             token_payload   = 0,
             data            = [],
-            expected_output = nrzi(sync() + pid(PID_DATA0) + data([0x00, 0x00]) + eop())
+            expected_output = nrzi(sync() + encode_pid(PID.DATA0) + encode_data([0x00, 0x00]) + eop())
         )
 
     def test_setup_data(self):
@@ -1593,25 +1629,28 @@ class TestUsbFsTx_longer(TestCase):
 
         self.do(
             clocks          = 200,
-            pid             = PID_SETUP,
+            pid             = PID.SETUP,
             token_payload   = 0,
             data            = payload,
-            expected_output = nrzi(sync() + pid(PID_SETUP) + data(payload) + crc16(payload) + eop())
+            expected_output = nrzi(sync() + encoude_pid(PID.SETUP) + encoude_data(payload + crc16(payload)) + eop())
         )
 
     def test_setup_data_bitstuff(self):
         payload = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x3F]
         self.do(
             clocks          = 200,
-            pid             = PID_SETUP,
+            pid             = PID.SETUP,
             token_payload   = 0,
             data            = payload,
-            expected_output = nrzi(sync() + pid(PID_SETUP) + data([0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40]) + "111111000" +crc16(payload) + eop())
+            expected_output = nrzi(sync() + encode_pid(PID.SETUP) + encode_data([0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40]) + "111111000" + encode_data(crc16(payload)) + eop())
         )
 
 
-class TestIoBuff(Module):
+class TestIoBuf(Module):
     def __init__(self):
+        self.usb_p = Signal()
+        self.usb_n = Signal()
+
         self.usb_tx_en = Signal()
         self.usb_p_tx = Signal()
         self.usb_n_tx = Signal()
@@ -1629,14 +1668,34 @@ class TestIoBuff(Module):
             ).Else(
                 self.usb_p_rx.eq(self.usb_p_rx_io),
                 self.usb_n_rx.eq(self.usb_n_rx_io)
-            )
+            ),
+        ]
+        self.comb += [
+            If(self.usb_tx_en,
+                self.usb_p.eq(self.usb_p_tx),
+                self.usb_n.eq(self.usb_n_tx),
+            ).Else(
+                self.usb_p.eq(self.usb_p_rx),
+                self.usb_n.eq(self.usb_n_rx),
+            ),
         ]
 
+
     def recv(self, v):
-        if v == '_':
+        if v == 'i':
+            yield self.usb_p_rx_io.eq(0)
+            yield self.usb_n_rx_io.eq(1)
+
+        elif v == '0' or v == '_':
+            # SE0 - both lines pulled low
             yield self.usb_p_rx_io.eq(0)
             yield self.usb_n_rx_io.eq(0)
+        elif v == '1':
+            # SE1 - illegal, should never occur
+            yield self.usb_p_rx_io.eq(1)
+            yield self.usb_n_rx_io.eq(1)
         elif v == '-':
+            # ????
             yield self.usb_p_rx_io.eq(1)
             yield self.usb_n_rx_io.eq(0)
         elif v == 'j':
@@ -1650,47 +1709,380 @@ class TestIoBuff(Module):
 
 
 
+def token_packet(pid, addr, endp):
+    """Create a token packet for testing.
+
+    sync, pid, addr (7bit), endp(4bit), crc5(5bit), eop
+
+    >>> token_packet(PID.SETUP, 0x0, 0x0)
+    '101101000000000001000000'
+
+    >>> token_packet(PID.IN, 0x3, 0x0) # 0x0A
+    '100101100110000001010000'
+
+    >>> token_packet(PID.OUT, 0x3a, 0xa)
+    '100001111010111011100010'
+
+    >>> token_packet(PID.SETUP, 0x70, 0xa)
+    '101101001000011110101010'
+
+    """
+    assert addr < 128, addr
+    assert endp < 2**4, endp
+    assert pid in (PID.OUT, PID.IN, PID.SETUP), token_pid
+    data = [addr << 1 | endp >> 3, (endp << 5) & 0xff]
+    data[-1] = data[-1] | crc5_token(addr, endp)
+    return encode_pid(pid) + encode_data(data)
+
+
+def data_packet(pid, payload):
+    """Create a data packet for testing.
+
+    sync, pid, data, crc16, eop
+    FIXME: data should be multiples of 8?
+
+    >>> data_packet(PID.DATA0, [0x80, 0x06, 0x03, 0x03, 0x09, 0x04, 0x00, 0x02])
+    '1100001100000001011000001100000011000000100100000010000000000000010000000110101011011100'
+
+    >>> data_packet(PID.DATA1, [])
+    '110100100000000000000000'
+
+    """
+    assert pid in (PID.DATA0, PID.DATA1), pid
+    return encode_pid(pid) + encode_data(payload + crc16(payload))
+
+
+def handshake_packet(pid):
+    """ Create a handshake packet for testing.
+
+    sync, pid, eop
+    ack / nak / stall / nyet (high speed only)
+
+    >>> handshake_packet(PID.ACK)
+    '01001011'
+    >>> handshake_packet(PID.NAK)
+    '01011010'
+    """
+    assert pid in (PID.ACK, PID.NAK, PID.STALL), pid
+    return encode_pid(pid)
+
+
+def sof_packet(frame):
+    """Create a SOF packet for testing.
+
+    sync, pid, frame no (11bits), crc5(5bits), eop
+
+    >>> sof_packet(1)
+    '101001010000000010111100'
+
+    >>> sof_packet(100)
+    '101001010011000011111001'
+
+    >>> sof_packet(257)
+    '101001010000010000011100'
+
+    >>> sof_packet(1429)
+    '101001010100110110000101'
+
+    >>> sof_packet(2**11 - 2)
+    '101001011111111111101011'
+    """
+    assert frame < 2**11, (frame, '<', 2**11)
+    data = [frame >> 3, (frame & 0b111) << 5]
+    data[-1] = data[-1] | crc5_sof(frame)
+    return encode_pid(PID.SOF) + encode_data(data)
+
+
+def wrap_packet(data):
+    """Add the sync + eop sections and do nrzi encoding.
+
+    >>> wrap_packet(handshake_packet(PID.ACK))
+    'kkkkjjjjkkkkjjjjkkkkjjjjkkkkkkkkjjjjjjjjkkkkjjjjjjjjkkkkkkkkkkkk________jjjj'
+
+    """
+    return nrzi(sync() + data + eop())
+
+
+def squash_packet(data):
+    return '_'*8 + '_'*len(data) + '_'*30
+
+
+# one out transaction
+# >token, >dataX, <ack
+
+# one in transaction
+# >token, <dataX, <ack
+
+# one setup transaction
+# >token, >data0, <ack
+
+# setup stage (pid:setup, pid:data0 - 8 bytes, pid:ack)
+# [data stage (pid:in+pid:data1, pid:in +pid:data0, ...)]
+# status stage (pid:out, pid:data1 - 0 bytes)
+
+
+# DATA0 and DATA1 PIDs are used in Low and Full speed links as part of an error-checking system.
+# When used, all data packets on a particular endpoint use an alternating DATA0
+# / DATA1 so that the endpoint knows if a received packet is the one it is
+# expecting.
+# If it is not it will still acknowledge (ACK) the packet as it is correctly
+# received, but will then discard the data, assuming that it has been
+# re-sent because the host missed seeing the ACK the first time it sent the
+# data packet.
+
+
+# 1) reset,
+#
+# 2) The host will now send a request to endpoint 0 of device address 0 to find
+#    out its maximum packet size. It can discover this by using the Get
+#    Descriptor (Device) command. This request is one which the device must
+#    respond to even on address 0.
+#
+# 3) Then sends a Set Address request, with a unique address to the device at
+#    address 0. After the request is completed, the device assumes the new
+#    address.
+#
+#
+
 class TestUsbDevice(TestCase):
     def do(self, packets):
         name = self.id()
 
-        iobuf = TestIoBuff()
-
+        iobuf = TestIoBuf()
         dut = UsbDevice(iobuf, 0)
-        iobuf.submodules += iobuf
+
+        recieved_bytes = []
+        recieved_byte = Signal(8)
+        sending_bytes = []
+        sending_byte = Signal(8)
 
         def clock(data):
             for v in data:
+                # Pull bytes from sending_bytes
+                yield dut.endp_ins[0].valid.eq(len(sending_bytes) > 0)
+                if len(sending_bytes) > 0:
+                    yield sending_byte.eq(sending_bytes[0])
+                    yield dut.endp_ins[0].payload.data.eq(sending_bytes[0])
+
+                    ready = yield dut.endp_ins[0].ready
+                    if ready:
+                        sending_bytes.pop(0)
+
                 yield from dut.iobuf.recv(v)
+
+                # Push bytes into received_bytes
+                valid = yield dut.endp_outs[0].valid
+                if valid:
+                    yield recieved_byte.eq(dut.endp_outs[0].payload.data)
+                    data = yield dut.endp_outs[0].data
+                    recieved_bytes.append(data)
+
                 yield
+
+        idle_signal = Signal(1)
+
+        def idle():
+            yield from dut.iobuf.recv('i')
+            yield idle_signal.eq(1)
+            for i in range(0, 8):
+                yield
+            yield idle_signal.eq(0)
 
         # setup stimulus
         def stim():
+            yield dut.endp_outs[0].ready.eq(1)
+
             yield from dut.iobuf.recv('-')
-            for i in range(0, 256):
-                yield
-            for p in packets:
-                yield from clock(p)
-                yield from dut.iobuf.recv('-')
-                for i in range(0, 32):
-                    yield
+            yield from idle()
+
+            for recv, send in packets:
+                if recv is None and send is None:
+                    print("-"*50)
+                    continue
+
+                if recv is not None:
+                    recv_pkt, expected_bytes = recv
+                    recieved_bytes.clear()
+                    yield from clock(recv_pkt)
+                    print("Received", recieved_bytes, "(expected: %s)" % repr(expected_bytes))
+                    #self.assertSequenceEqual(recieved_bytes, expected_bytes, "%s %s" % (recv_pkt, expected_bytes))
+
+                if send is not None:
+                    sending_bytes.clear()
+                    send_pkt, data_bytes = send
+
+                    sending_bytes.extend(data_bytes)
+                    print("Sending", sending_bytes)
+                    yield from clock(squash_packet(send_pkt))
+                    print("Remaining", sending_bytes)
+                    #assert len(sending_bytes) == 0, sending_bytes
+
+                yield from idle()
+
 
         # run simulation
         run_simulation(dut, stim(), vcd_name="vcd/%s.vcd" % name)
 
     def test_setup_data(self):
+
         packets = []
 
-        # setup addr 0 ep 0
-        packets.append(nrzi(sync() + pid(PID_SETUP) + data([0x00, 0x10]) + eop()))
+        #packets.append((
+        #   (<packet host->device>, <expected received data>),
+        #   (<packet device->host>, <data to feed>),
+        # ))
+        # ----------------------------
 
-        # data0 - ???
-        payload = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00]
-        packets.append(nrzi(sync() + pid(PID_DATA0) + data(payload) + crc16(payload) + eop()))
+        packets.append((
+            (wrap_packet(token_packet(PID.SETUP, 0, 0)), []),
+            None,
+        ))
+        d = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
+        packets.append((
+            (wrap_packet(data_packet(PID.DATA0, d)), d+crc16(d)),
+            None,
+        ))
+        packets.append((
+            None,
+            (wrap_packet(handshake_packet(PID.ACK)), []),
+        ))
+        packets.append((None, None))
 
-        packets.append("________________________")
-        packets.append("________________________")
-        # ack
+        # ============================
+        # Setup Stage
+        # ----------------------------
+        # ->pid:setup
+        packets.append((
+            (wrap_packet(token_packet(PID.SETUP, 0, 0)), []),
+            None,
+        ))
+        # ->pid:data0 [80 06 00 06 00 00 0A 00] # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
+        d = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
+        packets.append((
+            (wrap_packet(data_packet(PID.DATA0, d)), d+crc16(d)),
+            None,
+        ))
+        # <-pid:ack
+        packets.append((
+            None,
+            (wrap_packet(handshake_packet(PID.ACK)), []),
+        ))
+
+        packets.append((
+            ('-'*2000, []),
+            None,
+        ))
+
+        # Data Stage
+        # ----------------------------
+        # 12 byte descriptor, max packet size 8 bytes
+
+        # First 8 bytes
+        # ->pid:in
+        packets.append((
+            (wrap_packet(token_packet(PID.IN, 0, 0)), []),
+            None,
+        ))
+        # <-pid:data1 [00 01 02 03 04 05 06 07]
+        d = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
+        packets.append((
+            None,
+            (wrap_packet(data_packet(PID.DATA1, d)), d),
+        ))
+        # ->pid:ack
+        packets.append((
+            (wrap_packet(handshake_packet(PID.ACK)), []),
+            None,
+        ))
+
+        # Remaining 4 bytes + padding
+        # ->pid:in
+        packets.append((
+            (wrap_packet(token_packet(PID.IN, 0, 0)), []),
+            None,
+        ))
+        # <-pid:data0 [08 09 0A 0B 00 00 00 00]
+        d = [0x08, 0x09, 0x0A, 0x0B, 0x00, 0x00, 0x00, 0x00]
+        packets.append((
+            None,
+            (wrap_packet(data_packet(PID.DATA0, d)), d),
+        ))
+        # ->pid:ack
+        packets.append((
+            (wrap_packet(handshake_packet(PID.ACK)), []),
+            None,
+        ))
+
+        packets.append((
+            ('-'*2000, []),
+            None,
+        ))
+
+        # Status Stage
+        # ----------------------------
+        # ->pid:out
+        packets.append((
+            (wrap_packet(token_packet(PID.OUT, 0, 0)), []),
+            None,
+        ))
+        # ->pid:data1 []
+        packets.append((
+            (wrap_packet(data_packet(PID.DATA1, [])), []),
+            None,
+        ))
+        # <-pid:ack
+        packets.append((
+            None,
+            (wrap_packet(handshake_packet(PID.ACK)), []),
+        ))
+        # ============================
+
+        packets.append((None, None))
+
+        # ----------------------------
+        # ->pid:setup
+        # ->pid:data0 [80 06 00 03 00 00 40 00] # Get descriptor, Index 0, Type 03, LangId 0000, wLength 64
+        # <-pid:ack
+
+        # ->pid:in
+        # <-pid:nak
+
+        # ->pid:in
+        # ->pid:data1 [04 03 09 04] # String descriptor, bLength 4, bDescriptorType 0x3 (String), wLangId: 0x0409 (Eng US)
+        # <-pid:ack
+
+        # ->pid:in
+        # ->pid:data1 []
+        # <-pid:ack
+
+        # ->pid:setup
+        # ->pid:data0 [80 06 03 03 09 04 00 02]
+        # <-pid:ack
+
+        # ->pid:in
+        # ->pid:data1 [12 03 30 00 30 00 33 00 44 00 39 00 34 00 34 00 41 00]
+        # <-pid:ack
+
+        # ->pid:in
+        # ->pid:data1 []
+        # <-pid:ack
+
+        # ->pid:setup
+        # ->pid:data0 [21 09 41 03 00 02 00]
+        # <-pid:ack
+        # ->pid:out
+        # <-pid:data1 [41 01]
+        # <-pid:nak
+        # ->pid:out
+        # <-pid:data1 [41 01]
+        # <-pid:ack
+        # ->pid:in
+        # <-pid:nak
+        # ->pid:in
+        # <-pid:data1 []
+        # <-pid:ack
+
+
 
         # up addr 0 ep 0
 
@@ -1709,4 +2101,6 @@ class TestUsbDevice(TestCase):
 
 
 if __name__ == '__main__':
+    import doctest
+    doctest.testmod()
     unittest.main()
