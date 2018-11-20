@@ -1427,6 +1427,10 @@ def crc5_token(addr, ep):
     '0x2'
     >>> hex(crc5_token(92, 0))
     '0x1c'
+    >>> hex(crc5_token(3, 0))
+    '0xa'
+    >>> hex(crc5_token(56, 4))
+    '0xb'
     """
     reg = crc.CrcRegister(crc.CRC5_USB)
     reg.takeWord(addr, 7)
@@ -1462,21 +1466,26 @@ def nrzi(data, clock_width=4):
     Converts string of 0s and 1s into NRZI encoded string.
     """
     def toggle_state(state):
-        if state == 'j':
-            return 'k'
-        if state == 'k':
-            return 'j'
+        if state == 'J':
+            return 'K'
+        if state == 'K':
+            return 'J'
         return state
 
-    prev_state = "k"
+    prev_state = "K"
     output = ""
 
     for bit in data:
         # only toggle the state on '0'
         if bit == '0':
             state = toggle_state(state)
-        if bit in "jk_":
-            state = bit
+        elif bit == '1':
+            pass
+        elif bit in "jk_":
+            state = bit.upper()
+        else:
+            assert False, "Unknown bit %s in %r" % (bit, data)
+
         output += (state * clock_width)
 
     return output
@@ -1517,12 +1526,6 @@ def eop():
 
 def idle():
     return r"\s+"
-
-
-# FIXME: SETUP and DATA0 are the same!?
-PID_SETUP = 0b1101
-PID_DATA0 = 0b0011
-PID_ACK   = 0b0010
 
 
 class TestUsbFsTx_longer(TestCase):
@@ -1632,7 +1635,7 @@ class TestUsbFsTx_longer(TestCase):
             pid             = PID.SETUP,
             token_payload   = 0,
             data            = payload,
-            expected_output = nrzi(sync() + encoude_pid(PID.SETUP) + encoude_data(payload + crc16(payload)) + eop())
+            expected_output = nrzi(sync() + encode_pid(PID.SETUP) + encode_data(payload + crc16(payload)) + eop())
         )
 
     def test_setup_data_bitstuff(self):
@@ -1682,11 +1685,7 @@ class TestIoBuf(Module):
 
 
     def recv(self, v):
-        if v == 'i':
-            yield self.usb_p_rx_io.eq(0)
-            yield self.usb_n_rx_io.eq(1)
-
-        elif v == '0' or v == '_':
+        if v == '0' or v == '_':
             # SE0 - both lines pulled low
             yield self.usb_p_rx_io.eq(0)
             yield self.usb_n_rx_io.eq(0)
@@ -1694,14 +1693,14 @@ class TestIoBuf(Module):
             # SE1 - illegal, should never occur
             yield self.usb_p_rx_io.eq(1)
             yield self.usb_n_rx_io.eq(1)
-        elif v == '-':
-            # ????
+        elif v == '-' or v == 'I':
+            # Idle
             yield self.usb_p_rx_io.eq(1)
             yield self.usb_n_rx_io.eq(0)
-        elif v == 'j':
+        elif v == 'J':
             yield self.usb_p_rx_io.eq(1)
             yield self.usb_n_rx_io.eq(0)
-        elif v == 'k':
+        elif v == 'K':
             yield self.usb_p_rx_io.eq(0)
             yield self.usb_n_rx_io.eq(1)
         else:
@@ -1715,24 +1714,35 @@ def token_packet(pid, addr, endp):
     sync, pid, addr (7bit), endp(4bit), crc5(5bit), eop
 
     >>> token_packet(PID.SETUP, 0x0, 0x0)
-    '101101000000000001000000'
+    '101101000000000000001000'
+
+     PPPPPPPP                 - 8 bits - PID
+             AAAAAAA          - 7 bits - ADDR
+                    EEEE      - 4 bits - EP
+                        CCCCC - 5 bits - CRC
 
     >>> token_packet(PID.IN, 0x3, 0x0) # 0x0A
-    '100101100110000001010000'
+    '100101101100000000001010'
 
     >>> token_packet(PID.OUT, 0x3a, 0xa)
-    '100001111010111011100010'
+    '100001110101110010111100'
 
     >>> token_packet(PID.SETUP, 0x70, 0xa)
-    '101101001000011110101010'
+    '101101000000111010110101'
+
+    >>> token_packet(PID.SETUP, 40, 2)
+    '101101000001010010000011'
 
     """
     assert addr < 128, addr
     assert endp < 2**4, endp
     assert pid in (PID.OUT, PID.IN, PID.SETUP), token_pid
-    data = [addr << 1 | endp >> 3, (endp << 5) & 0xff]
-    data[-1] = data[-1] | crc5_token(addr, endp)
-    return encode_pid(pid) + encode_data(data)
+    token = encode_pid(pid)
+    token += "{0:07b}".format(addr)[::-1]                   # 7 bits address
+    token += "{0:04b}".format(endp)[::-1]                   # 4 bits endpoint
+    token += "{0:05b}".format(crc5_token(addr, endp))[::-1] # 5 bits CRC5
+    assert len(token) == 24, token
+    return token
 
 
 def data_packet(pid, payload):
@@ -1796,6 +1806,43 @@ def sof_packet(frame):
 def wrap_packet(data):
     """Add the sync + eop sections and do nrzi encoding.
 
+    >>> wrap_packet(token_packet(PID.SETUP, 0, 0))
+    'kkkk' 1 S
+    'jjjj' 2 S
+    'kkkk' 3 S
+    'jjjj' 4 S
+    'kkkk' 5 S
+    'jjjj' 6 S
+    'kkkk' 7 S
+    'kkkk' 8 S
+    'kkkk' 1 P
+    'jjjj' 2 P
+    'jjjj' 3 P
+    'jjjj' 4 P
+    'kkkk' 5 P
+    'kkkk' 6 P
+    'jjjj' 7 P
+    'kkkk' 8 P
+    'jjjj' 1 A
+    'kkkk' 2 A
+    'jjjj' 3 A
+    'kkkk' 4 A
+    'jjjj' 5 A
+    'kkkk' 6 A
+    'jjjj' 7 A
+    'kkkk' 1 E
+    'jjjj' 2 E
+    'jjjj' 3 E
+    'kkkk' 4 E
+    'jjjj' 1 C
+    'kkkk' 2 C
+    'jjjj' 3 C
+    'kkkk' 4 C
+    'jjjj' 5 C
+    '____' SE0
+    '____' SE0
+    'jjjj' END
+
     >>> wrap_packet(handshake_packet(PID.ACK))
     'kkkkjjjjkkkkjjjjkkkkjjjjkkkkkkkkjjjjjjjjkkkkjjjjjjjjkkkkkkkkkkkk________jjjj'
 
@@ -1804,7 +1851,7 @@ def wrap_packet(data):
 
 
 def squash_packet(data):
-    return '_'*8 + '_'*len(data) + '_'*30
+    return 'I'*8 + 'I'*len(data) + 'I'*30
 
 
 # one out transaction
@@ -1857,6 +1904,7 @@ class TestUsbDevice(TestCase):
         sending_byte = Signal(8)
 
         def clock(data):
+            yield idle_signal.eq(0)
             for v in data:
                 # Pull bytes from sending_bytes
                 yield dut.endp_ins[0].valid.eq(len(sending_bytes) > 0)
@@ -1882,17 +1930,15 @@ class TestUsbDevice(TestCase):
         idle_signal = Signal(1)
 
         def idle():
-            yield from dut.iobuf.recv('i')
+            yield from dut.iobuf.recv('I')
             yield idle_signal.eq(1)
             for i in range(0, 8):
                 yield
-            yield idle_signal.eq(0)
 
         # setup stimulus
         def stim():
             yield dut.endp_outs[0].ready.eq(1)
 
-            yield from dut.iobuf.recv('-')
             yield from idle()
 
             for recv, send in packets:
@@ -1923,11 +1969,11 @@ class TestUsbDevice(TestCase):
 
 
         # run simulation
-        run_simulation(dut, stim(), vcd_name="vcd/%s.vcd" % name)
+        run_simulation(dut, stim(), vcd_name="vcd/%s.vcd" % name, clocks={"sys": 4})
 
     def test_setup_data(self):
 
-        packets = []
+        packets = [(None, None)]
 
         #packets.append((
         #   (<packet host->device>, <expected received data>),

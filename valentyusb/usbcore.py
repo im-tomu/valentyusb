@@ -1997,6 +1997,10 @@ class UsbDevice(Module):
                 self.current_addr.eq(self.usbfsrx.o_pkt_token_payload[4:11]),
                 self.current_endp.eq(self.usbfsrx.o_pkt_token_payload[0:4]),
 
+                NextValue(self.r_current_pid, self.usbfsrx.o_pkt_pid),
+                NextValue(self.r_current_addr, self.usbfsrx.o_pkt_token_payload[4:11]),
+                NextValue(self.r_current_endp, self.usbfsrx.o_pkt_token_payload[0:4]),
+
                 # Setup for the packet
                 If(self.current_pid == PID.SETUP,
                     self.data_count.eq(0),
@@ -2013,14 +2017,6 @@ class UsbDevice(Module):
                 ),
             ),
         )
-
-        self.sync += [
-            If(self.usbfsrx.o_pkt_end,
-                self.r_current_pid.eq(self.usbfsrx.o_pkt_pid),
-                self.r_current_addr.eq(self.usbfsrx.o_pkt_token_payload[4:11]),
-                self.r_current_endp.eq(self.usbfsrx.o_pkt_token_payload[0:4]),
-            )
-        ]
 
         # Host->Device data path (Out data path)
         # --------------------------
