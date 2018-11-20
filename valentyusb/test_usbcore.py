@@ -1733,6 +1733,13 @@ def token_packet(pid, addr, endp):
     >>> token_packet(PID.SETUP, 40, 2)
     '101101000001010010000011'
 
+    >>> token_packet(PID.SETUP, 28, 2)
+    '101101000011100010001001'
+
+     PPPPPPPP                 - 8 bits - PID
+             AAAAAAA          - 7 bits - ADDR
+                    EEEE      - 4 bits - EP
+                        CCCCC - 5 bits - CRC
     """
     assert addr < 128, addr
     assert endp < 2**4, endp
@@ -2017,7 +2024,7 @@ class TestUsbDevice(TestCase):
         ))
 
         packets.append((
-            ('-'*2000, []),
+            ('-'*200, []),
             None,
         ))
 
@@ -2062,7 +2069,7 @@ class TestUsbDevice(TestCase):
         ))
 
         packets.append((
-            ('-'*2000, []),
+            ('-'*200, []),
             None,
         ))
 

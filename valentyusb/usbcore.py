@@ -851,7 +851,7 @@ class RxPacketDecode(Module):
         #
         self.o_pkt_start = Signal()
         self.o_pkt_pid = Signal(4)
-        self.o_pkt_token_payload = Signal(11)
+        self.o_pkt_token_payload = Signal(16)
         self.o_pkt_data = Signal(8)
         # self.o_pkt_data_put from above...
         self.o_pkt_good = Signal()
@@ -860,7 +860,7 @@ class RxPacketDecode(Module):
         self.sync += [
             self.o_pkt_start.eq(pkt_start),
             self.o_pkt_pid.eq(pid_shifter.o_output[0:4]),
-            self.o_pkt_token_payload.eq(tok_shifter.o_output[0:11]),
+            self.o_pkt_token_payload.eq(tok_shifter.o_output),
             self.o_pkt_data.eq(data_shifter.o_output[0:8]),
             self.o_pkt_data_put.eq(data_put),
             self.o_pkt_good.eq(pkt_good),
@@ -1977,9 +1977,10 @@ class UsbDevice(Module):
         self.current_pid = Signal(4)
         self.current_addr = Signal(7)
         self.current_endp = Signal(4)
-        self.r_current_pid = Signal(4)
-        self.r_current_addr = Signal(7)
-        self.r_current_endp = Signal(4)
+
+        self.comb += [
+            self.current_pid.eq(self.usbfsrx.o_pkt_pid),
+        ]
 
         pe.act(
             "WAIT_TOK",
@@ -1993,13 +1994,8 @@ class UsbDevice(Module):
 
             If(self.usbfsrx.o_pkt_end,
                 # Save the token data
-                self.current_pid.eq(self.usbfsrx.o_pkt_pid),
-                self.current_addr.eq(self.usbfsrx.o_pkt_token_payload[4:11]),
-                self.current_endp.eq(self.usbfsrx.o_pkt_token_payload[0:4]),
-
-                NextValue(self.r_current_pid, self.usbfsrx.o_pkt_pid),
-                NextValue(self.r_current_addr, self.usbfsrx.o_pkt_token_payload[4:11]),
-                NextValue(self.r_current_endp, self.usbfsrx.o_pkt_token_payload[0:4]),
+                NextValue(self.current_addr, self.usbfsrx.o_pkt_token_payload[0:7]),
+                NextValue(self.current_endp, self.usbfsrx.o_pkt_token_payload[7:11]),
 
                 # Setup for the packet
                 If(self.current_pid == PID.SETUP,
@@ -2018,8 +2014,21 @@ class UsbDevice(Module):
             ),
         )
 
-        # Host->Device data path (Out data path)
+        # Host->Device data path (Out + Setup data path)
         # --------------------------
+        # >Setup
+        # >Data0[bmRequestType, bRequest, wValue, wIndex, wLength]
+        # <Ack
+        # --------------------------
+        # --------------------------
+        # >Out        >Out        >Out
+        # >DataX[..]  >DataX[..]  >DataX
+        # <Ack        <Nak        <Stall
+        # ---------------------------
+        # >Out
+        # >Data0[]
+        # <Ack
+        # ---------------------------
         pe.act(
             "RECV_DATAX",
             If(self.usbfsrx.o_pkt_start,
@@ -2067,6 +2076,14 @@ class UsbDevice(Module):
         )
         # Host<-Device data path (In data path)
         # --------------------------
+        # >In         >In     >In
+        # <DataX[..]  <Stall  <Nak
+        # >Ack
+        # ---------------------------
+        # >In
+        # <Data0[]
+        # >Ack
+        # ---------------------------
         pe.act(
             "SEND_DATAX",
             self.usbfstx.i_pid.eq(PID.DATA0),
@@ -2099,413 +2116,10 @@ class UsbDevice(Module):
         # --------------------------
         pe.act("ERROR")
 
-        # >Setup
-        # >Data0[bmRequestType, bRequest, wValue, wIndex, wLength]
-        # <Ack
 
         # In transactions
         # ===========================
-        # >In         >In     >In
-        # <DataX[..]  <Stall  <Nak
-        # >Ack
-        # ---------------------------
-        # >In
-        # <Data0[]
-        # >Ack
-        # ---------------------------
 
         # Out transactions
         # ===========================
-        # >Out        >Out        >Out
-        # >DataX[..]  >DataX[..]  >DataX
-        # <Ack        <Nak        <Stall
-        # ---------------------------
-        # >Out
-        # >Data0[]
-        # <Ack
-        # ---------------------------
 
-
-        # Setup transaction
-        # 
-
-        """
-        #######################################################################
-        #######################################################################
-        #### out ep interface
-        #######################################################################
-        #######################################################################
-        #
-        self.o_out_ep_num = Signal(4)
-        self.o_out_data_pid = Signal(4)
-        self.i_out_ep_ready = Array([Signal() for i in range(num_endpoints)])
-        self.o_out_start = Signal()
-        self.o_out_commit = Signal()
-        self.o_out_rollback = Signal()
-        self.o_out_data = Signal(8)
-        self.o_out_data_put = Signal()
-
-        #######################################################################
-        #######################################################################
-        #### in ep interface
-        #######################################################################
-        #######################################################################
-        #
-        self.o_in_ep_num = Signal(4)
-        self.o_in_ep_data_pid = Array([Signal() for i in range(num_endpoints)])
-        self.i_in_ep_ready = Array([Signal() for i in range(num_endpoints)])
-        self.o_in_start = Signal()
-        self.o_in_commit = Signal()
-        self.o_in_rollback = Signal()
-        self.i_in_data = Signal(8)
-        self.i_in_data_valid = Signal()
-        self.o_in_data_get = Signal()
-
-        ## protocol engine -> tx mux
-        self.in_tx_pkt_start = Signal()
-        self.in_tx_pid = Signal(4)
-
-        self.out_tx_pkt_start = Signal()
-        self.out_tx_pid = Signal(4)
-
-        # usb_tx interface
-        self.tx_pkt_start   = Signal(1)
-        self.tx_pkt_end     = Signal(1)
-        self.tx_pid         = Signal(4)
-        self.tx_data_avail  = Signal(1)
-        self.tx_data_get    = Signal(1)
-        self.tx_data        = Signal(8) # FIXME: this needs to be synchronized with tx_data_avail/get
-
-
-
-        #######################################################################
-        #######################################################################
-        #### RX Phy
-        #######################################################################
-        #######################################################################
-        self.submodules.usbfsrx = usbfsrx = UsbFsRx(
-            usbp_raw = self.iobuf.usb_p_rx,
-            usbn_raw = self.iobuf.usb_n_rx
-        )
-
-        ## usb_rx interface
-        self.rx_pkt_start   = Signal(1)
-        self.rx_pkt_end     = Signal(1)
-        self.rx_pid         = Signal(4)
-        self.rx_addr        = Signal(7)
-        self.rx_endp        = Signal(4)
-        self.rx_frame_num   = Signal(11)
-        self.rx_data_put    = Signal(1)
-        self.rx_data        = Signal(8)
-        self.rx_pkt_valid   = Signal(1)
-
-        self.comb += [
-            self.rx_pkt_start.eq(usbfsrx.o_pkt_start),
-            self.rx_pkt_end.eq(usbfsrx.o_pkt_end),
-            self.rx_pid.eq(usbfsrx.o_pkt_pid),
-            self.rx_addr.eq(usbfsrx.o_pkt_token_payload[4:11]),
-            self.rx_endp.eq(usbfsrx.o_pkt_token_payload[0:4]),
-            self.rx_frame_num.eq(usbfsrx.o_pkt_token_payload),
-            self.rx_data_put.eq(usbfsrx.o_pkt_data_put),
-            self.rx_data.eq(usbfsrx.o_pkt_data),
-            self.rx_pkt_valid.eq(usbfsrx.o_pkt_good),
-        ]
-
-
-        #######################################################################
-        #######################################################################
-        #### TX Phy
-        #######################################################################
-        #######################################################################
-        self.submodules.usbfstx = usbfstx = UsbFsTx(
-            i_bit_strobe = usbfsrx.o_bit_strobe,
-            i_pkt_start = self.tx_pkt_start,
-            i_pid = self.tx_pid,
-            i_token_payload = Constant(0, 11),
-            i_data_valid = self.tx_data_avail,
-            i_data_payload = self.tx_data,
-        )
-
-        self.comb += [
-            self.iobuf.usb_tx_en.eq(usbfstx.o_oe),
-            self.iobuf.usb_p_tx.eq(usbfstx.o_usbp),
-            self.iobuf.usb_n_tx.eq(usbfstx.o_usbn),
-            self.tx_pkt_end.eq(usbfstx.o_pkt_end),
-            self.tx_data_get.eq(usbfstx.o_data_get)
-        ]
-
-        #######################################################################
-        #######################################################################
-        #### Protocol Engine to TX Phy Mux
-        #######################################################################
-        #######################################################################
-        self.sync += [
-            self.tx_pkt_start.eq(self.in_tx_pkt_start | self.out_tx_pkt_start),
-            self.tx_pid.eq(Mux(self.out_tx_pkt_start, self.out_tx_pid, self.in_tx_pid)),
-        ]
-
-        #######################################################################
-        #######################################################################
-        #### Protocol Engine Support
-        #######################################################################
-        #######################################################################
-        #
-        # Protocol Engine Support is responsible for basic functionality
-        # required by both the OUT and IN protocol engines.  This includes
-        # keeping track of the current transfer address, endpoint number,
-        # and start of frame tokens.
-        #
-
-        # USB Packet IDs
-        OUT     = 0b0001
-        IN      = 0b1001
-        SOF     = 0b0101
-        SETUP   = 0b1101
-        DATA0   = 0b0011
-        DATA1   = 0b1011
-        ACK     = 0b0010
-        NAK     = 0b1010
-        STALL   = 0b1110
-
-        # PID from most recent token
-        self.current_token = Signal(4)
-
-        # Endpoint number from most recent token
-        self.current_endp = Signal(4)
-
-        # True if most recent packet received was a valid token directed
-        # towards this usb device
-        self.valid_request_token_pre = Signal(1)
-        self.valid_request_token = Signal(1)
-
-        self.comb += [
-            self.valid_request_token_pre.eq(
-                (self.rx_pkt_valid == 0b1) and
-                (self.rx_pid[0:2] == 0b01) and
-                (self.rx_addr == self.dev_addr)
-            )
-        ]
-
-        self.sync += [
-            self.valid_request_token.eq(self.valid_request_token_pre),
-
-            If(self.valid_request_token,
-                self.current_token.eq(self.rx_pid),
-                self.current_endp.eq(self.rx_endp)
-            )
-        ]
-
-        #######################################################################
-        #######################################################################
-        #### OUT Protocol Engine
-        #######################################################################
-        #######################################################################
-        #
-        # The OUT Protocol Engine handles data transfer OUT from the USB host
-        # to the USB device. It is responsible for acknowledging valid data
-        # from the host by sending ACK handshake packets, applying back-pressure
-        # with NAK handshake packets, and rejecting bad data packets by not
-        # responding.
-        #
-        # The OUT PE explicitly does not check data toggle.  It is up to the
-        # endpoint buffer to track, handle, and reset data toggle.
-        #
-
-        # Qualify with rx_pkt_end to indicate a valid out token has
-        # been received.
-        self.valid_out_token = Signal(1)
-
-        self.comb += [
-            self.valid_out_token.eq(
-                self.valid_request_token &
-                (
-                    self.current_token == OUT or
-                    self.current_token == SETUP
-                )
-            )
-        ]
-
-        # Qualify with rx_pkt_end to indicate a valid data packet has been
-        # received
-        self.valid_data_packet = Signal(1)
-
-        self.comb += [
-            self.valid_data_packet.eq(
-                self.rx_pkt_valid == 0b1 and
-                self.rx_pid[0:3] == 0b011
-            )
-        ]
-
-
-        ###############################
-        ## OUT State Machine
-        ###############################
-        self.submodules.out_pe = out_pe = FSM()
-
-        # Wait for a valid OUT or SETUP token.  Once we get a token, decide
-        # immediately whether any coming data needs to be NAKed or not.
-        out_pe.act(
-            "WAIT_OUT_TOK",
-            If(self.rx_pkt_end & self.valid_out_token,
-#                If(self.i_out_ep_ready[self.current_endp],
-                    NextState("WAIT_DATA")
-#                ).Else(
-#                    NextState("WAIT_DATA_NAK")
-#                )
-            )
-        )
-
-        # Wait for a valid data packet.  If any other packet comes in, or if the
-        # data packet is not valid, or if the data PID does not match, then cancel
-        # and roll-back the current data transfer.
-        out_pe.act(
-            "WAIT_DATA",
-            If(self.rx_pkt_end,
-                If(self.valid_data_packet,
-                    NextState("SEND_ACK")
-                ).Else(
-                    NextState("ROLLBACK")
-                ),
-            )
-        )
-
-        out_pe.act(
-            "SEND_ACK",
-            self.out_tx_pid.eq(ACK),
-            self.out_tx_pkt_start.eq(1),
-            self.o_out_commit.eq(1),
-            NextState("WAIT_OUT_TOK")
-        )
-
-        # Similar to the WAIT_DATA state, except this will always roll-back the transfer
-        # and reply to a valid data packet with with a NAK handshake.
-        out_pe.act(
-            "WAIT_DATA_NAK",
-            If(self.rx_pkt_end,
-                If(self.valid_data_packet,
-                    NextState("SEND_NAK")
-                ).Else(
-                    NextState("ROLLBACK")
-                )
-            )
-        )
-
-        out_pe.act(
-            "SEND_NAK",
-            self.out_tx_pid.eq(NAK),
-            self.out_tx_pkt_start.eq(1),
-            NextState("ROLLBACK")
-        )
-
-        out_pe.act(
-            "ROLLBACK",
-            self.o_out_rollback.eq(1),
-            NextState("WAIT_OUT_TOK")
-        )
-
-        self.sync += [
-#            self.o_out_start.eq(out_start),
-#            If(out_start,
-#                self.o_out_ep_num.eq(self.current_endp),
-#                self.o_out_data_pid.eq()
-#            )
-        ]
-
-        #######################################################################
-        #######################################################################
-        #### IN Protocol Engine
-        #######################################################################
-        #######################################################################
-        #
-        # The IN Protocol Engine handles data transfer IN to the USB host
-        # from the USB device. It is responsible for sending data packets to the
-        # host in response to IN tokens, applying back-pressure with NAK
-        # handshake packets, and replaying data packets that were not yet
-        # acknowledged by the host
-        #
-        # The IN PE explicitly does not generate its own data toggle.  It is up
-        # to the endpoint buffer to set the data toggle to the IN PE.
-        #
-
-        # Qualify with rx_pkt_end to indicate a valid in token has
-        # been received.
-        self.valid_in_token = Signal(1)
-
-        self.comb += [
-            self.valid_in_token.eq(
-                self.valid_request_token &
-                self.current_token == IN
-            )
-        ]
-
-        # Qualify with rx_pkt_end to indicate a valid ACK handshake has
-        # been received
-        self.valid_ack_packet = Signal(1)
-
-        self.comb += [
-            self.valid_ack_packet.eq(
-                self.rx_pkt_valid == 0b1 and
-                self.rx_pid == ACK
-            )
-        ]
-
-
-        ###############################
-        ## IN State Machine
-        ###############################
-        self.submodules.in_pe = in_pe = FSM()
-
-        # Wait for a valid IN token then move on to the next state.
-        in_pe.act(
-            "WAIT_IN_TOK",
-            If(self.rx_pkt_end & self.valid_in_token,
-                NextState("SEND_RESPONSE")
-            )
-        )
-
-        # Decide whether a data packet or NAK handshake should be sent.
-        in_pe.act(
-            "SEND_RESPONSE",
-            If(self.i_in_ep_ready[self.current_endp],
-                NextState("SEND_DATA")
-            ).Else(
-                NextState("SEND_NAK")
-            )
-        )
-
-        # Send a data packet to the host
-        in_pe.act(
-            "SEND_DATA",
-            self.in_tx_pid.eq(Mux(self.o_in_ep_data_pid[self.current_endp], DATA1, DATA0)),
-            self.in_tx_pkt_start.eq(1),
-            NextState("WAIT_ACK")
-        )
-
-        # Send a NAK handshake to the host
-        in_pe.act(
-            "SEND_NAK",
-            self.in_tx_pid.eq(NAK),
-            self.in_tx_pkt_start.eq(1),
-            NextState("WAIT_IN_TOK")
-        )
-
-        # Wait for ACK handshake from the host. If a valid packet other than ACK
-        # is received, then the transfer failed and must be rolled back.  If a
-        # valid IN token is received, then move to the SEND_RESPONSE state.
-        in_pe.act(
-            "WAIT_ACK",
-            If(self.rx_pkt_end,
-                If(self.valid_ack_packet,
-                    self.o_in_commit.eq(1),
-                    NextState("WAIT_IN_TOK")
-                ).Elif(self.valid_in_token,
-                    self.o_in_rollback.eq(1),
-                    NextState("SEND_RESPONSE")
-                ).Else(
-                    self.o_in_rollback.eq(1),
-                    NextState("WAIT_IN_TOK")
-                )
-            )
-        )
-
-        """
