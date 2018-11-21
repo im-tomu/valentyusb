@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from itertools import zip_longest
+
 import CrcMoose3 as crc
 
 import unittest
@@ -1683,7 +1685,6 @@ class TestIoBuf(Module):
             ),
         ]
 
-
     def recv(self, v):
         if v == '0' or v == '_':
             # SE0 - both lines pulled low
@@ -1706,6 +1707,21 @@ class TestIoBuf(Module):
         else:
             assert False, "Unknown value: %s" % v
 
+    def current(self):
+        usb_p = yield self.usb_p
+        usb_n = yield self.usb_n
+        values = (usb_p, usb_n)
+
+        if values == (0, 0):
+            return '_'
+        elif values == (1, 1):
+            return '1'
+        elif values == (1, 0):
+            return 'J'
+        elif values == (0, 1):
+            return 'K'
+        else:
+            assert False, values
 
 
 def token_packet(pid, addr, endp):
@@ -1766,6 +1782,7 @@ def data_packet(pid, payload):
 
     """
     assert pid in (PID.DATA0, PID.DATA1), pid
+    payload = list(payload)
     return encode_pid(pid) + encode_data(payload + crc16(payload))
 
 
@@ -1810,48 +1827,81 @@ def sof_packet(frame):
     return encode_pid(PID.SOF) + encode_data(data)
 
 
+def pp_packet(p):
+    """
+    >>> print(pp_packet(wrap_packet(token_packet(PID.SETUP, 0, 0))))
+    KKKK 1 Sync
+    JJJJ 2 Sync
+    KKKK 3 Sync
+    JJJJ 4 Sync
+    KKKK 5 Sync
+    JJJJ 6 Sync
+    KKKK 7 Sync
+    KKKK 8 Sync
+    KKKK 1 PID
+    JJJJ 2 PID
+    JJJJ 3 PID
+    JJJJ 4 PID
+    KKKK 5 PID
+    KKKK 6 PID
+    JJJJ 7 PID
+    KKKK 8 PID
+    JJJJ 1 Address
+    KKKK 2 Address
+    JJJJ 3 Address
+    KKKK 4 Address
+    JJJJ 5 Address
+    KKKK 6 Address
+    JJJJ 7 Address
+    KKKK 1 Endpoint
+    JJJJ 2 Endpoint
+    KKKK 3 Endpoint
+    JJJJ 4 Endpoint
+    KKKK 1 CRC5
+    KKKK 2 CRC5
+    JJJJ 3 CRC5
+    KKKK 4 CRC5
+    JJJJ 5 CRC5
+    ____ SE0
+    ____ SE0
+    JJJJ END
+    """
+    output = []
+    chunks = [p[i:i+4] for i in range(0, len(p), 4)]
+    for i in range(1, 9):
+        if chunks:
+            output.extend([chunks.pop(0), ' %i Sync\n' % i])
+    for i in range(1, 9):
+        if chunks:
+            output.extend([chunks.pop(0), ' %i PID\n' % i])
+    for i in range(1, 8):
+        if chunks:
+            output.extend([chunks.pop(0), ' %i Address\n' % i])
+    for i in range(1, 5):
+        if chunks:
+            output.extend([chunks.pop(0), ' %i Endpoint\n' % i])
+    for i in range(1, 6):
+        if chunks:
+            output.extend([chunks.pop(0), ' %i CRC5\n' % i])
+
+    while len(chunks) > 3:
+        output.extend([chunks.pop(0), '\n'])
+
+    if chunks:
+        output.extend([chunks.pop(0), ' SE0\n'])
+    if chunks:
+        output.extend([chunks.pop(0), ' SE0\n'])
+    if chunks:
+        output.extend([chunks.pop(0), ' END'])
+
+    return "".join(output)
+
+
 def wrap_packet(data):
     """Add the sync + eop sections and do nrzi encoding.
 
-    >>> wrap_packet(token_packet(PID.SETUP, 0, 0))
-    'kkkk' 1 S
-    'jjjj' 2 S
-    'kkkk' 3 S
-    'jjjj' 4 S
-    'kkkk' 5 S
-    'jjjj' 6 S
-    'kkkk' 7 S
-    'kkkk' 8 S
-    'kkkk' 1 P
-    'jjjj' 2 P
-    'jjjj' 3 P
-    'jjjj' 4 P
-    'kkkk' 5 P
-    'kkkk' 6 P
-    'jjjj' 7 P
-    'kkkk' 8 P
-    'jjjj' 1 A
-    'kkkk' 2 A
-    'jjjj' 3 A
-    'kkkk' 4 A
-    'jjjj' 5 A
-    'kkkk' 6 A
-    'jjjj' 7 A
-    'kkkk' 1 E
-    'jjjj' 2 E
-    'jjjj' 3 E
-    'kkkk' 4 E
-    'jjjj' 1 C
-    'kkkk' 2 C
-    'jjjj' 3 C
-    'kkkk' 4 C
-    'jjjj' 5 C
-    '____' SE0
-    '____' SE0
-    'jjjj' END
-
     >>> wrap_packet(handshake_packet(PID.ACK))
-    'kkkkjjjjkkkkjjjjkkkkjjjjkkkkkkkkjjjjjjjjkkkkjjjjjjjjkkkkkkkkkkkk________jjjj'
+    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKJJJJJJJJKKKKJJJJJJJJKKKKKKKKKKKK________JJJJ'
 
     """
     return nrzi(sync() + data + eop())
@@ -1898,261 +1948,415 @@ def squash_packet(data):
 #
 #
 
+def grouper(n, iterable, pad=None):
+    """Group iterable into multiples of n (with optional padding).
+
+    >>> list(grouper(3, 'abcdefg', 'x'))
+    [('a', 'b', 'c'), ('d', 'e', 'f'), ('g', 'x', 'x')]
+
+    """
+    return zip_longest(*[iter(iterable)]*n, fillvalue=pad)
+
+
 class TestUsbDevice(TestCase):
-    def do(self, packets):
-        name = self.id()
 
-        iobuf = TestIoBuf()
-        dut = UsbDevice(iobuf, 0)
+    maxDiff=None
 
-        recieved_bytes = []
-        recieved_byte = Signal(8)
-        sending_bytes = []
-        sending_byte = Signal(8)
+    def setUp(self):
+        endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.OUT]
 
-        def clock(data):
-            yield idle_signal.eq(0)
-            for v in data:
-                # Pull bytes from sending_bytes
-                yield dut.endp_ins[0].valid.eq(len(sending_bytes) > 0)
-                if len(sending_bytes) > 0:
-                    yield sending_byte.eq(sending_bytes[0])
-                    yield dut.endp_ins[0].payload.data.eq(sending_bytes[0])
+        self.iobuf = TestIoBuf()
+        self.dut = UsbDevice(self.iobuf, 0, endpoints)
 
-                    ready = yield dut.endp_ins[0].ready
+        self.buffers_in  = {}
+        self.buffers_out = {}
+
+        buffer_signals_layout = [
+            ('head', 8),
+            ('size', 32),
+        ]
+
+        self.packet_h2d = Signal(1)
+        self.packet_d2h = Signal(1)
+        self.packet_idle = Signal(1)
+
+        self.buffer_signals = []
+        for i, ep in enumerate(endpoints):
+            if ep & EndpointType.IN:
+                buffer_in_signals = Record(buffer_signals_layout, name="ep_%i_in" % i)
+                self.buffers_in[i] = []
+            else:
+                buffer_in_signals = None
+
+            if ep & EndpointType.OUT:
+                buffer_out_signals = Record(buffer_signals_layout, name="ep_%i_out" % i)
+                self.buffers_out[i] = []
+            else:
+                buffer_out_signals = None
+
+            self.buffer_signals.append((buffer_in_signals, buffer_out_signals))
+
+    ######################################################################
+    ## Helpers
+    ######################################################################
+    def _set_buffer_signals(self):
+        """Set the valid/ready/data signals for each endpoint buffer."""
+        for i, (in_signals, out_signals) in enumerate(self.buffer_signals):
+            if in_signals:
+                # Debugging info
+                buffer = self.buffers_in[i]
+                if buffer is None:
+                    yield in_signals.size.eq(-1)
+                else:
+                    yield in_signals.size.eq(len(buffer))
+                    if len(buffer) > 0:
+                        yield in_signals.head.eq(buffer[0])
+
+                # Pull bytes from in buffers to the host
+                if not buffer:
+                    yield self.dut.endp_ins[i].valid.eq(0)
+                else:
+                    yield self.dut.endp_ins[i].payload.data.eq(buffer[0])
+                    yield self.dut.endp_ins[i].valid.eq(1)
+
+                    ready = yield self.dut.endp_ins[i].ready
                     if ready:
-                        sending_bytes.pop(0)
+                        buffer.pop(0)
 
-                yield from dut.iobuf.recv(v)
+            if out_signals:
+                # Debugging info
+                buffer = self.buffers_out[i]
+                if buffer is None:
+                    yield out_signals.size.eq(-1)
+                else:
+                    yield out_signals.size.eq(len(buffer))
+                    if len(buffer) > 0:
+                        yield out_signals.head.eq(buffer[-1])
 
-                # Push bytes into received_bytes
-                valid = yield dut.endp_outs[0].valid
-                if valid:
-                    yield recieved_byte.eq(dut.endp_outs[0].payload.data)
-                    data = yield dut.endp_outs[0].data
-                    recieved_bytes.append(data)
+                # Set the ready signal
+                if buffer is None:
+                    yield self.dut.endp_outs[i].ready.eq(0)
+                else:
+                    yield self.dut.endp_outs[i].ready.eq(1)
 
-                yield
+                    # Push bytes received from host into out buffers
+                    valid = yield self.dut.endp_outs[i].valid
+                    if valid:
+                        data = yield self.dut.endp_outs[i].data
+                        buffer.append(data)
 
-        idle_signal = Signal(1)
+    def set_data(self, ep, data):
+        """Set an endpoints buffer to given data to be sent."""
+        assert isinstance(data, (list, tuple))
+        self.expect_empty(ep)
+        print("Set %i: %r" % (ep, data))
+        self.buffers_in[ep].extend(data)
 
-        def idle():
-            yield from dut.iobuf.recv('I')
-            yield idle_signal.eq(1)
-            for i in range(0, 8):
-                yield
+    def expect_empty(self, ep):
+        """Except that an endpoints buffer is empty."""
+        assert ep in self.buffers_in, (ep, self.buffers_in.keys())
+        assert self.buffers_in[ep] is not None, "Endpoint currently blocked!"
+        self.assertEqual(0, len(self.buffers_in[ep]))
 
-        # setup stimulus
+    def expect_data(self, ep, data):
+        """Expect that an endpoints buffer has given contents."""
+        assert ep in self.buffers_out, self.buffers_out.keys()
+        assert self.buffers_out[ep] is not None, "Endpoint currently blocked!"
+        print("Got %i: %r (expected: %r)" % (ep, self.buffers_out[ep], data))
+        self.assertSequenceEqual(self.buffers_out[ep], data)
+        self.buffers_out[ep].clear()
+
+    def block_ep(self, ep):
+        if ep in self.buffers_in:
+            assert not self.buffers_in[ep], self.buffers_in[ep]
+            self.buffers_in[ep] = None
+        elif ep in self.buffers_out:
+            assert not self.buffers_out[ep], self.buffers_out[ep]
+            self.buffers_out[ep] = None
+        else:
+            assert False, "Unknown ep %r" % ep
+
+    def unblock_ep(self, ep):
+        if ep in self.buffers_in:
+            assert self.buffers_in[ep] is None, self.buffers_in[ep]
+            self.buffers_in[ep] = []
+        elif ep in self.buffers_out:
+            assert self.buffers_out[ep] is None, self.buffers_out[ep]
+            self.buffers_out[ep] = []
+        else:
+            assert False, "Unknown ep %r" % ep
+
+    def idle(self, cycles=10):
+        yield self.packet_idle.eq(1)
+        yield from self.dut.iobuf.recv('I')
+        for i in range(0, cycles):
+            yield
+        yield self.packet_idle.eq(0)
+
+    # Host->Device
+    def _send_packet(self, packet):
+        """Send a USB packet."""
+        packet = wrap_packet(packet)
+        for v in packet:
+            yield from self._set_buffer_signals()
+            yield from self.dut.iobuf.recv(v)
+            yield
+        yield from self.idle()
+
+    def send_token_packet(self, pid, addr, ep):
+        yield self.packet_h2d.eq(1)
+        yield from self._send_packet(token_packet(pid, addr, ep))
+        yield self.packet_h2d.eq(0)
+
+    def send_data_packet(self, pid, data):
+        assert pid in (PID.DATA0, PID.DATA1), pid
+        yield self.packet_h2d.eq(1)
+        yield from self._send_packet(data_packet(pid, data))
+        yield self.packet_h2d.eq(0)
+
+    def send_ack(self):
+        yield self.packet_h2d.eq(1)
+        yield from self._send_packet(handshake_packet(PID.ACK))
+        yield self.packet_h2d.eq(0)
+
+    def send_nak(self):
+        yield self.packet_h2d.eq(1)
+        yield from self._send_packet(handshake_packet(PID.NAK))
+        yield self.packet_h2d.eq(0)
+
+    # Device->Host
+    def expect_packet(self, packet):
+        """Except to receive the following USB packet."""
+        yield self.packet_d2h.eq(1)
+
+        # Wait for transmission to happen
+        yield from self.dut.iobuf.recv('I')
+        tx = 0
+        for i in range(0, 100):
+            tx = yield self.dut.iobuf.usb_tx_en
+            if tx:
+                break
+            yield
+        self.assertTrue(tx)
+
+        # Read in the packet data
+        result = ""
+        for i in range(0, 2048):
+            yield from self._set_buffer_signals()
+
+            result += yield from self.iobuf.current()
+            yield
+            tx = yield self.dut.iobuf.usb_tx_en
+            if not tx:
+                break
+        self.assertFalse(tx)
+        yield self.packet_d2h.eq(0)
+
+        # Check the packet received matches
+        expected = pp_packet(wrap_packet(packet))
+        actual = pp_packet(result)
+
+        self.assertMultiLineEqual(expected, actual)
+
+
+    # No expect_token_packet, as the host is the only one who generates tokens.
+
+    def expect_data_packet(self, pid, data):
+        assert pid in (PID.DATA0, PID.DATA1), pid
+        yield self.packet_d2h.eq(1)
+        yield from self.expect_packet(data_packet(pid, data))
+        yield self.packet_d2h.eq(0)
+
+    def expect_ack(self):
+        yield self.packet_d2h.eq(1)
+        yield from self.expect_packet(handshake_packet(PID.ACK))
+        yield self.packet_d2h.eq(0)
+
+    def expect_nak(self):
+        yield self.packet_d2h.eq(1)
+        yield from self.expect_packet(handshake_packet(PID.NAK))
+        yield self.packet_d2h.eq(0)
+
+    # Full transactions
+    # ->token  ->token
+    # <-data   ->data
+    # ->ack    <-ack
+
+    # Device to Host
+    # ->in
+    # <-data0[...]
+    # ->ack
+    # ->in
+    # <-data1[...]
+    # ->ack
+    # ....
+    def transaction_data_in(self, addr, ep, data, chunk_size=8):
+        i = PID.DATA1
+        for chunk in grouper(chunk_size, data, pad=0):
+            self.set_data(ep, chunk)
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(i, chunk)
+            yield from self.send_ack()
+            if i == PID.DATA0:
+                i = PID.DATA1
+            else:
+                i = PID.DATA0
+
+    # Host to Device
+    # ->setup
+    # ->data0[...]
+    # <-ack
+    def transaction_setup(self, addr, ep, data):
+        self.expect_data(ep, [])
+        yield from self.send_token_packet(PID.SETUP, addr, ep)
+        yield from self.send_data_packet(PID.DATA0, data)
+        yield from self.expect_ack()
+        self.expect_data(ep, data + crc16(data))
+
+
+    # Host to Device
+    # ->out
+    # ->data0[...]
+    # <-ack
+    # ->out
+    # ->data1[...]
+    # <-ack
+    # ....
+    def transaction_data_out(self, addr, ep, data, chunk_size=8):
+        i = 1
+        for chunk in grouper(chunk_size, data, pad=0):
+            self.expect_data(ep, [])
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(i, chunk)
+            yield from self.expect_ack()
+            self.expect_data(ep, data + crc16(data))
+            if i == 0:
+                i = 1
+            else:
+                i = 0
+
+    # Host to Device
+    # ->out
+    # ->data1[]
+    # <-ack
+    def transaction_status(self, addr, ep):
+        yield from self.send_token_packet(PID.OUT, addr, ep)
+        yield from self.send_data_packet(PID.DATA1, [])
+        yield from self.expect_ack()
+        self.expect_data(ep, crc16([]))
+
+    def control_transfer(self, addr, setup_data, descriptor_data):
+        # Setup stage
+        yield from self.transaction_setup(addr, 0, setup_data)
+        # Data stage
+        yield from self.transaction_data_in(addr, 0, descriptor_data)
+        # Status stage
+        yield from self.transaction_status(addr, 0)
+
+    def run_stim(self, stim):
+        run_simulation(self.dut, stim(), vcd_name="vcd/%s.vcd" % self.id(), clocks={"sys": 4})
+
+    ######################################################################
+    ######################################################################
+
+    def test_transaction_setup(self):
         def stim():
-            yield dut.endp_outs[0].ready.eq(1)
+            yield from self.transaction_setup(28, 0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
+        self.run_stim(stim)
 
-            yield from idle()
+    def test_control_with_nak(self):
+        def stim():
+            addr = 22
 
-            for recv, send in packets:
-                if recv is None and send is None:
-                    print("-"*50)
-                    for i in range(0, 256):
-                        yield from idle()
-                    continue
+            self.transaction_setup(
+                addr, 0,
+                # Get descriptor, Index 0, Type 03, LangId 0000, wLength 64
+                [0x80, 0x06, 0x00, 0x03, 0x00, 0x00, 0x40, 0x00],
+            )
 
-                if recv is not None:
-                    recv_pkt, expected_bytes = recv
-                    recieved_bytes.clear()
-                    yield from clock(recv_pkt)
-                    print("Received", recieved_bytes, "(expected: %s)" % repr(expected_bytes))
-                    #self.assertSequenceEqual(recieved_bytes, expected_bytes, "%s %s" % (recv_pkt, expected_bytes))
+            self.expect_empty(0)
+            yield from self.send_token_packet(PID.IN, addr, 0)
+            # No data in buffer, expect NAK
+            yield from self.expect_nak()
 
-                if send is not None:
-                    sending_bytes.clear()
-                    send_pkt, data_bytes = send
+            data = [0x04, 0x03, 0x09, 0x04]
+            self.set_data(0, data)
+            yield from self.send_token_packet(PID.IN, addr, 0)
+            yield from self.expect_data_packet(PID.DATA1, data)
+            yield from self.send_ack()
 
-                    sending_bytes.extend(data_bytes)
-                    print("Sending", sending_bytes)
-                    yield from clock(squash_packet(send_pkt))
-                    print("Remaining", sending_bytes)
-                    #assert len(sending_bytes) == 0, sending_bytes
+        self.run_stim(stim)
 
-                yield from idle()
+    def test_control_transfer(self):
+        def stim():
+            yield from self.control_transfer(
+                20,
+                # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
+                [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00],
+                # 12 byte descriptor, max packet size 8 bytes
+                [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                 0x08, 0x09, 0x0A, 0x0B],
+            )
+        self.run_stim(stim)
 
+    def test_in_transfer(self):
+        def stim():
+            addr = 28
+            ep = 1
 
-        # run simulation
-        run_simulation(dut, stim(), vcd_name="vcd/%s.vcd" % name, clocks={"sys": 4})
+            d = [0x41, 0x01]
 
-    def test_setup_data(self):
+            self.block_ep(ep)
+            # First nak
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_nak()
 
-        packets = [(None, None)]
+            # Second nak
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_nak()
 
-        #packets.append((
-        #   (<packet host->device>, <expected received data>),
-        #   (<packet device->host>, <data to feed>),
-        # ))
-        # ----------------------------
+            # Third attempt succeeds, but we nak
+            self.unblock_ep(ep)
+            self.set_data(ep, d)
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(PID.DATA1, d)
+            yield from self.send_nak()
 
-        packets.append((
-            (wrap_packet(token_packet(PID.SETUP, 28, 2)), []),
-            None,
-        ))
-        d = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
-        packets.append((
-            (wrap_packet(data_packet(PID.DATA0, d)), d+crc16(d)),
-            None,
-        ))
-        packets.append((
-            None,
-            (wrap_packet(handshake_packet(PID.ACK)), []),
-        ))
-        packets.append((None, None))
+            # Next attempt everything goes perfectly!
+            self.set_data(ep, d)
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(PID.DATA1, d)
+            yield from self.send_ack()
 
-        # ============================
-        # Setup Stage
-        # ----------------------------
-        # ->pid:setup
-        packets.append((
-            (wrap_packet(token_packet(PID.SETUP, 20, 0)), []),
-            None,
-        ))
-        # ->pid:data0 [80 06 00 06 00 00 0A 00] # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
-        d = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
-        packets.append((
-            (wrap_packet(data_packet(PID.DATA0, d)), d+crc16(d)),
-            None,
-        ))
-        # <-pid:ack
-        packets.append((
-            None,
-            (wrap_packet(handshake_packet(PID.ACK)), []),
-        ))
+        self.run_stim(stim)
 
-        packets.append((
-            ('-'*200, []),
-            None,
-        ))
+    def test_out_transfer(self):
+        def stim():
+            addr = 28
+            ep = 2
 
-        # Data Stage
-        # ----------------------------
-        # 12 byte descriptor, max packet size 8 bytes
+            d = [0x41, 0x01]
 
-        # First 8 bytes
-        # ->pid:in
-        packets.append((
-            (wrap_packet(token_packet(PID.IN, 20, 0)), []),
-            None,
-        ))
-        # <-pid:data1 [00 01 02 03 04 05 06 07]
-        d = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
-        packets.append((
-            None,
-            (wrap_packet(data_packet(PID.DATA1, d)), d),
-        ))
-        # ->pid:ack
-        packets.append((
-            (wrap_packet(handshake_packet(PID.ACK)), []),
-            None,
-        ))
+            self.block_ep(ep)
 
-        # Remaining 4 bytes + padding
-        # ->pid:in
-        packets.append((
-            (wrap_packet(token_packet(PID.IN, 20, 0)), []),
-            None,
-        ))
-        # <-pid:data0 [08 09 0A 0B 00 00 00 00]
-        d = [0x08, 0x09, 0x0A, 0x0B, 0x00, 0x00, 0x00, 0x00]
-        packets.append((
-            None,
-            (wrap_packet(data_packet(PID.DATA0, d)), d),
-        ))
-        # ->pid:ack
-        packets.append((
-            (wrap_packet(handshake_packet(PID.ACK)), []),
-            None,
-        ))
+            # First nak
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_nak()
 
-        packets.append((
-            ('-'*200, []),
-            None,
-        ))
+            # Second nak
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_nak()
 
-        # Status Stage
-        # ----------------------------
-        # ->pid:out
-        packets.append((
-            (wrap_packet(token_packet(PID.OUT, 20, 0)), []),
-            None,
-        ))
-        # ->pid:data1 []
-        packets.append((
-            (wrap_packet(data_packet(PID.DATA1, [])), []),
-            None,
-        ))
-        # <-pid:ack
-        packets.append((
-            None,
-            (wrap_packet(handshake_packet(PID.ACK)), []),
-        ))
-        # ============================
+            # Third attempt succeeds
+            self.unblock_ep(ep)
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_ack()
+            self.expect_data(ep, d + crc16(d))
 
-        packets.append((None, None))
-
-        # ----------------------------
-        # ->pid:setup
-        # ->pid:data0 [80 06 00 03 00 00 40 00] # Get descriptor, Index 0, Type 03, LangId 0000, wLength 64
-        # <-pid:ack
-
-        # ->pid:in
-        # <-pid:nak
-
-        # ->pid:in
-        # ->pid:data1 [04 03 09 04] # String descriptor, bLength 4, bDescriptorType 0x3 (String), wLangId: 0x0409 (Eng US)
-        # <-pid:ack
-
-        # ->pid:in
-        # ->pid:data1 []
-        # <-pid:ack
-
-        # ->pid:setup
-        # ->pid:data0 [80 06 03 03 09 04 00 02]
-        # <-pid:ack
-
-        # ->pid:in
-        # ->pid:data1 [12 03 30 00 30 00 33 00 44 00 39 00 34 00 34 00 41 00]
-        # <-pid:ack
-
-        # ->pid:in
-        # ->pid:data1 []
-        # <-pid:ack
-
-        # ->pid:setup
-        # ->pid:data0 [21 09 41 03 00 02 00]
-        # <-pid:ack
-        # ->pid:out
-        # <-pid:data1 [41 01]
-        # <-pid:nak
-        # ->pid:out
-        # <-pid:data1 [41 01]
-        # <-pid:ack
-        # ->pid:in
-        # <-pid:nak
-        # ->pid:in
-        # <-pid:data1 []
-        # <-pid:ack
-
-
-
-        # up addr 0 ep 0
-
-        # data 1 [12 01 00 02 02 00 00 20 50 1D 30 61 00 00 00 00 00 01]
-
-        # ack
-
-        # out addr 0 ep 0
-
-        # data 1 []
-
-        # ack
-        self.do(packets)
-
-
+        self.run_stim(stim)
 
 
 if __name__ == '__main__':

@@ -1968,7 +1968,8 @@ class UsbDevice(Module):
         ]
 
         # Tracks if we are sending Data0 or Data1
-        self.data_count = Signal(1)
+        self.last_sent_data = Signal(1)
+        self.last_recv_data = Signal(1)
 
         self.submodules.pe = pe = FSM()
 
@@ -1999,13 +2000,11 @@ class UsbDevice(Module):
 
                 # Setup for the packet
                 If(self.current_pid == PID.SETUP,
-                    self.data_count.eq(0),
+                    NextValue(self.last_recv_data, 1),
                     NextState("RECV_DATAX")
                 ).Elif(self.current_pid == PID.OUT,
-                    self.data_count.eq(1),
                     NextState("RECV_DATAX"),
                 ).Elif(self.current_pid == PID.IN,
-                    self.data_count.eq(1),
                     NextState("SEND_DATAX"),
                 ).Else(
                     # Error?
@@ -2043,37 +2042,40 @@ class UsbDevice(Module):
             self.a_endp_out[self.current_endp].valid.eq(self.usbfsrx.o_pkt_data_put),
             self.a_endp_out[self.current_endp].data.eq(self.usbfsrx.o_pkt_data),
 
-            If(self.usbfsrx.o_pkt_end,
-                NextState("SEND_ACK"),
-                self.a_endp_out[self.current_endp].last.eq(1),
-            ),
-
             # Error - Tried to receive a byte, but the endpoint receiver wasn't ready!?
             If(self.usbfsrx.o_pkt_data_put & ~(self.a_endp_out[self.current_endp].ready),
-                NextState("ERROR"),
+                NextState("ROLLBACK"),
+            ),
+
+            # Successfully received
+            If(self.usbfsrx.o_pkt_end,
+                self.a_endp_out[self.current_endp].last.eq(1),
+                NextValue(self.last_recv_data, ~self.last_recv_data),
+                self.usbfstx.i_pid.eq(PID.ACK),
+                self.usbfstx.i_pkt_start.eq(1),
+                NextState("SEND_HANDSHAKE"),
+            ),
+
+        )
+
+        # Wait for the packet to end so we can send a NAK
+        pe.act(
+            "ROLLBACK",
+            If(self.usbfsrx.o_pkt_end,
+                self.usbfstx.i_pid.eq(PID.NAK),
+                self.usbfstx.i_pkt_start.eq(1),
+                NextState("SEND_HANDSHAKE"),
             ),
         )
 
+        # Send the ACK / NAK packet response
         pe.act(
-            "SEND_ACK",
-            self.usbfstx.i_pid.eq(PID.ACK),
-            self.usbfstx.i_pkt_start.eq(1),
-            NextState("SEND_HAND"),
-        )
-
-        pe.act(
-            "SEND_NAK",
-            self.usbfstx.i_pid.eq(PID.NAK),
-            self.usbfstx.i_pkt_start.eq(1),
-            NextState("SEND_HAND"),
-        )
-
-        pe.act(
-            "SEND_HAND",
+            "SEND_HANDSHAKE",
             If(self.usbfstx.o_pkt_end,
                 NextState("WAIT_TOK"),
             ),
         )
+
         # Host<-Device data path (In data path)
         # --------------------------
         # >In         >In     >In
@@ -2086,10 +2088,22 @@ class UsbDevice(Module):
         # ---------------------------
         pe.act(
             "SEND_DATAX",
-            self.usbfstx.i_pid.eq(PID.DATA0),
-            self.usbfstx.i_pkt_start.eq(1),
-            NextState("SEND_BYTES"),
+
+            If(~self.a_endp_in[self.current_endp].valid,
+                self.usbfstx.i_pid.eq(PID.NAK),
+                self.usbfstx.i_pkt_start.eq(1),
+                NextState("SEND_HANDSHAKE"),
+            ).Else(
+                If(self.last_sent_data == 0,
+                    self.usbfstx.i_pid.eq(PID.DATA1),
+                ).Else(
+                    self.usbfstx.i_pid.eq(PID.DATA0),
+                ),
+                self.usbfstx.i_pkt_start.eq(1),
+                NextState("SEND_BYTES"),
+            ),
         )
+
         pe.act(
             "SEND_BYTES",
 
@@ -2103,23 +2117,13 @@ class UsbDevice(Module):
                 NextState("RECV_ACK"),
             ),
         )
+
         pe.act(
             "RECV_ACK",
             If(self.usbfsrx.o_pkt_end,
                 If(self.usbfsrx.o_pkt_pid == PID.ACK,
-                    NextState("WAIT_TOK"),
-                ).Else(
-                    NextState("ERROR"),
+                    NextValue(self.last_sent_data, ~self.last_sent_data),
                 ),
+                NextState("WAIT_TOK"),
             ),
         )
-        # --------------------------
-        pe.act("ERROR")
-
-
-        # In transactions
-        # ===========================
-
-        # Out transactions
-        # ===========================
-
