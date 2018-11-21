@@ -2254,7 +2254,11 @@ class TestUsbDevice(TestCase):
         yield from self.transaction_status(addr, 0)
 
     def run_stim(self, stim):
-        run_simulation(self.dut, stim(), vcd_name="vcd/%s.vcd" % self.id(), clocks={"sys": 4})
+        def padfront():
+            yield from self.idle()
+            yield from stim()
+
+        run_simulation(self.dut, padfront(), vcd_name="vcd/%s.vcd" % self.id(), clocks={"sys": 4})
 
     ######################################################################
     ######################################################################
@@ -2311,9 +2315,13 @@ class TestUsbDevice(TestCase):
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_nak()
 
+            yield from self.idle()
+
             # Second nak
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_nak()
+
+            yield from self.idle()
 
             # Third attempt succeeds, but we nak
             self.unblock_ep(ep)
@@ -2321,6 +2329,8 @@ class TestUsbDevice(TestCase):
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_data_packet(PID.DATA1, d)
             yield from self.send_nak()
+
+            yield from self.idle()
 
             # Next attempt everything goes perfectly!
             self.set_data(ep, d)
@@ -2344,10 +2354,14 @@ class TestUsbDevice(TestCase):
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_nak()
 
+            yield from self.idle()
+
             # Second nak
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_nak()
+
+            yield from self.idle()
 
             # Third attempt succeeds
             self.unblock_ep(ep)

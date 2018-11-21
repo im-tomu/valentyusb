@@ -2127,3 +2127,6 @@ class UsbDevice(Module):
                 NextState("WAIT_TOK"),
             ),
         )
+
+        # --------------------------
+        pe.act("ERROR")
