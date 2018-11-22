@@ -2130,3 +2130,166 @@ class UsbDevice(Module):
 
         # --------------------------
         pe.act("ERROR")
+
+
+class UsbDeviceCpuInterface(Module, AutoCSR):
+    """
+    Implements the SW->HW interface for UsbDevice.
+    """
+
+    class EndpointStatus(IntNum):
+        EMPTY = 0
+        ARMED = 1
+        ERROR = 2
+
+    EndpointLayout = (
+        # An error has occurred.
+        ("error", 1),
+        # A packet has been sent/received.
+        ("packet", 1),
+        # Pointer to somewhere in buffer memory.
+        ("addr", 9),
+    )
+
+    class Endpoint(Module, AutoCSR):
+        def __init__(self):
+            self.submodule.ev = EventManager()
+            self.ev.error = EventSourcePulse()
+            self.ev.packet = EventSourcePulse()
+
+            # How to respond to requests;
+            #  - 00 - No response
+            #  - 01 - ACK
+            #  - 10 - NAK
+            #  - 11 - STALL
+            self.response = CSRStorage(2, write_from_dev=True)
+
+            # Pointer to somewhere in buffer memory.
+            self.ptr = CSRStorage(size)
+
+            self.layout = Record(EndpointLayout)
+            self.comb += [
+                self.ev.error.trigger.eq(self.layout.error),
+                self.ev.packet.trigger.eq(self.layout.packet),
+                self.layout.addr.eq(self.ptr + self.layout.offset),
+            ]
+
+    class EndpointIn(Endpoint):
+        """Endpoint for Host->Device data.
+
+        Writes into the buffer memory.
+        Raises packet IRQ when new packet has arrived.
+        """
+        def __init__(self, size, length=6):
+            Endpoint.__init__(self)
+
+            # How much data was written
+            self.len = CSRStatus(length)
+
+            self.comb += [
+                self.len.storage.eq(self.layout.offset),
+            ]
+
+
+    class EndpointOut(Endpoint):
+        """Endpoint for Device->Host data.
+
+        Reads from the buffer memory.
+        Raises packet IRQ when packet has been sent.
+        """
+        def __init__(self, size, length=6):
+            Endpoint.__init__(self)
+
+            # How much data is available
+            self.len = CSRStorage(length)
+
+
+    def __init__(self, endpoints=[EndpointType.BIDIR]):
+        size = 9
+
+        self.submodules.buf = buf = wishbone.SRAM(size=2**size, bus=wishbone.Interface(data_width=8))
+
+        # Provide ability for the CPU to write into the buffer RAM.
+        self.bus = bus = wishbone.Interface(data_width=32)
+        self.submodules.conv += wishbone.Converter(self.bus, self.buf.bus)
+
+        ep_ins = []
+        ep_outs = []
+        for i, endp in enumerate(endpoints):
+            if endp & EndpointType.IN:
+                eval("self.submodules.ep_%s_in = EndpointIn(size)" % i)
+                ep_ins.append(getattr(self, "ep_%s_in" % i).layout)
+            else:
+                ep_ins.append(EndpointLayout())
+
+            self.comb += [
+                ep_ins[-1].addr.eq(ep_ins[-1].addr + ep_ins[-1].offset),
+            ]
+
+            if endp & EndpointType.OUT:
+                eval("self.submodules.ep_%s_out = EndpointOut(size)" % i)
+                ep_outs.append(getattr(self, "ep_%s_out" % i).layout)
+            else:
+                ep_outs.append(EndpointLayout())
+
+            self.comb += [
+                ep_outs[-1].addr.eq(ep_outs[-1].addr + ep_outs[-1].offset),
+            ]
+
+        self.ep_ins = Array(ep_ins)
+        self.ep_outs = Array(ep_outs)
+
+        self.current_ep = Signal(max=len(endpoints))
+
+        self.current_ptr = Signal(9)
+        self.current_offset = Signal(8)
+        self.current_pos = Signal(9)
+
+        self.offset_reset = Signal()
+        self.offset_increment = Signal()
+
+        self.sync += [
+            self.current_pos.eq(self.current_ptr + self.current_offset),
+
+        ]
+
+        # Pointer control
+        self.sync += [
+            If(pkt_start,
+                self.current_ptr.eq(self.eps[self.current_ep]),
+            ),
+        ]
+
+        # Offset control
+        self.comb += [
+            self.offset_increment.eq(data_put | data_get),
+            self.offset_reset.eq(pkt_start),
+        ]
+        self.sync += [
+            If(self.offset_increment,
+                self.current_offset.eq(self.current_offset+1),
+            ),
+            If(self.offset_reset,
+                self.curent_offset.eq(0),
+            ),
+        ]
+
+        
+
+        self.clock_domains.usb_48 = ClockDomain()
+
+        self.usb_port = buf.get_port(write_capable=True, we_granularity=8, clock_domain="usb_48")
+        self.comb += [
+            self.usb_port.adr.eq(self.data_ptr.storage + self.data_len.storage)
+        ]
+
+        self.sync += [
+            If(xxxx,
+                self.data_len.eq(self.data_len + 1),
+            ),
+        ]
+
+        self.sys_port = buf.get_port(write_capable=True)
+
+
+
