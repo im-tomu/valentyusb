@@ -514,7 +514,7 @@ class RxShifter(Module):
         Asserted for one clock once the register is full.
     """
     def __init__(self, width, i_valid, i_data, i_reset):
-        # Instead of using a counter, we will use a sentinal bit in the shift
+        # Instead of using a counter, we will use a sentinel bit in the shift
         # register to indicate when it is full.
         shift_reg = Signal(width + 1)
 
@@ -679,11 +679,11 @@ class RxPacketDecode(Module):
     o_pkt_token_payload : Signal(11)
         Token packet payload.
 
-    o_pkt_data : Signal(8)
-        From data packet payload. Qualified by o_pkt_data_put.
+    o_pkt_dat_payload : Signal(8)
+        From data packet payload. Qualified by o_pkt_dat.
 
-    o_pkt_data_put : Signal(1)
-        Asserted for one clock to indicate o_pkt_data is valid.
+    o_pkt_dat : Signal(1)
+        Asserted for one clock to indicate o_pkt_dat_layload is valid.
 
     o_pkt_good : Signal(1)
         Indicates the packet has passed all relevant consistency checks for
@@ -775,6 +775,7 @@ class RxPacketDecode(Module):
             i_reset = pkt_start
         )
 
+        data_valid = pid_shifter.o_full & valid & pkt_active
 
         #######################################################################
         #
@@ -793,6 +794,15 @@ class RxPacketDecode(Module):
             data_put.eq(data_shifter.o_full & pkt_active)
         ]
 
+        # FIXME: Horrible hack, delay data by 2 o_put cycles and gate o_put by o_token.
+        data_payload_n1 = Signal(8)
+        data_payload_n0 = Signal(8)
+        self.sync += [
+            If(data_shifter.o_put,
+                data_payload_n1.eq(data_payload_n0),
+                data_payload_n0.eq(data_shifter.o_output[0:8]),
+            ),
+        ]
 
         #######################################################################
         #
@@ -803,7 +813,7 @@ class RxPacketDecode(Module):
             polynomial  = 0b1000000000000101,
             initial     = 0b1111111111111111,
             residual    = 0b1000000000001101,
-            i_valid     = pid_shifter.o_full & valid & pkt_active,
+            i_valid     = data_valid,
             i_data      = data,
             i_reset     = pkt_start
         )
@@ -829,11 +839,10 @@ class RxPacketDecode(Module):
         #
         # collect all the packet consistency checks
         #
-        self.o_pkt_data_put = Signal()
         crc16_good = Signal(1)
 
         self.sync += [
-            If(self.o_pkt_data_put,
+            If(self.data_shifter.o_put,
                 crc16_good.eq(data_crc16.o_crc_good)
             )
         ]
@@ -849,22 +858,31 @@ class RxPacketDecode(Module):
         #
         # send the output through a pipeline stage
         #
-        self.o_pkt_start = Signal()
-        self.o_pkt_pid = Signal(4)
-        self.o_pkt_token_payload = Signal(16)
-        self.o_pkt_data = Signal(8)
-        # self.o_pkt_data_put from above...
-        self.o_pkt_good = Signal()
+        self.o_pkt_sta = Signal()
+        self.o_pkt_pid = Signal()
+        self.o_pkt_tok = Signal()
+        self.o_pkt_dat = Signal()
         self.o_pkt_end = Signal()
 
+        self.o_pkt_pid_payload = Signal(4)
+        self.o_pkt_tok_payload = Signal(16)
+        self.o_pkt_dat_payload = Signal(8)
+
+        self.o_pkt_good = Signal()
+
         self.sync += [
-            self.o_pkt_start.eq(pkt_start),
-            self.o_pkt_pid.eq(pid_shifter.o_output[0:4]),
-            self.o_pkt_token_payload.eq(tok_shifter.o_output),
-            self.o_pkt_data.eq(data_shifter.o_output[0:8]),
-            self.o_pkt_data_put.eq(data_put),
+            # Packet state
+            self.o_pkt_sta.eq(pkt_start),
+            self.o_pkt_pid.eq(self.pid_shifter.o_put),
+            self.o_pkt_tok.eq(self.tok_shifter.o_put),
+            self.o_pkt_dat.eq(data_put),
+            self.o_pkt_end.eq(pkt_end),
+            # Packet data
+            self.o_pkt_pid_payload.eq(pid_shifter.o_output[0:4]),
+            self.o_pkt_tok_payload.eq(tok_shifter.o_output),
+            self.o_pkt_dat_payload.eq(data_payload_n1),
+            # Packet signals
             self.o_pkt_good.eq(pkt_good),
-            self.o_pkt_end.eq(pkt_end)
         ]
 
 
@@ -888,7 +906,7 @@ class UsbFsRx(Module):
     o_bit_strobe : Signal(1)
         Asserted for one clock in the middle of each USB bit.
 
-    o_pkt_start : Signal(1)
+    o_pkt_sta : Signal(1)
         Asserted for one clock to signal the start of a packet.
 
     o_pkt_pid : Signal(4)
@@ -897,7 +915,7 @@ class UsbFsRx(Module):
     o_pkt_token_payload : Signal(11)
         Token packet payload.
 
-    o_pkt_data : Signal(8)
+    o_pkt_data_payload : Signal(8)
         From data packet payload. Qualified by o_pkt_data_put.
 
     o_pkt_data_put : Signal(1)
@@ -942,13 +960,17 @@ class UsbFsRx(Module):
         )
 
         self.o_bit_strobe = clock_data_recovery.line_state_valid
-        self.o_pkt_start = decode.o_pkt_start
+
+        # Packet state
+        self.o_pkt_sta = decode.o_pkt_sta
         self.o_pkt_pid = decode.o_pkt_pid
-        self.o_pkt_token_payload = decode.o_pkt_token_payload
-        self.o_pkt_data = decode.o_pkt_data
-        self.o_pkt_data_put = decode.o_pkt_data_put
-        self.o_pkt_good = decode.o_pkt_good
+        self.o_pkt_tok = decode.o_pkt_tok
+        self.o_pkt_dat = decode.o_pkt_dat
         self.o_pkt_end = decode.o_pkt_end
+        # Packet data
+        self.o_pkt_pid_payload = decode.o_pkt_pid_payload
+        self.o_pkt_tok_payload = decode.o_pkt_tok_payload
+        self.o_pkt_dat_payload = decode.o_pkt_dat_payload
 
 
 ###############################################################################
@@ -1680,167 +1702,6 @@ class Raw(Instance.PreformattedParam):
 
 from litex.soc.interconnect.csr import *
 
-class UsbOutCpuInterface(Module):
-    """
-    Implements the SW->HW interface for UsbDevice.
-    """
-    def __init__(
-        self,
-        o_out_ep_ready,
-
-        i_out_start,
-
-        i_out_tok_pid,
-        i_out_ep_num,
-        i_out_data_pid,
-
-        i_out_data,
-        i_out_data_put,
-
-        i_out_commit,
-        i_out_rollback,
-
-        num_endpoints = 8,
-    ):
-        self.clock_domains.usb_48 = ClockDomain()
-
-        ### OUT EP Address Space
-        # [11] - 0: Register Space, 1: Buffer Space
-        #
-        # Register Space
-        #   [10:7] - Endpoint Number
-        #   [6:1]  - Reserved Zero
-        #   [0]    - 1: OUT_EPx_CTRL, 0: OUT_EPx_STAT
-        #
-        # Buffer Space
-        #   [10:7] - Endpoint number
-        #   [6]    - Buffer index
-        #   [5:0]  - Data buffer byte offset
-
-        ## OUT EP Registers
-        #
-        # OUT_EPx_STAT
-        #   [8]   - Token Type  = 1: SETUP, 0: OUT
-        #   [7]   - Transfer Complete
-        #   [6:0] - Transfer Length
-        #
-        # OUT_EPx_CTRL
-        #   [7]   - 1: STALL, 0: Normal Operation
-        #   [6]   - Expected Data Toggle = 1: DATA1, 0: DATA0
-        #   [1]   - Which data buffer does USB device controller own
-        #   [0]   - 1: Ready buffer for transfer, 0: Not ready
-
-        ## Buffer Space
-        #
-        # OUT EP buffers are written by the USB device and read by the host
-        # CPU. The host CPU is not able to write to the OUT EP buffers.
-        #
-
-        self.specials.buf = buf = Memory(width=32, depth=256)
-
-
-
-        #######################################################################
-        #######################################################################
-        ### System Clock Domain
-        #######################################################################
-        #######################################################################
-        self.bus = bus = wishbone.Interface()
-        self.buf_rp = buf.get_port(write_capable=False)
-
-
-        # sys clock domain status registers
-        self.transfer_length = Array([Signal(7) for i in range(num_endpoints)])
-        self.transfer_complete = Array([Signal(1) for i in range(num_endpoints)])
-        self.token_type = Array([Signal(1) for i in range(num_endpoints)])
-
-        # sys clock domain control registers
-        self.ready_strobe = Array([Signal(1) for i in range(num_endpoints)])
-        self.buffer = Array([Signal(1) for i in range(num_endpoints)])
-        self.data_toggle = Array([Signal(1) for i in range(num_endpoints)])
-        self.stall = Array([Signal(1) for i in range(num_endpoints)])
-
-        #self.sync += [
-        #    self.buf_rp.adr.eq(self.bus.adr[0:8]),
-        #    )
-        #]
-
-
-
-        #######################################################################
-        #######################################################################
-        ### USB 48MHz Clock Domain
-        #######################################################################
-        #######################################################################
-        self.buf_wp = buf.get_port(write_capable=True, has_re=True, we_granularity=8, clock_domain="usb_48")
-
-        # usb_48 status registers
-        self.usb_48_transfer_length = Array([Signal(7) for i in range(num_endpoints)])
-        self.usb_48_transfer_complete = Array([Signal(1) for i in range(num_endpoints)])
-        self.usb_48_token_type = Array([Signal(1) for i in range(num_endpoints)])
-
-        # usb_48 control registers
-        self.usb_48_ready_strobe = Array([Signal(1) for i in range(num_endpoints)])
-        self.usb_48_buffer = Array([Signal(1) for i in range(num_endpoints)])
-        self.usb_48_data_toggle = Array([Signal(1) for i in range(num_endpoints)])
-        self.usb_48_stall = Array([Signal(1) for i in range(num_endpoints)])
-
-        ### endpoint status and control
-        buf_put_offset = Signal(7)
-        for ep in range(num_endpoints):
-            self.sync.usb_48 += [
-                If(out_ep_num == ep,
-                    # reset the buffer pointer on new packet
-                    If(i_out_start,
-                        buf_put_offset.eq(0),
-
-                    # reset the buffer pointer on packet replay or when the
-                    # data toggle doesn't match the expected value
-                    ).Elif(i_out_rollback | (i_out_commit & (i_out_data_pid[3] != usb_48_data_toggle[ep])),
-                        buf_put_offset.eq(0)
-
-                    # update status register on commit
-                    ).Elif(i_out_commit,
-                        self.usb_48_transfer_length[ep].eq(buf_put_offset),
-                        self.usb_48_transfer_complete[ep].eq(1),
-                        self.usb_48_token_type[ep].eq(i_out_tok_pid == 0b1101)
-                    ),
-
-                    # update out buffer write pointer
-                    If(i_out_data_put and not self.usb_48_transfer_complete[ep],
-                        buf_put_offset.eq(buf_put_offset + 1)
-                    ),
-                ),
-
-                # software setup a new transfer, clear transfer complete
-                If(self.usb_48_ready_strobe[ep],
-                    self.usb_48_transfer_complete[ep].eq(0)
-                ),
-
-                # transfer complete implies software owns the buffer and the
-                # device is not ready for more data from the USB host.
-                o_out_ep_ready[ep].eq(~self.usb_48_transfer_complete[ep]),
-            ]
-
-
-        ### OUT endpoint data path
-        out_we = Signal(1)
-
-        self.sync.usb_48 += [
-            out_we.eq(i_out_data_put & ~self.usb_48_transfer_complete[i_out_ep_num] & ~buf_put_offset[6]),
-
-            # packet buffer is 4 bytes wide, but we only get one byte at a
-            # time from the protocol engine.
-            self.buf_wp.adr.eq(Cat(buf_put_offset[2:6], self.usb_48_buffer, i_out_ep_num)),
-            self.buf_wp.dat_w.eq(Cat(i_out_data, i_out_data, i_out_data, i_out_data)),
-            self.buf_wp.we(Cat(
-                (buf_put_offset[0:2] == 0) & out_we,
-                (buf_put_offset[0:2] == 1) & out_we,
-                (buf_put_offset[0:2] == 2) & out_we,
-                (buf_put_offset[0:2] == 3) & out_we)),
-        ]
-
-
 
 class UsbIoBuf(Module):
     def __init__(self, usbp_pin, usbn_pin):
@@ -1980,12 +1841,12 @@ class UsbDevice(Module):
         self.current_endp = Signal(4)
 
         self.comb += [
-            self.current_pid.eq(self.usbfsrx.o_pkt_pid),
+            self.current_pid.eq(self.usbfsrx.o_pkt_pid_payload),
         ]
 
         pe.act(
             "WAIT_TOK",
-            If(self.usbfsrx.o_pkt_start,
+            If(self.usbfsrx.o_pkt_sta,
                 NextState("RECV_TOK"),
             ),
         )
@@ -1995,12 +1856,13 @@ class UsbDevice(Module):
 
             If(self.usbfsrx.o_pkt_end,
                 # Save the token data
-                NextValue(self.current_addr, self.usbfsrx.o_pkt_token_payload[0:7]),
-                NextValue(self.current_endp, self.usbfsrx.o_pkt_token_payload[7:11]),
+                NextValue(self.current_addr, self.usbfsrx.o_pkt_tok_payload[0:7]),
+                NextValue(self.current_endp, self.usbfsrx.o_pkt_tok_payload[7:11]),
 
                 # Setup for the packet
                 If(self.current_pid == PID.SETUP,
                     NextValue(self.last_recv_data, 1),
+                    NextValue(self.last_sent_data, 0),
                     NextState("RECV_DATAX")
                 ).Elif(self.current_pid == PID.OUT,
                     NextState("RECV_DATAX"),
@@ -2030,7 +1892,7 @@ class UsbDevice(Module):
         # ---------------------------
         pe.act(
             "RECV_DATAX",
-            If(self.usbfsrx.o_pkt_start,
+            If(self.usbfsrx.o_pkt_sta,
                 NextState("RECV_BYTES"),
                 # FIXME: Check DATA0 / DATA1
             ),
@@ -2039,11 +1901,11 @@ class UsbDevice(Module):
         pe.act(
             "RECV_BYTES",
             # Connect the data to endpoint receiver.
-            self.a_endp_out[self.current_endp].valid.eq(self.usbfsrx.o_pkt_data_put),
-            self.a_endp_out[self.current_endp].data.eq(self.usbfsrx.o_pkt_data),
+            self.a_endp_out[self.current_endp].valid.eq(self.usbfsrx.o_pkt_dat),
+            self.a_endp_out[self.current_endp].data.eq(self.usbfsrx.o_pkt_dat_payload),
 
             # Error - Tried to receive a byte, but the endpoint receiver wasn't ready!?
-            If(self.usbfsrx.o_pkt_data_put & ~(self.a_endp_out[self.current_endp].ready),
+            If(self.usbfsrx.o_pkt_dat & ~(self.a_endp_out[self.current_endp].ready),
                 NextState("ROLLBACK"),
             ),
 
@@ -2137,7 +1999,7 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
     Implements the SW->HW interface for UsbDevice.
     """
 
-    class EndpointStatus(IntNum):
+    class EndpointStatus(IntEnum):
         EMPTY = 0
         ARMED = 1
         ERROR = 2
@@ -2253,7 +2115,7 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
 
         ]
 
-        # Pointer control
+        # Load the buffer pointer at
         self.sync += [
             If(pkt_start,
                 self.current_ptr.eq(self.eps[self.current_ep]),

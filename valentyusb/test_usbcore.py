@@ -2211,7 +2211,7 @@ class TestUsbDevice(TestCase):
         yield from self.send_token_packet(PID.SETUP, addr, ep)
         yield from self.send_data_packet(PID.DATA0, data)
         yield from self.expect_ack()
-        self.expect_data(ep, data + crc16(data))
+        self.expect_data(ep, data)
 
 
     # Host to Device
@@ -2229,7 +2229,7 @@ class TestUsbDevice(TestCase):
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(i, chunk)
             yield from self.expect_ack()
-            self.expect_data(ep, data + crc16(data))
+            self.expect_data(ep, data)
             if i == 0:
                 i = 1
             else:
@@ -2243,7 +2243,7 @@ class TestUsbDevice(TestCase):
         yield from self.send_token_packet(PID.OUT, addr, ep)
         yield from self.send_data_packet(PID.DATA1, [])
         yield from self.expect_ack()
-        self.expect_data(ep, crc16([]))
+        self.expect_data(ep, [])
 
     def control_transfer(self, addr, setup_data, descriptor_data):
         # Setup stage
@@ -2268,11 +2268,23 @@ class TestUsbDevice(TestCase):
             yield from self.transaction_setup(28, 0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
         self.run_stim(stim)
 
+    def test_control_transfer(self):
+        def stim():
+            yield from self.control_transfer(
+                20,
+                # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
+                [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00],
+                # 12 byte descriptor, max packet size 8 bytes
+                [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                 0x08, 0x09, 0x0A, 0x0B],
+            )
+        self.run_stim(stim)
+
     def test_control_with_nak(self):
         def stim():
             addr = 22
 
-            self.transaction_setup(
+            yield from self.transaction_setup(
                 addr, 0,
                 # Get descriptor, Index 0, Type 03, LangId 0000, wLength 64
                 [0x80, 0x06, 0x00, 0x03, 0x00, 0x00, 0x40, 0x00],
@@ -2289,18 +2301,6 @@ class TestUsbDevice(TestCase):
             yield from self.expect_data_packet(PID.DATA1, data)
             yield from self.send_ack()
 
-        self.run_stim(stim)
-
-    def test_control_transfer(self):
-        def stim():
-            yield from self.control_transfer(
-                20,
-                # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
-                [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00],
-                # 12 byte descriptor, max packet size 8 bytes
-                [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-                 0x08, 0x09, 0x0A, 0x0B],
-            )
         self.run_stim(stim)
 
     def test_in_transfer(self):
