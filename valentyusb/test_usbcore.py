@@ -441,108 +441,107 @@ class TestRxPacketDetect(TestCase):
 class TestRxShifter(TestCase):
     def test_shifter(self):
         test_vectors = [
+            # 0
             dict(
                 # basic shift in
-                width    = 8,
-                reset    = "-______________",
-                valid    = "_--------------",
-                value    = "001110100101010",
-                full     = "_________------",
-                output   = [0x2E]
+                reset    = "-|________|--",
+                valid    = "_|01234567|__",
+                data     = "1|01111110|11",
+                put      = "_|_______-|__",
+                #output   = [0b01111110]
+                output   = [127],
             ),
-
+            # 0
+            dict(
+                # basic shift in
+                reset    = "-|________|",
+                valid    = "_|01234567|",
+                data     = "0|01110100|",
+                put      = "_|_______-|",
+                #output   = [0b00101110]
+                output   = [0x2E],
+            ),
+            # 1
+            dict(
+                # basic shift in, 2 bytes
+                reset    = "-|________|________|",
+                valid    = "_|01234567|01234567|",
+                data     = "0|01110100|10101000|",
+                put      = "_|_______-|_______-|",
+                #output   = [0b00101110,0b00010101]
+                output   = [46, 21]
+            ),
+            # 2
             dict(
                 # basic shift in (short pipeline stall)
-                width    = 8,
-                reset    = "-_______________",
-                valid    = "_----_----------",
-                value    = "0011100100101010",
-                full     = "__________------",
-                output   = [0x2E]
+                reset    = "-|_________|",
+                valid    = "_|0123_4567|",
+                data     = "0|011100100|",
+                put      = "_|________-|",
+                output   = [46]
             ),
-
+            # 3
             dict(
                 # basic shift in (long pipeline stall)
-                width    = 8,
-                reset    = "-_________________",
-                valid    = "_----___----------",
-                value    = "001110000100101010",
-                full     = "____________------",
-                output   = [0x2E]
+                reset    = "-|___________|",
+                valid    = "_|0123___4567|",
+                data     = "0|01110000100|",
+                put      = "_|__________-|",
+                output   = [46]
             ),
-
+            # 4
             dict(
                 # basic shift in (multiple long pipeline stall)
-                width    = 8,
-                reset    = "-__________________________",
-                valid    = "_-___---___-___--___-------",
-                value    = "000001110000111101110101010",
-                full     = "_____________________------",
-                output   = [0x2E]
+                reset    = "-|____________________|",
+                valid    = "_|0___123___4___56___7|",
+                data     = "0|00001110000111101110|",
+                put      = "_|___________________-|",
+                output   = [46]
             ),
-
+            # 5
             dict(
                 # multiple resets
-                width    = 8,
-                reset    = "-______________-______________",
-                valid    = "_--------------_--------------",
-                value    = "010111000001101001110100101010",
-                full     = "_________-------________------",
-                output   = [0b00011101, 0x2E]
+                reset    = "-|________|______-|___-|________|",
+                valid    = "_|01234567|0123456|0123|01234567|",
+                data     = "0|01110100|0011010|0111|10101000|",
+                put      = "_|_______-|_______|____|_______-|",
+                output   = [46, 21]
             ),
-
+            # 6
             dict(
                 # multiple resets (tight timing)
-                width    = 8,
-                reset    = "-________-______________",
-                valid    = "_-----------------------",
-                value    = "000101001111000010011101",
-                full     = "_________-________------",
-                output   = [0b10010100, 0b01000011]
+                reset    = "-|________|-|________|",
+                valid    = "_|01234567|0|01234567|",
+                data     = "0|01110100|1|00101000|",
+                put      = "_|_______-|_|_______-|",
+                output   = [46, 20]
             ),
         ]
 
-        def send(reset, valid, value):
-            full = ""
-            output = []
+        actual_output = []
+        def send(reset, valid, data , put=None, output=None):
             for i in range(len(valid)):
-                yield i_reset.eq(reset[i] == '-')
-                yield i_valid.eq(valid[i] == '-')
-                yield i_data.eq(value[i] == '1')
+                if valid[i] == '|':
+                    assert reset[i] == '|', reset[i]
+                    assert data [i] == '|', data [i]
+                    continue
+                yield dut.i_reset.eq(reset[i] == '-')
+                yield dut.i_valid.eq(valid[i] != '_')
+                yield dut.i_data.eq(data [i] == '1')
                 yield
 
-                o_full = yield dut.o_full
-                put = yield dut.o_put
-
-                if put:
+                o_put = yield dut.o_put
+                if o_put:
                     last_output = yield dut.o_output
-                    output.append(last_output)
+                    actual_output.append(last_output)
 
-                out = "%d" % (o_full)
-
-                full += {
-                    "1" : "-",
-                    "0" : "_",
-                }[out]
-
-            return full, output
-
-        def stim(width, reset, valid, value, full, output):
-            actual_full, actual_output = yield from send(reset, valid, value)
-            self.assertEqual(actual_full, full)
-            self.assertEqual(actual_output, output)
-
-        i = 0
-        for vector in test_vectors:
+        for i, vector in enumerate(test_vectors):
             with self.subTest(i=i, vector=vector):
-                i_valid = Signal()
-                i_data = Signal()
-                i_reset = Signal()
+                dut = RxShifter()
 
-                dut = RxShifter(vector["width"], i_valid, i_data, i_reset)
-
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_shifter_%d.vcd" % i)
-                i += 1
+                actual_output.clear()
+                run_simulation(dut, send(**vector), vcd_name="vcd/test_shifter_%d.vcd" % i)
+                self.assertEqual(actual_output, vector['output'])
 
 
 

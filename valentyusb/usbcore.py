@@ -513,41 +513,128 @@ class RxShifter(Module):
     o_put : Signal(1)
         Asserted for one clock once the register is full.
     """
-    def __init__(self, width, i_valid, i_data, i_reset):
+    def __init__(self, i_valid=None, i_data=None, i_reset=None):
+        if i_valid is None:
+            i_valid = Signal()
+        self.i_valid = i_valid
+
+        if i_data is None:
+            i_data = Signal()
+        self.i_data = i_data
+
+        if i_reset is None:
+            i_reset = Signal()
+        self.i_reset = i_reset
+
         # Instead of using a counter, we will use a sentinel bit in the shift
         # register to indicate when it is full.
-        shift_reg = Signal(width + 1)
-
-        self.o_full = Signal(1)
-
-        # the register is full once the top bit is '1'
-        self.comb += [
-            self.o_full.eq(shift_reg[0])
-        ]
+        shift_reg = Signal(9)
 
         # shift valid incoming data in while not full
+        self.o_put = Signal(1)
+        self.o_output = Signal(8)
         self.sync += [
             If(i_reset,
-                shift_reg.eq(1 << width),
+                shift_reg.eq(1),
             ).Else(
-                If(i_valid & ~self.o_full,
-                    shift_reg.eq(Cat(shift_reg[1:width + 1], i_data))
-                )
-            )
+                If(i_valid,
+                    shift_reg.eq(Cat(i_data, shift_reg[0:8])),
+                    If(shift_reg[8],
+                        self.o_output.eq(shift_reg[0:8]),
+                    ),
+                ),
+            ),
         ]
-
-        self.o_output = Signal(width)
-
         self.comb += [
-            self.o_output.eq(shift_reg[1:width + 1])
+            self.o_put.eq(shift_reg[8]),
         ]
 
-        self.o_put = Signal(1)
+'''
+class RxShifter(Module):
+    """
+    Shifter
+
+    A shifter is responsible for shifting in serial bits and presenting them
+    as parallel data.  The shifter knows how many bits to shift and has
+    controls for resetting the shifter.
+
+    Parameters
+    ----------
+    Parameters are passed in via the constructor.
+
+    width : int
+        Number of bits to shift in.
+
+    Input Ports
+    -----------
+    Input ports are passed in via the constructor.
+
+    i_valid : Signal(1)
+        Qualifier for serial input data. Indicates one clock of data is valid.
+
+    i_data : Signal(1)
+        Serial input data. Qualified by i_valid.
+
+    i_reset : Signal(1)
+        Reset the shift register and start shifting in new data when ready.
+        This is not a normal migen reset, this reset must be asserted by the
+        control logic using this module.
+
+    Output Ports
+    ------------
+    Output ports are data members of the module. All outputs are flopped.
+
+    o_output : Signal(width)
+        Shifted in data.  Qualified by o_valid.
+
+    o_full : Signal(1)
+        Asserted while the register is full.
+
+    o_put : Signal(1)
+        Asserted for one clock once the register is full.
+    """
+    def __init__(self):
+        self.i_data = Signal()
+        self.i_valid = Signal()
+        self.i_reset = Signal()
+
+        shifter = Signal(24)
+
+        self.o_output_lower = Signal(8)
+        self.o_output_middle = Signal(8)
+        self.o_output_upper = Signal(8)
+        self.comb += [
+            self.o_output_upper.eq(shifter[0:8]),
+            self.o_output_middler.eq(shifter[8:16]),
+            self.o_output_lower.eq(shifter[16:24]),
+        ]
 
         self.sync += [
-            self.o_put.eq((shift_reg[0:2] == 0b10) & i_valid)
+            If(self.i_reset,
+                shifter.eq(0),
+            ).Else(
+                If(self.i_valid,
+                    shifter.eq(Cat(shifter[1:24], self.i_data)),
+                ),
+            ),
         ]
 
+        bits = Signal(4)
+        self.sync += [
+            If(self.i_reset | bits[3],
+                bits.eq(1),
+            ).Else(
+                If(self.i_valid,
+                    bits.eq(bits+1),
+                ),
+            ),
+        ]
+
+        self.o_put = Signal()
+        self.comb += [
+            self.o_put.eq(bits[3]),
+        ]
+'''
 
 
 
@@ -719,91 +806,103 @@ class RxPacketDecode(Module):
             i_se0
         )
 
-        pkt_start = pkt_det.o_pkt_start
-        pkt_active = Signal()
-        pkt_end = Signal()
+        i_reset = Signal()
+        self.shifter = RxShifter(i_valid, i_data, i_reset)
 
+        # PID
+        self.start_pid = Signal()
+        self.end_end = Signal()
+
+        # No start handshake
+        self.end_handshake = Signal()
+
+        # Token packet
+        self.start_token = Signal()
+        self.end_token = Signal()
+
+        # Data packet
+        self.start_data = Signal()
+        self.end_data = Signal()
+
+        # Incoming data pipeline
+        self.data_n0 = Signal(8)
+        self.data_n1 = Signal(8)
+        self.o_data = Signal(8)
         self.sync += [
-            pkt_active.eq(pkt_det.o_pkt_active),
-            pkt_end.eq(pkt_det.o_pkt_end)
-        ]
-
-
-        #######################################################################
-        #
-        # extract PID from packet contents
-        #
-        self.submodules.pid_shifter = pid_shifter = RxShifter(
-            width = 8,
-            i_valid = pkt_active & valid,
-            i_data = data,
-            i_reset = pkt_start
-        )
-
-        # check that the PID is consistent
-        pid_good = pid_shifter.o_output[0:4] == (pid_shifter.o_output[4:8] ^ 0b1111)
-
-        # decode packet format type
-        pkt_is_handshake = pid_shifter.o_output[0:2] == 0b10
-        pkt_is_token = pid_shifter.o_output[0:2] == 0b01
-        pkt_is_data = pid_shifter.o_output[0:2] == 0b11
-
-
-        #######################################################################
-        #
-        # extract token payload from packet contents
-        #
-        self.submodules.tok_shifter = tok_shifter = RxShifter(
-            width = 16,
-            i_valid = pid_shifter.o_full & valid,
-            i_data = data,
-            i_reset = pkt_start
-        )
-
-
-        #######################################################################
-        #
-        # check token payload crc5
-        #
-        self.submodules.tok_crc5 = tok_crc5 = RxCrcChecker(
-            width = 5,
-            polynomial = 0b00101,
-            initial = 0b11111,
-            residual = 0b01100,
-            i_valid = pid_shifter.o_full & valid & ~tok_shifter.o_full,
-            i_data = data,
-            i_reset = pkt_start
-        )
-
-        data_valid = pid_shifter.o_full & valid & pkt_active
-
-        #######################################################################
-        #
-        # deserialize data payload from packet contents
-        #
-        data_put = Signal()
-
-        self.submodules.data_shifter = data_shifter = RxShifter(
-            width = 8,
-            i_valid = pkt_is_data & pid_shifter.o_full & valid,
-            i_data = data,
-            i_reset = pkt_start | data_put
-        )
-
-        self.comb += [
-            data_put.eq(data_shifter.o_full & pkt_active)
-        ]
-
-        # FIXME: Horrible hack, delay data by 2 o_put cycles and gate o_put by o_token.
-        data_payload_n1 = Signal(8)
-        data_payload_n0 = Signal(8)
-        self.sync += [
-            If(data_shifter.o_put,
-                data_payload_n1.eq(data_payload_n0),
-                data_payload_n0.eq(data_shifter.o_output[0:8]),
+            If(shifter.o_put,
+                self.o_data.eq(self.data_n1),
+                self.data_n1.eq(self.data_n0),
+                self.data_n0.eq(shifter.o_output),
             ),
         ]
 
+        state = FSM()
+        state.act("WAIT_SYNC",
+            If(pkt_det.o_pkt_start,
+                self.i_reset.eq(1),
+                self.start_pid.eq(1),
+                NextState("WAIT_PID"),
+            ),
+        )
+
+        self.o_pid = Signal(8)
+        state.act("WAIT_PID",
+            If(shifter.o_put,
+                NextValue(self.o_pid, shifter.output),
+                self.end_pid.eq(1),
+
+                # Handshake
+                If(shifter.o_output[0:2] == 0b10,
+                    self.end_handshake.eq(1),
+                    NextState("WAIT_SYNC"),
+
+                # Token
+                ).ElIf(shifter.o_output[0:2] == 0b01,
+                    self.start_token.eq(1),
+                    NextState("WAIT_TOK0"),
+
+                # Data
+                ).ElIf(shifter.o_output[0:2] == 0b11,
+                    self.start_data.eq(1),
+                    NextState("WAIT_DAT"),
+                ),
+            ),
+        )
+
+        # Wait for first byte of TOKEN data
+        self.o_addr = Signal(7)
+        self.o_ep   = Signal(4)
+        state.act("WAIT_TOK0",
+            If(shifter.o_put,
+                NextValue(self.o_addr, shifter.o_output[1:7]),
+                NextValue(self.o_ep[3], shifter.o_output[0]),
+                NextState("WAIT_TOK1"),
+            )
+        )
+        # Wait for second byte of TOKEN data
+        state.act("WAIT_TOK1",
+            If(shifter.o_put,
+                NextValue(self.o_ep[0:2], shifter.o_output[0:2]),
+                self.end_token.eq(1),
+                NextState("WAIT_SYNC"),
+            ),
+        )
+
+        # Wait two bytes
+        state.act("WAIT_DAT0",
+            If(shifter.o_put, NextState("WAIT_DAT1")),
+        )
+        state.act("WAIT_DAT1",
+            If(shifter.o_put, NextState("WAIT_DATX")),
+        )
+        state.act("WAIT_DATX",
+            self.put_data.eq(shifter.o_put),
+            If(pkt_det.o_pkt_end, NextState("WAIT_SYNC"),
+                self.end_data.eq(1),
+            ),
+        )
+
+        """
         #######################################################################
         #
         # check data payload crc16
@@ -853,38 +952,7 @@ class RxPacketDecode(Module):
             (tok_crc5.o_crc_good | ~pkt_is_token) &
             (crc16_good | ~pkt_is_data)
         )
-
-        #######################################################################
-        #
-        # send the output through a pipeline stage
-        #
-        self.o_pkt_sta = Signal()
-        self.o_pkt_pid = Signal()
-        self.o_pkt_tok = Signal()
-        self.o_pkt_dat = Signal()
-        self.o_pkt_end = Signal()
-
-        self.o_pkt_pid_payload = Signal(4)
-        self.o_pkt_tok_payload = Signal(16)
-        self.o_pkt_dat_payload = Signal(8)
-
-        self.o_pkt_good = Signal()
-
-        self.sync += [
-            # Packet state
-            self.o_pkt_sta.eq(pkt_start),
-            self.o_pkt_pid.eq(self.pid_shifter.o_put),
-            self.o_pkt_tok.eq(self.tok_shifter.o_put),
-            self.o_pkt_dat.eq(data_put),
-            self.o_pkt_end.eq(pkt_end),
-            # Packet data
-            self.o_pkt_pid_payload.eq(pid_shifter.o_output[0:4]),
-            self.o_pkt_tok_payload.eq(tok_shifter.o_output),
-            self.o_pkt_dat_payload.eq(data_payload_n1),
-            # Packet signals
-            self.o_pkt_good.eq(pkt_good),
-        ]
-
+        """
 
 
 class UsbFsRx(Module):
@@ -960,17 +1028,6 @@ class UsbFsRx(Module):
         )
 
         self.o_bit_strobe = clock_data_recovery.line_state_valid
-
-        # Packet state
-        self.o_pkt_sta = decode.o_pkt_sta
-        self.o_pkt_pid = decode.o_pkt_pid
-        self.o_pkt_tok = decode.o_pkt_tok
-        self.o_pkt_dat = decode.o_pkt_dat
-        self.o_pkt_end = decode.o_pkt_end
-        # Packet data
-        self.o_pkt_pid_payload = decode.o_pkt_pid_payload
-        self.o_pkt_tok_payload = decode.o_pkt_tok_payload
-        self.o_pkt_dat_payload = decode.o_pkt_dat_payload
 
 
 ###############################################################################
@@ -1844,6 +1901,66 @@ class UsbDevice(Module):
             self.current_pid.eq(self.usbfsrx.o_pkt_pid_payload),
         ]
 
+        # Host->Device data path (Out + Setup data path)
+        #
+        # Setup --------------------
+        # >Setup
+        # >Data0[bmRequestType, bRequest, wValue, wIndex, wLength]
+        # <Ack
+        # --------------------------
+        #
+        # Data ---------------------
+        # >Out        >Out        >Out
+        # >DataX[..]  >DataX[..]  >DataX
+        # <Ack        <Nak        <Stall
+        #
+        # Status -------------------
+        # >Out
+        # >Data0[]
+        # <Ack
+        # ---------------------------
+        #
+        # Host<-Device data path (In data path)
+        # --------------------------
+        # >In         >In     >In
+        # <DataX[..]  <Stall  <Nak
+        # >Ack
+        # ---------------------------
+        # >In
+        # <Data0[]
+        # >Ack
+        # ---------------------------
+        pe.act("WAIT_TOKEN",
+            If(self.usbfsrx.end_token,
+                NextState("RECV_DATA"),
+                NextState("SEND_DATA"),
+            ),
+        )
+        # Data packet
+        pe.act("RECV_DATA",
+            If(self.usbfsrx.end_data,
+                NextState("SEND_HAND"),
+            ),
+        )
+        pe.act("SEND_DATA",
+            If(self.usbfsrx.end_data,
+                NextState("RECV_HAND"),
+            ),
+        )
+        # Handshake
+        pe.act("RECV_HAND",
+            If(self.usbfsrx.end_data,
+                NextState("WAIT_TOKEN"),
+            ),
+        )
+        pe.act("SEND_HAND",
+            If(self.usbfsrx.end_data,
+                NextState("WAIT_TOKEN"),
+            ),
+        )
+
+
+""""
         pe.act(
             "WAIT_TOK",
             If(self.usbfsrx.o_pkt_sta,
@@ -1992,6 +2109,7 @@ class UsbDevice(Module):
 
         # --------------------------
         pe.act("ERROR")
+"""
 
 
 class UsbDeviceCpuInterface(Module, AutoCSR):
