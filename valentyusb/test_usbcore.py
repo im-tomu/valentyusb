@@ -444,10 +444,10 @@ class TestRxShifter(TestCase):
             # 0
             dict(
                 # basic shift in
-                reset    = "-|________|--",
-                valid    = "_|01234567|__",
-                data     = "1|01111110|11",
-                put      = "_|_______-|__",
+                reset    = "-|________|",
+                valid    = "_|01234567|",
+                data     = "1|01111110|",
+                put      = "_|_______-|",
                 #output   = [0b01111110]
                 output   = [127],
             ),
@@ -1473,7 +1473,7 @@ def nrzi(data, clock_width=4):
             return 'J'
         return state
 
-    prev_state = "K"
+    state = "K"
     output = ""
 
     for bit in data:
@@ -1837,7 +1837,7 @@ def pp_packet(p):
     JJJJ 6 Sync
     KKKK 7 Sync
     KKKK 8 Sync
-    KKKK 1 PID
+    KKKK 1 PID (PID.SETUP)
     JJJJ 2 PID
     JJJJ 3 PID
     JJJJ 4 PID
@@ -1870,9 +1870,18 @@ def pp_packet(p):
     for i in range(1, 9):
         if chunks:
             output.extend([chunks.pop(0), ' %i Sync\n' % i])
+
     for i in range(1, 9):
         if chunks:
-            output.extend([chunks.pop(0), ' %i PID\n' % i])
+            if i == 1:
+                pid_encoded = "".join(chunks[:8])
+                pid_type = None
+                for p in PID:
+                    if nrzi(encode_pid(p.value)) == pid_encoded:
+                        pid_type = p
+                output.extend([chunks.pop(0), ' %i PID (%s)\n' % (i, pid_type)])
+            else:
+                output.extend([chunks.pop(0), ' %i PID\n' % i])
     for i in range(1, 8):
         if chunks:
             output.extend([chunks.pop(0), ' %i Address\n' % i])
@@ -2055,7 +2064,7 @@ class TestUsbDevice(TestCase):
         """Except that an endpoints buffer is empty."""
         assert ep in self.buffers_in, (ep, self.buffers_in.keys())
         assert self.buffers_in[ep] is not None, "Endpoint currently blocked!"
-        self.assertEqual(0, len(self.buffers_in[ep]))
+        self.assertSequenceEqual([], self.buffers_in[ep])
 
     def expect_data(self, ep, data):
         """Expect that an endpoints buffer has given contents."""
@@ -2100,7 +2109,7 @@ class TestUsbDevice(TestCase):
             yield from self._set_buffer_signals()
             yield from self.dut.iobuf.recv(v)
             yield
-        yield from self.idle()
+        #yield from self.idle()
 
     def send_token_packet(self, pid, addr, ep):
         yield self.packet_h2d.eq(1)
@@ -2124,7 +2133,7 @@ class TestUsbDevice(TestCase):
         yield self.packet_h2d.eq(0)
 
     # Device->Host
-    def expect_packet(self, packet):
+    def expect_packet(self, packet, msg=None):
         """Except to receive the following USB packet."""
         yield self.packet_d2h.eq(1)
 
@@ -2136,7 +2145,7 @@ class TestUsbDevice(TestCase):
             if tx:
                 break
             yield
-        self.assertTrue(tx)
+        self.assertTrue(tx, "No packet started, "+msg)
 
         # Read in the packet data
         result = ""
@@ -2148,14 +2157,14 @@ class TestUsbDevice(TestCase):
             tx = yield self.dut.iobuf.usb_tx_en
             if not tx:
                 break
-        self.assertFalse(tx)
+        self.assertFalse(tx, "Packet didn't finish, "+msg)
         yield self.packet_d2h.eq(0)
 
         # Check the packet received matches
         expected = pp_packet(wrap_packet(packet))
         actual = pp_packet(result)
 
-        self.assertMultiLineEqual(expected, actual)
+        self.assertMultiLineEqual(expected, actual, msg)
 
 
     # No expect_token_packet, as the host is the only one who generates tokens.
@@ -2163,17 +2172,17 @@ class TestUsbDevice(TestCase):
     def expect_data_packet(self, pid, data):
         assert pid in (PID.DATA0, PID.DATA1), pid
         yield self.packet_d2h.eq(1)
-        yield from self.expect_packet(data_packet(pid, data))
+        yield from self.expect_packet(data_packet(pid, data), "Expected %s packet with %r" % (pid.name, data))
         yield self.packet_d2h.eq(0)
 
     def expect_ack(self):
         yield self.packet_d2h.eq(1)
-        yield from self.expect_packet(handshake_packet(PID.ACK))
+        yield from self.expect_packet(handshake_packet(PID.ACK), "Expected ACK packet.")
         yield self.packet_d2h.eq(0)
 
     def expect_nak(self):
         yield self.packet_d2h.eq(1)
-        yield from self.expect_packet(handshake_packet(PID.NAK))
+        yield from self.expect_packet(handshake_packet(PID.NAK), "Expected NAK packet.")
         yield self.packet_d2h.eq(0)
 
     # Full transactions
@@ -2264,6 +2273,8 @@ class TestUsbDevice(TestCase):
 
     def test_transaction_setup(self):
         def stim():
+            #   012345   0123
+            # 0b011100 0b1000
             yield from self.transaction_setup(28, 0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
         self.run_stim(stim)
 
@@ -2307,7 +2318,6 @@ class TestUsbDevice(TestCase):
             addr = 28
             ep = 1
 
-            d = [0x41, 0x01]
 
             self.block_ep(ep)
             # First nak
@@ -2322,19 +2332,19 @@ class TestUsbDevice(TestCase):
 
             yield from self.idle()
 
-            # Third attempt succeeds, but we nak
             self.unblock_ep(ep)
-            self.set_data(ep, d)
+            d1 = [0x1, 0x2, 0x3, 0x4]
+            self.set_data(ep, d1)
             yield from self.send_token_packet(PID.IN, addr, ep)
-            yield from self.expect_data_packet(PID.DATA1, d)
-            yield from self.send_nak()
+            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.send_ack()
 
             yield from self.idle()
 
-            # Next attempt everything goes perfectly!
-            self.set_data(ep, d)
+            d2 = [0x5, 0x6, 0x7, 0x8]
+            self.set_data(ep, d2)
             yield from self.send_token_packet(PID.IN, addr, ep)
-            yield from self.expect_data_packet(PID.DATA1, d)
+            yield from self.expect_data_packet(PID.DATA0, d2)
             yield from self.send_ack()
 
         self.run_stim(stim)
@@ -2367,7 +2377,7 @@ class TestUsbDevice(TestCase):
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_ack()
-            self.expect_data(ep, d + crc16(d))
+            self.expect_data(ep, d)
 
         self.run_stim(stim)
 
