@@ -2035,9 +2035,14 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         self.current_pos = Signal(size)
         self.comb += [
             self.current_pos.eq(self.current_ptr + self.current_offset),
-        ]
-        self.sync += [
+
             self.usb_port.adr.eq(self.current_pos),
+            # Read from memory
+            #self.usb_port.re.eq(self.usb_core.data_send_get),
+            self.usb_port.dat_r.eq(self.usb_core.data_send_payload),
+            # Write to memory
+            self.usb_port.we.eq(self.usb_core.data_recv_put),
+            self.usb_port.dat_w.eq(self.usb_core.data_recv_payload),
         ]
 
         # Offset control

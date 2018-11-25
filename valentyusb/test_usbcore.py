@@ -2446,6 +2446,8 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
             ('size', 32),
         ]
 
+        self.csr_pending_writes = []
+
         self.base = 0
 
         self.packet_h2d = Signal(1)
@@ -2462,12 +2464,21 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
         run_simulation(self.dut, padfront(), vcd_name="vcd/%s.vcd" % self.id(), clocks={"usb_48": 4, "sys": 4})
 
     def _set_buffer_signals(self):
-        if False:
-            yield
+        yield from self.finish_csr_writes()
 
     ######################################################################
     ## Helpers
     ######################################################################
+    def start_csr_write(self, csr, v):
+        yield csr.r.eq(v)
+        yield csr.re.eq(1)
+        self.csr_pending_writes.append(csr)
+
+    def finish_csr_writes(self):
+        for csr in self.csr_pending_writes:
+            yield csr.re.eq(0)
+        self.csr_pending_writes.clear()
+
     def set_data(self, ep, data):
         """Set an endpoints buffer to given data to be sent."""
         assert isinstance(data, (list, tuple))
@@ -2478,9 +2489,9 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
             addr = self.base + i
             yield self.dut.buf.mem[addr].eq(v)
 
-        ep_mod = getattr(self.dut, "ep_%s_out" % ep)
-        #yield from ep_mod.ptr.write(self.base)
-        #yield from ep_mod.len.write(len(data))
+        ep_mod = self.get_ep_mod(ep, EndpointType.OUT)
+        yield from self.start_csr_write(ep_mod.ptr, self.base)
+        yield from self.start_csr_Write(ep_mod.len, len(data))
         self.base += len(data)
 
     def expect_empty(self, ep):
@@ -2501,17 +2512,24 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
             print("Addr %i = %s" % (pkt_addr + i, hex(mem_data[-1])))
         self.assertSequenceEqual(data, mem_data)
 
+    def get_ep_mod(self, ep, dir=None):
+        assert (ep != 0) or (dir != None)
+        if hasattr(self.dut, "ep_%s_out" % ep) and ((dir is None) or (dir is EndpointType.OUT)):
+            return getattr(self.dut, "ep_%s_out" % ep)
+        elif hasattr(self.dut, "ep_%s_in" % ep) and ((dir is None) or (dir is EndpointType.IN)):
+            return getattr(self.dut, "ep_%s_in" % ep)
+        else:
+            raise AttributeError("Unknown endpoint %i" % ep)
 
     def block_ep(self, ep):
-        #ep_mod = getattr(self.dut, "ep_%s_in" % ep)
-        if False:
-            yield
+        assert ep != 0
+        ep_mod = self.get_ep_mod(ep)
+        yield from self.start_csr_write(ep_mod.response, 0b11)
 
     def unblock_ep(self, ep):
-        #ep_mod = getattr(self.dut, "ep_%s_in" % ep)
-        if False:
-            yield
-
+        assert ep != 0
+        ep_mod = self.get_ep_mod(ep)
+        yield from self.start_csr_write(ep_mod.response, 0b01)
 
 
 if __name__ == '__main__':
