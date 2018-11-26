@@ -3,7 +3,8 @@
 from enum import IntEnum
 
 from migen import *
-from migen.genlib.cdc import MultiReg
+from migen.genlib import fifo
+from migen.genlib import cdc
 
 from litex.soc.interconnect import stream
 from litex.soc.interconnect import wishbone
@@ -71,8 +72,8 @@ class RxClockDataRecovery(Module):
         usbp = Signal()
         usbn = Signal()
 
-        self.specials += MultiReg(usbp_raw, usbp, n=3)
-        self.specials += MultiReg(usbn_raw, usbn, n=3)
+        self.specials += cdc.MultiReg(usbp_raw, usbp, n=3)
+        self.specials += cdc.MultiReg(usbn_raw, usbn, n=3)
 
 
         #######################################################################
@@ -1769,9 +1770,6 @@ class UsbCore(Module):
         self.data_send_ready = Signal()     # Assert when data ready to send
         self.data_send_payload = Signal(8)  # Data to be send
 
-        self.data_start = Signal()
-        self.data_commit = Signal()
-
         self.comb += [
             # Input path
             self.data_recv_put.eq(self.usbfsrx.decode.put_data),
@@ -1781,6 +1779,14 @@ class UsbCore(Module):
             self.usbfstx.i_data_valid.eq(self.data_send_ready),
             self.usbfstx.i_data_payload.eq(self.data_send_payload),
         ]
+
+        self.pkt_count = Signal(8)
+        self.sync += [
+            If(self.usbfsrx.o_pkt_end,
+                self.pkt_count.eq(self.pkt_count + 1),
+            ),
+        ]
+
         # Host->Device data path (Out + Setup data path)
         #
         # Setup --------------------
@@ -1813,7 +1819,6 @@ class UsbCore(Module):
         pe.act("WAIT_TOKEN",
             #If(self.usbfsrx.decode.end_token,
             If(self.usbfsrx.o_pkt_end,
-                self.data_start.eq(1),
                 If(self.usbfsrx.decode.o_pid == PID.SETUP,
                     self.data_recv.eq(1),
                     NextState("RECV_DATA"),
@@ -1838,8 +1843,6 @@ class UsbCore(Module):
                         self.usbfstx.i_pkt_start.eq(1),
                         NextState("SEND_DATA"),
                     ),
-                ).Else(
-                    NextState("ERROR"),
                 )
             ),
         )
@@ -1853,7 +1856,6 @@ class UsbCore(Module):
             ),
             # Packet finished
             If(self.usbfsrx.o_pkt_end,
-                self.data_commit.eq(1),
                 self.usbfstx.i_pid.eq(PID.ACK),
                 self.usbfstx.i_pkt_start.eq(1),
                 NextState("SEND_HAND"),
@@ -1896,26 +1898,6 @@ class UsbCore(Module):
         # --------------------------
 
 
-class EndpointStatus(IntEnum):
-    EMPTY = 0
-    ARMED = 1
-    ERROR = 2
-
-
-EndpointLayout = (
-    # An error has occurred.
-    ("error", 1),
-    # A packet can be sent/received.
-    ("ready", 1),
-    # A packet has been sent/received.
-    ("valid", 1),
-    # Pointer to somewhere in buffer memory.
-    ("pkt_addr", 9),
-    # Length of packet
-    ("pkt_len", 6),
-)
-
-
 class Endpoint(Module, AutoCSR):
     def __init__(self):
         self.submodules.ev = ev.EventManager()
@@ -1929,32 +1911,30 @@ class Endpoint(Module, AutoCSR):
         #  - 01 - ACK
         #  - 11 - NAK
         #  - 10 - STALL
-        self.response = CSRStorage(2, write_from_dev=True)
+        #self.response = CSRStorage(2, write_from_dev=True)
 
-        # Pointer to somewhere in buffer memory.
-        self.ptr = CSRStorage(9)
-
-        self.layout = Record(EndpointLayout)
-        self.comb += [
-            self.layout.ready.eq(self.response.storage == 0b01),
-            self.ev.error.trigger.eq(self.layout.error),
-            self.ev.packet.trigger.eq(self.layout.valid),
-        ]
+        self.head = CSR(8)
+        self.empty = CSRStatus(1)
 
 
 class EndpointIn(Endpoint):
     """Endpoint for Host->Device data.
 
-    Writes into the buffer memory.
     Raises packet IRQ when new packet has arrived.
+    CPU reads from the head CSR to get front data from FIFO.
+    CPU writes to head CSR to advance the FIFO by one.
     """
     def __init__(self):
         Endpoint.__init__(self)
 
-        # How much data was written
-        self.len = CSRStatus(6)
+        buf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        self.submodules.buf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(buf)
+
         self.comb += [
-            self.len.status.eq(self.layout.pkt_len),
+            self.head.w.eq(self.buf.dout),
+            self.buf.re.eq(self.head.re),
+            self.empty.status.eq(~self.buf.readable),
+            self.ev.packet.trigger.eq(self.buf.readable),
         ]
 
 
@@ -1963,55 +1943,48 @@ class EndpointOut(Endpoint):
 
     Reads from the buffer memory.
     Raises packet IRQ when packet has been sent.
+    CPU writes to the head CSRT to push data onto the FIFO.
     """
     def __init__(self):
         Endpoint.__init__(self)
 
-        # How much data is available
-        self.len = CSRStorage(6)
+        buf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        self.submodules.buf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(buf)
+
         self.comb += [
-            self.layout.pkt_len.eq(self.len.storage),
+            self.buf.din.eq(self.head.r),
+            self.buf.we.eq(self.head.re),
+            self.empty.status.eq(~self.buf.readable),
+            self.ev.packet.trigger.eq(~self.buf.readable),
         ]
 
 
-'''
-class UsbBuffer(Module):
-
+class EndpointEmpty(Module):
     def __init__(self):
+        self.ev = object()
+        self.ev.error = Signal()
+        self.ev.packet = Signal()
 
-        WORD = 8
-        ADDR = 9
+        self.buf = object()
 
-        self.clock_domain.cd_fast_port = ClockDomain()
-        self.clock_domain.cd_slow_port = ClockDomain()
+        self.buf.din = Signal(8)
+        self.buf.writable = Signal(1)
+        self.buf.we = Signal(1)
 
-        self.rdata = Signal(WORD)
-        self.raddr = Signal(ADDR)
+        self.buf.dout = Signal(8)
+        self.buf.readable = Signal(1)
+        self.buf.re = Signal(1)
 
-        self.wdata = Signal(WORD)
-        self.waddr = Signal(ADDR)
+class FifoFake(Module):
+    def __init__(self):
+        self.din = Signal(8)
+        self.writable = Signal(1)
+        self.we = Signal(1)
 
-        self.specials += [
-            Instance(
-                "SB_RAM512x8",
+        self.dout = Signal(8)
+        self.readable = Signal(1)
+        self.re = Signal(1)
 
-                # Read port
-                o_RDATA, # 8bits
-                i_RADDR, # 9bits
-                i_RCLK,
-                i_RCLKE,
-                i_RE,
-
-                # Write port
-                i_WADDR, # 9bits
-                i_WDATA, # 8bits
-                i_WCLK,
-                i_WCLKE,
-                i_WE,
-            ),
-        ]
-
-'''
 
 
 class UsbDeviceCpuInterface(Module, AutoCSR):
@@ -2024,18 +1997,13 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
 
         self.iobuf = iobuf
 
-        buf_bus = wishbone.Interface(data_width=8)
-        self.submodules.buf = buf = wishbone.SRAM(2**size, bus=buf_bus)
-
-        # Provide ability for the CPU to write into the buffer RAM.
-        self.bus = bus = wishbone.Interface(data_width=32)
-        self.submodules.conv = wishbone.Converter(self.bus, buf_bus)
-
         # USB Core
-        #self.clock_domains.cd_usb_48 = ClockDomain()
-        usb_core = UsbCore(iobuf)
-        self.submodules.usb_core = ClockDomainsRenamer("usb_48")(usb_core)
-        self.specials.usb_port = buf.mem.get_port(write_capable=True, we_granularity=8, clock_domain="usb_48")
+        self.submodules.usb_core = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
+
+        self.pkt_count = CSRStatus(8)
+        self.comb += [
+            self.pkt_count.status.eq(self.usb_core.pkt_count),
+        ]
 
         # Endpoint controls
         ep_ins = []
@@ -2043,93 +2011,30 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         for i, endp in enumerate(endpoints):
             if endp & EndpointType.IN:
                 exec("self.submodules.ep_%s_in = EndpointIn()" % i)
-                ep_ins.append(getattr(self, "ep_%s_in" % i).layout)
+                ep_ins.append(getattr(self, "ep_%s_in" % i).buf)
             else:
-                ep_ins.append(Record(EndpointLayout))
+                ep_ins.append(FifoFake())
 
             if endp & EndpointType.OUT:
                 exec("self.submodules.ep_%s_out = EndpointOut()" % i)
-                ep_outs.append(getattr(self, "ep_%s_out" % i).layout)
+                ep_outs.append(getattr(self, "ep_%s_out" % i).buf)
             else:
-                ep_outs.append(Record(EndpointLayout))
+                ep_outs.append(FifoFake())
 
         self.ep_ins = Array(ep_ins)
         self.ep_outs = Array(ep_outs)
 
-        self.current_ptr = Signal(size)
-        self.current_len = Signal(6)
-        self.current_offset = Signal(6)
-
         self.comb += [
             If(self.usb_core.data_recv,
-                self.current_ptr.eq(self.ep_ins[self.usb_core.current_ep].pkt_addr),
-                self.usb_core.data_recv_ready.eq(self.ep_ins[self.usb_core.current_ep].ready),
+                self.usb_core.data_recv_ready.eq(self.ep_ins[self.usb_core.current_ep].writable),
+                self.ep_ins[self.usb_core.current_ep].we.eq(self.usb_core.data_recv_put),
+                self.ep_ins[self.usb_core.current_ep].din.eq(self.usb_core.data_recv_payload),
             ).Elif(self.usb_core.data_send,
-                self.current_ptr.eq(self.ep_outs[self.usb_core.current_ep].pkt_addr),
-                self.usb_core.data_send_ready.eq(self.ep_outs[self.usb_core.current_ep].ready),
+                self.usb_core.data_send_ready.eq(self.ep_outs[self.usb_core.current_ep].readable),
+                self.usb_core.data_send_payload.eq(self.ep_outs[self.usb_core.current_ep].dout),
+                self.ep_outs[self.usb_core.current_ep].re.eq(self.usb_core.data_send_get),
             ),
         ]
-
-        self.current_pos = Signal(size)
-        self.comb += [
-            self.current_pos.eq(self.current_ptr + self.current_offset),
-
-            self.usb_port.adr.eq(self.current_pos),
-            # Read from memory
-            #self.usb_port.re.eq(self.usb_core.data_send_get),
-            self.usb_core.data_send_payload.eq(self.usb_port.dat_r),
-            # Write to memory
-            self.usb_port.we.eq(self.usb_core.data_recv_put),
-            self.usb_port.dat_w.eq(self.usb_core.data_recv_payload),
-        ]
-
-        # Offset control
-        self.offset_reset = Signal()
-        self.offset_increment = Signal()
-        self.offset_commit = Signal()
-
-        self.sync.usb_48 += [
-            If(self.offset_increment,
-                self.current_offset.eq(self.current_offset+1),
-            ),
-            If(self.offset_reset,
-                self.current_offset.eq(0),
-            ),
-            If(self.offset_commit,
-                If(self.usb_core.data_recv,
-                    self.ep_ins[self.usb_core.current_ep].pkt_len.eq(self.current_offset),
-                    self.ep_ins[self.usb_core.current_ep].valid.eq(1),
-                ).Elif(self.usb_core.data_send,
-                    self.ep_outs[self.usb_core.current_ep].valid.eq(1),
-                ),
-            ),
-        ]
-
-        self.comb += [
-            self.offset_reset.eq(self.usb_core.data_start),
-            self.offset_increment.eq(self.usb_core.data_recv_put | self.usb_core.data_send_get),
-            self.offset_commit.eq(self.usb_core.data_commit),
-        ]
-
-
-'''
-class UsbDeviceCpuInterface(Module, AutoCSR):
-    """
-    Implements the SW->HW interface for UsbDevice.
-    """
-
-    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR]):
-        size = 9
-
-        self.iobuf = iobuf
-
-        buf_bus = wishbone.Interface(data_width=8)
-        self.submodules.buf = buf = wishbone.SRAM(2**size, bus=buf_bus)
-
-        # Provide ability for the CPU to write into the buffer RAM.
-        self.bus = bus = wishbone.Interface(data_width=32)
-        self.submodules.conv = wishbone.Converter(self.bus, buf_bus)
-'''
 
 
 class UsbDevice(Module):

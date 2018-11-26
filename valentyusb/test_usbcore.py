@@ -2020,7 +2020,7 @@ class CommonUsbTestCase(TestCase):
             if tx:
                 break
             yield
-        #self.assertTrue(tx, "No packet started, "+msg)
+        self.assertTrue(tx, "No packet started, "+msg)
 
         # Read in the packet data
         result = ""
@@ -2032,14 +2032,14 @@ class CommonUsbTestCase(TestCase):
             tx = yield self.dut.iobuf.usb_tx_en
             if not tx:
                 break
-        #self.assertFalse(tx, "Packet didn't finish, "+msg)
+        self.assertFalse(tx, "Packet didn't finish, "+msg)
         yield self.packet_d2h.eq(0)
 
         # Check the packet received matches
         expected = pp_packet(wrap_packet(packet))
         actual = pp_packet(result)
 
-        #self.assertMultiLineEqual(expected, actual, msg)
+        self.assertMultiLineEqual(expected, actual, msg)
 
 
     # No expect_token_packet, as the host is the only one who generates tokens.
@@ -2397,40 +2397,6 @@ class TestUsbDevice(CommonUsbTestCase):
             yield
 
 
-class WishboneMaster:
-    def __init__(self, obj):
-        self.obj = obj
-        self.dat = 0
-
-    def write(self, adr, dat):
-        yield self.obj.cyc.eq(1)
-        yield self.obj.stb.eq(1)
-        yield self.obj.adr.eq(adr)
-        yield self.obj.we.eq(1)
-        yield self.obj.sel.eq(0xf)
-        yield self.obj.dat_w.eq(dat)
-        while not (yield self.obj.ack):
-            yield
-        yield self.obj.cyc.eq(0)
-        yield self.obj.stb.eq(0)
-        yield
-
-    def read(self, adr):
-        yield self.obj.cyc.eq(1)
-        yield self.obj.stb.eq(1)
-        yield self.obj.adr.eq(adr)
-        yield self.obj.we.eq(0)
-        yield self.obj.sel.eq(0xf)
-        yield self.obj.dat_w.eq(0)
-        while not (yield self.obj.ack):
-            yield
-        self.dat = (yield self.obj.dat_r)
-        yield self.obj.cyc.eq(0)
-        yield self.obj.stb.eq(0)
-        yield
-
-
-
 class TestUsbDeviceCpuInterface(CommonUsbTestCase):
 
     maxDiff=None
@@ -2441,15 +2407,6 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
         self.iobuf = TestIoBuf()
         self.dut = UsbDeviceCpuInterface(self.iobuf, endpoints)
 
-        buffer_signals_layout = [
-            ('head', 8),
-            ('size', 32),
-        ]
-
-        self.csr_pending_writes = []
-
-        self.base = 0
-
         self.packet_h2d = Signal(1)
         self.packet_d2h = Signal(1)
         self.packet_idle = Signal(1)
@@ -2457,42 +2414,29 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
 
     def run_sim(self, stim):
         def padfront():
-            yield from self.dut.ep_0_in.response.write(0b01)
+            #yield from self.dut.ep_0_in.response.write(0b01)
             yield from self.idle()
             yield from stim()
 
         run_simulation(self.dut, padfront(), vcd_name="vcd/%s.vcd" % self.id(), clocks={"usb_48": 4, "sys": 4})
 
     def _set_buffer_signals(self):
-        yield from self.finish_csr_writes()
+        if False:
+            yield
 
     ######################################################################
     ## Helpers
     ######################################################################
-    def start_csr_write(self, csr, v):
-        yield csr.r.eq(v)
-        yield csr.re.eq(1)
-        self.csr_pending_writes.append(csr)
-
-    def finish_csr_writes(self):
-        for csr in self.csr_pending_writes:
-            yield csr.re.eq(0)
-        self.csr_pending_writes.clear()
-
     def set_data(self, ep, data):
         """Set an endpoints buffer to given data to be sent."""
         assert isinstance(data, (list, tuple))
-        #self.expect_empty(ep)
-
         print("Set %i: %r" % (ep, data))
-        for i, v in enumerate(data):
-            addr = self.base + i
-            yield self.dut.buf.mem[addr].eq(v)
 
         ep_mod = self.get_ep_mod(ep, EndpointType.OUT)
-        yield from self.start_csr_write(ep_mod.ptr, self.base)
-        yield from self.start_csr_Write(ep_mod.len, len(data))
-        self.base += len(data)
+        empty = yield from ep_mode.empty.read()
+        self.assertTrue(empty)
+        for v in data:
+            yield from ep_mode.head.write(v)
 
     def expect_empty(self, ep):
         """Except that an endpoints buffer is empty."""
@@ -2501,16 +2445,19 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
     def expect_data(self, ep, data):
         """Expect that an endpoints buffer has given contents."""
         ep_mod = getattr(self.dut, "ep_%s_in" % ep)
-        pkt_addr = yield from ep_mod.ptr.read()
-        pkt_len = yield from ep_mod.len.read()
 
-        self.assertEqual(pkt_len, len(data))
+        actual_data = []
+        while range(0, 1024):
+            yield from ep_mod.head.write(0)
+            empty = yield from ep_mod.empty.read()
+            if empty:
+                break
 
-        mem_data = []
-        for i in range(0, len(data)):
-            mem_data.append((yield self.dut.buf.mem[pkt_addr + i]))
-            print("Addr %i = %s" % (pkt_addr + i, hex(mem_data[-1])))
-        self.assertSequenceEqual(data, mem_data)
+            v = yield from ep_mod.head.read()
+            actual_data.append(v)
+
+        print("Got %i: %r (expected: %r)" % (ep, actual_data, data))
+        self.assertSequenceEqual(data, actual_data)
 
     def get_ep_mod(self, ep, dir=None):
         assert (ep != 0) or (dir != None)
@@ -2524,12 +2471,17 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
     def block_ep(self, ep):
         assert ep != 0
         ep_mod = self.get_ep_mod(ep)
-        yield from self.start_csr_write(ep_mod.response, 0b11)
+        #yield from self.start_csr_write(ep_mod.response, 0b11)
+        if False:
+            yield
 
     def unblock_ep(self, ep):
         assert ep != 0
         ep_mod = self.get_ep_mod(ep)
-        yield from self.start_csr_write(ep_mod.response, 0b01)
+        #yield from self.start_csr_write(ep_mod.response, 0b01)
+        if False:
+            yield
+
 
 
 if __name__ == '__main__':
