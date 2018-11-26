@@ -2432,11 +2432,13 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
         assert isinstance(data, (list, tuple))
         print("Set %i: %r" % (ep, data))
 
-        ep_mod = self.get_ep_mod(ep, EndpointType.OUT)
-        empty = yield from ep_mode.empty.read()
+        ep_mod = self.get_ep_mod(ep, EndpointType.IN)
+        empty = yield from ep_mod.empty.read()
         self.assertTrue(empty)
         for v in data:
-            yield from ep_mode.head.write(v)
+            yield from ep_mod.head.write(v)
+        empty = yield from ep_mod.empty.read()
+        self.assertFalse(empty)
 
     def expect_empty(self, ep):
         """Except that an endpoints buffer is empty."""
@@ -2444,7 +2446,7 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
 
     def expect_data(self, ep, data):
         """Expect that an endpoints buffer has given contents."""
-        ep_mod = getattr(self.dut, "ep_%s_in" % ep)
+        ep_mod = getattr(self.dut, "ep_%s_out" % ep)
 
         actual_data = []
         while range(0, 1024):

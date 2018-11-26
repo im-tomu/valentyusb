@@ -1760,26 +1760,25 @@ class UsbCore(Module):
             self.current_ep.eq(self.usbfsrx.decode.o_ep),
         ]
 
-        self.data_recv = Signal()
         self.data_recv_ready = Signal()     # Assert when ready to received data
         self.data_recv_put = Signal()       # Toggled when data is received
         self.data_recv_payload = Signal(8)  # Data received
 
-        self.data_send = Signal()
-        self.data_send_get = Signal()       # Toggled when data is sent
         self.data_send_ready = Signal()     # Assert when data ready to send
+        self.data_send_get = Signal()       # Toggled when data is sent
         self.data_send_payload = Signal(8)  # Data to be send
 
         self.comb += [
-            # Input path
+            # Host->Device, Input path
             self.data_recv_put.eq(self.usbfsrx.decode.put_data),
             self.data_recv_payload.eq(self.usbfsrx.decode.data_n1),
-            # Output path
+            # Device->Host, Output path
             self.data_send_get.eq(self.usbfstx.o_data_get),
             self.usbfstx.i_data_valid.eq(self.data_send_ready),
             self.usbfstx.i_data_payload.eq(self.data_send_payload),
         ]
 
+        # Packet counter
         self.pkt_count = Signal(8)
         self.sync += [
             If(self.usbfsrx.o_pkt_end,
@@ -1820,11 +1819,9 @@ class UsbCore(Module):
             #If(self.usbfsrx.decode.end_token,
             If(self.usbfsrx.o_pkt_end,
                 If(self.usbfsrx.decode.o_pid == PID.SETUP,
-                    self.data_recv.eq(1),
                     NextState("RECV_DATA"),
                     NextValue(self.last_sent_data, 0),
                 ).Elif(self.usbfsrx.decode.o_pid == PID.OUT,
-                    self.data_recv.eq(1),
                     NextState("RECV_DATA"),
                 ).Elif(self.usbfsrx.decode.o_pid == PID.IN,
                     # Endpoint isn't ready
@@ -1849,7 +1846,6 @@ class UsbCore(Module):
 
         # Data packet
         pe.act("RECV_DATA",
-            self.data_recv.eq(1),
             # Was the data path not ready, NAK the packet
             If(self.usbfsrx.decode.put_data & ~(self.data_recv_ready),
                 NextState("WAIT_NAK"),
@@ -1862,7 +1858,6 @@ class UsbCore(Module):
             ),
         )
         pe.act("SEND_DATA",
-            self.data_send.eq(1),
             If(self.usbfstx.o_pkt_end,
                 NextState("RECV_HAND"),
             ),
@@ -1917,7 +1912,7 @@ class Endpoint(Module, AutoCSR):
         self.empty = CSRStatus(1)
 
 
-class EndpointIn(Endpoint):
+class EndpointOut(Endpoint):
     """Endpoint for Host->Device data.
 
     Raises packet IRQ when new packet has arrived.
@@ -1938,7 +1933,7 @@ class EndpointIn(Endpoint):
         ]
 
 
-class EndpointOut(Endpoint):
+class EndpointIn(Endpoint):
     """Endpoint for Device->Host data.
 
     Reads from the buffer memory.
@@ -2025,15 +2020,14 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         self.ep_outs = Array(ep_outs)
 
         self.comb += [
-            If(self.usb_core.data_recv,
-                self.usb_core.data_recv_ready.eq(self.ep_ins[self.usb_core.current_ep].writable),
-                self.ep_ins[self.usb_core.current_ep].we.eq(self.usb_core.data_recv_put),
-                self.ep_ins[self.usb_core.current_ep].din.eq(self.usb_core.data_recv_payload),
-            ).Elif(self.usb_core.data_send,
-                self.usb_core.data_send_ready.eq(self.ep_outs[self.usb_core.current_ep].readable),
-                self.usb_core.data_send_payload.eq(self.ep_outs[self.usb_core.current_ep].dout),
-                self.ep_outs[self.usb_core.current_ep].re.eq(self.usb_core.data_send_get),
-            ),
+            # Host->Device[Out Endpoint] pathway
+            self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.current_ep].writable),
+            self.ep_outs[self.usb_core.current_ep].we.eq(self.usb_core.data_recv_put),
+            self.ep_outs[self.usb_core.current_ep].din.eq(self.usb_core.data_recv_payload),
+            # [In Endpoint]Device->Host pathway
+            self.usb_core.data_send_ready.eq(self.ep_ins[self.usb_core.current_ep].readable),
+            self.usb_core.data_send_payload.eq(self.ep_ins[self.usb_core.current_ep].dout),
+            self.ep_ins[self.usb_core.current_ep].re.eq(self.usb_core.data_send_get),
         ]
 
 
