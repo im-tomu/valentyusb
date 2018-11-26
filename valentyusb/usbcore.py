@@ -1974,19 +1974,56 @@ class EndpointOut(Endpoint):
         ]
 
 
+'''
+class UsbBuffer(Module):
+
+    def __init__(self):
+
+        WORD = 8
+        ADDR = 9
+
+        self.clock_domain.cd_fast_port = ClockDomain()
+        self.clock_domain.cd_slow_port = ClockDomain()
+
+        self.rdata = Signal(WORD)
+        self.raddr = Signal(ADDR)
+
+        self.wdata = Signal(WORD)
+        self.waddr = Signal(ADDR)
+
+        self.specials += [
+            Instance(
+                "SB_RAM512x8",
+
+                # Read port
+                o_RDATA, # 8bits
+                i_RADDR, # 9bits
+                i_RCLK,
+                i_RCLKE,
+                i_RE,
+
+                # Write port
+                i_WADDR, # 9bits
+                i_WDATA, # 8bits
+                i_WCLK,
+                i_WCLKE,
+                i_WE,
+            ),
+        ]
+
+'''
+
+
 class UsbDeviceCpuInterface(Module, AutoCSR):
     """
     Implements the SW->HW interface for UsbDevice.
     """
-
-
 
     def __init__(self, iobuf, endpoints=[EndpointType.BIDIR]):
         size = 9
 
         self.iobuf = iobuf
 
-        self.clock_domains.cd_sys = ClockDomain()
         buf_bus = wishbone.Interface(data_width=8)
         self.submodules.buf = buf = wishbone.SRAM(2**size, bus=buf_bus)
 
@@ -1995,9 +2032,10 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         self.submodules.conv = wishbone.Converter(self.bus, buf_bus)
 
         # USB Core
-        self.clock_domains.usb_48 = ClockDomain()
-        self.submodules.usb_core = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
-        self.usb_port = buf.mem.get_port(write_capable=True, we_granularity=8, clock_domain="usb_48")
+        #self.clock_domains.cd_usb_48 = ClockDomain()
+        usb_core = UsbCore(iobuf)
+        self.submodules.usb_core = ClockDomainsRenamer("usb_48")(usb_core)
+        self.specials.usb_port = buf.mem.get_port(write_capable=True, we_granularity=8, clock_domain="usb_48")
 
         # Endpoint controls
         ep_ins = []
@@ -2039,7 +2077,7 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
             self.usb_port.adr.eq(self.current_pos),
             # Read from memory
             #self.usb_port.re.eq(self.usb_core.data_send_get),
-            self.usb_port.dat_r.eq(self.usb_core.data_send_payload),
+            self.usb_core.data_send_payload.eq(self.usb_port.dat_r),
             # Write to memory
             self.usb_port.we.eq(self.usb_core.data_recv_put),
             self.usb_port.dat_w.eq(self.usb_core.data_recv_payload),
@@ -2050,7 +2088,7 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         self.offset_increment = Signal()
         self.offset_commit = Signal()
 
-        self.sync += [
+        self.sync.usb_48 += [
             If(self.offset_increment,
                 self.current_offset.eq(self.current_offset+1),
             ),
@@ -2072,6 +2110,26 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
             self.offset_increment.eq(self.usb_core.data_recv_put | self.usb_core.data_send_get),
             self.offset_commit.eq(self.usb_core.data_commit),
         ]
+
+
+'''
+class UsbDeviceCpuInterface(Module, AutoCSR):
+    """
+    Implements the SW->HW interface for UsbDevice.
+    """
+
+    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR]):
+        size = 9
+
+        self.iobuf = iobuf
+
+        buf_bus = wishbone.Interface(data_width=8)
+        self.submodules.buf = buf = wishbone.SRAM(2**size, bus=buf_bus)
+
+        # Provide ability for the CPU to write into the buffer RAM.
+        self.bus = bus = wishbone.Interface(data_width=32)
+        self.submodules.conv = wishbone.Converter(self.bus, buf_bus)
+'''
 
 
 class UsbDevice(Module):
