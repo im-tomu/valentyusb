@@ -1970,6 +1970,7 @@ class EndpointEmpty(Module):
         self.buf.readable = Signal(1)
         self.buf.re = Signal(1)
 
+
 class FifoFake(Module):
     def __init__(self):
         self.din = Signal(8)
@@ -2001,20 +2002,27 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         ]
 
         # Endpoint controls
+        ems = []
         ep_ins = []
         ep_outs = []
         for i, endp in enumerate(endpoints):
             if endp & EndpointType.IN:
                 exec("self.submodules.ep_%s_in = EndpointIn()" % i)
-                ep_ins.append(getattr(self, "ep_%s_in" % i).buf)
+                ep = getattr(self, "ep_%s_in" % i)
+                ep_ins.append(ep.buf)
+                ems.append(ep.ev)
             else:
                 ep_ins.append(FifoFake())
 
             if endp & EndpointType.OUT:
                 exec("self.submodules.ep_%s_out = EndpointOut()" % i)
-                ep_outs.append(getattr(self, "ep_%s_out" % i).buf)
+                ep = getattr(self, "ep_%s_out" % i)
+                ep_outs.append(ep.buf)
+                ems.append(ep.ev)
             else:
                 ep_outs.append(FifoFake())
+
+        self.submodules.ev = ev.SharedIRQ(*ems)
 
         self.ep_ins = Array(ep_ins)
         self.ep_outs = Array(ep_outs)
