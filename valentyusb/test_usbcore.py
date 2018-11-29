@@ -1652,6 +1652,8 @@ class TestUsbFsTx_longer(TestCase):
 
 class TestIoBuf(Module):
     def __init__(self):
+        self.usb_pullup = Signal()
+
         self.usb_p = Signal()
         self.usb_n = Signal()
 
@@ -2106,35 +2108,48 @@ class CommonUsbTestCase(TestCase):
     # <-ack
     # ....
     def transaction_data_out(self, addr, ep, data, chunk_size=8):
-        i = 1
+        i = PID.DATA0
         for chunk in grouper(chunk_size, data, pad=0):
             yield from self.expect_data(ep, [])
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(i, chunk)
             yield from self.expect_ack()
-            yield from self.expect_data(ep, data)
-            if i == 0:
-                i = 1
+            yield from self.expect_data(ep, chunk)
+            if i == PID.DATA0:
+                i = PID.DATA1
             else:
-                i = 0
+                i = PID.DATA0
 
     # Host to Device
     # ->out
     # ->data1[]
     # <-ack
-    def transaction_status(self, addr, ep):
+    def transaction_status_out(self, addr, ep):
         yield from self.send_token_packet(PID.OUT, addr, ep)
         yield from self.send_data_packet(PID.DATA1, [])
         yield from self.expect_ack()
         yield from self.expect_data(ep, [])
 
-    def control_transfer(self, addr, setup_data, descriptor_data):
+    def transaction_status_in(self, addr, ep):
+        yield from self.send_token_packet(PID.IN, addr, ep)
+        yield from self.expect_data_packet(PID.DATA1, [])
+        yield from self.send_ack()
+
+    def control_transfer_in(self, addr, setup_data, descriptor_data):
         # Setup stage
         yield from self.transaction_setup(addr, 0, setup_data)
         # Data stage
         yield from self.transaction_data_in(addr, 0, descriptor_data)
         # Status stage
-        yield from self.transaction_status(addr, 0)
+        yield from self.transaction_status_out(addr, 0)
+
+    def control_transfer_out(self, addr, setup_data, descriptor_data):
+        # Setup stage
+        yield from self.transaction_setup(addr, 0, setup_data)
+        # Data stage
+        yield from self.transaction_data_out(addr, 0, descriptor_data)
+        # Status stage
+        yield from self.transaction_status_in(addr, 0)
 
     ######################################################################
     ######################################################################
@@ -2146,9 +2161,21 @@ class CommonUsbTestCase(TestCase):
             yield from self.transaction_setup(28, 0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
         self.run_sim(stim)
 
-    def test_control_transfer(self):
+    def test_control_transfer_in(self):
         def stim():
-            yield from self.control_transfer(
+            yield from self.control_transfer_in(
+                20,
+                # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
+                [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00],
+                # 12 byte descriptor, max packet size 8 bytes
+                [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                 0x08, 0x09, 0x0A, 0x0B],
+            )
+        self.run_sim(stim)
+
+    def test_control_transfer_out(self):
+        def stim():
+            yield from self.control_transfer_out(
                 20,
                 # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
                 [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00],
@@ -2186,6 +2213,30 @@ class CommonUsbTestCase(TestCase):
             addr = 28
             ep = 1
 
+            yield from self.set_data(ep, d1)
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.send_nak()
+
+            d1 = [0x1, 0x2, 0x3, 0x4]
+            yield from self.set_data(ep, d1)
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.send_ack()
+
+            d2 = [0x5, 0x6, 0x7, 0x8]
+            yield from self.set_data(ep, d2)
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(PID.DATA0, d2)
+            yield from self.send_ack()
+
+        self.run_sim(stim)
+
+    def test_in_transfer_nak(self):
+        def stim():
+            addr = 28
+            ep = 1
+
 
             yield from self.block_ep(ep)
             # First nak
@@ -2217,7 +2268,37 @@ class CommonUsbTestCase(TestCase):
 
         self.run_sim(stim)
 
-    def test_out_transfer(self):
+    def test_out_transfer_full(self):
+        def stim():
+            addr = 28
+            ep = 2
+
+            d = [0x41, 0x01]
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_ack()
+
+            # Should nak until data is read
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_nak()
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_nak()
+
+            yield from self.expect_data(ep, d)
+
+            d2 = [0x41, 0x02]
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d2)
+            yield from self.expect_ack()
+            yield from self.expect_data(ep, d2)
+
+        self.run_sim(stim)
+
+    def test_out_transfer_nak(self):
         def stim():
             addr = 28
             ep = 2
@@ -2366,7 +2447,7 @@ class TestUsbDevice(CommonUsbTestCase):
         """Expect that an endpoints buffer has given contents."""
         assert ep in self.buffers_out, self.buffers_out.keys()
         assert self.buffers_out[ep] is not None, "Endpoint currently blocked!"
-        print("Got %i: %r (expected: %r)" % (ep, self.buffers_out[ep], data))
+        print("Got ep%i: %r (expected: %r)" % (ep, self.buffers_out[ep], data))
         self.assertSequenceEqual(self.buffers_out[ep], data)
         self.buffers_out[ep].clear()
         if False:
@@ -2433,20 +2514,36 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
         print("Set %i: %r" % (ep, data))
 
         ep_mod = self.get_ep_mod(ep, EndpointType.IN)
+
+        # Make sure there is nothing pending
+        pending = yield ep_mode.ev.packet.pending
+        self.assertFalse(bool(pending))
+
+        # Make sure the endpoint is empty
         empty = yield from ep_mod.empty.read()
         self.assertTrue(empty)
+
         for v in data:
             yield from ep_mod.head.write(v)
-        empty = yield from ep_mod.empty.read()
-        self.assertFalse(empty)
+
+        if len(data) > 0:
+            empty = yield from ep_mod.empty.read()
+            self.assertFalse(bool(empty))
 
     def expect_empty(self, ep):
         """Except that an endpoints buffer is empty."""
-        pass
+        ep_mod = getattr(self.dut, "ep_%s_in" % ep)
+        empty = yield from ep_mod.empty.read()
+        self.assertTrue(bool(empty))
 
     def expect_data(self, ep, data):
         """Expect that an endpoints buffer has given contents."""
         ep_mod = getattr(self.dut, "ep_%s_out" % ep)
+
+        pending = yield ep_mod.ev.packet.pending
+        if len(data) > 0:
+            # Make sure there is something pending
+            self.assertTrue(bool(pending))
 
         actual_data = []
         while range(0, 1024):
@@ -2458,8 +2555,16 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
             v = yield from ep_mod.head.read()
             actual_data.append(v)
 
-        print("Got %i: %r (expected: %r)" % (ep, actual_data, data))
+        print("Got ep%i: %r (expected: %r)" % (ep, actual_data, data))
         self.assertSequenceEqual(data, actual_data)
+
+        if pending:
+            status = yield from ep_mod.ev.pending.read()
+            self.assertTrue(status)
+            yield from ep_mod.ev.pending.write(0xf)
+            yield
+            status = yield from ep_mod.ev.pending.read()
+            self.assertFalse(status)
 
     def get_ep_mod(self, ep, dir=None):
         assert (ep != 0) or (dir != None)
