@@ -10,6 +10,8 @@ from litex.soc.interconnect import stream
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect import csr_eventmanager as ev
 
+from litex.soc.cores.gpio import GPIOOut
+
 ###############################################################################
 ###############################################################################
 ###############################################################################
@@ -1655,7 +1657,7 @@ from litex.soc.interconnect.csr import *
 
 
 class UsbIoBuf(Module):
-    def __init__(self, usbp_pin, usbn_pin):
+    def __init__(self, usbp_pin, usbn_pin, usb_pullup_pin=None):
         # tx/rx io interface
         self.usb_tx_en = Signal()
         self.usb_p_tx = Signal()
@@ -1666,6 +1668,14 @@ class UsbIoBuf(Module):
 
         self.usb_p_rx_io = Signal()
         self.usb_n_rx_io = Signal()
+
+        self.usb_pullup = Signal()
+        if usb_pullup_pin is not None:
+            self.comb += [
+                usb_pullup_pin.eq(self.usb_pullup),
+            ]
+        else:
+            assert False, "No USB pull up?"
 
         #######################################################################
         #######################################################################
@@ -1992,6 +2002,8 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         size = 9
 
         self.iobuf = iobuf
+
+        self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
 
         # USB Core
         self.submodules.usb_core = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
