@@ -2110,7 +2110,6 @@ class CommonUsbTestCase(TestCase):
     def transaction_data_out(self, addr, ep, data, chunk_size=8):
         i = PID.DATA0
         for chunk in grouper(chunk_size, data, pad=0):
-            yield from self.expect_data(ep, [])
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(i, chunk)
             yield from self.expect_ack()
@@ -2173,6 +2172,67 @@ class CommonUsbTestCase(TestCase):
                  0x08, 0x09, 0x0A, 0x0B],
             )
         self.run_sim(stim)
+
+    def test_control_transfer_in_nak_status(self):
+        def stim():
+            addr = 20
+            setup_data = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
+            descriptor_data = [
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                0x08, 0x09, 0x0A, 0x0B,
+            ]
+
+            # Setup stage
+            yield from self.expect_data(0, [])
+            yield from self.send_token_packet(PID.SETUP, addr, 0)
+            yield from self.send_data_packet(PID.DATA0, setup_data)
+            yield from self.expect_ack()
+
+            # Data stage
+            yield from self.transaction_data_in(addr, 0, descriptor_data)
+
+            yield from self.send_token_packet(PID.OUT, addr, 0)
+            yield from self.send_data_packet(PID.DATA1, [])
+            yield from self.expect_nak()
+
+            yield from self.send_token_packet(PID.OUT, addr, 0)
+            yield from self.send_data_packet(PID.DATA1, [])
+            yield from self.expect_nak()
+
+            # Clear the setup_data
+            yield from self.expect_data(0, setup_data)
+
+            yield from self.send_token_packet(PID.OUT, addr, 0)
+            yield from self.send_data_packet(PID.DATA1, [])
+            yield from self.expect_ack()
+            yield from self.expect_data(0, [])
+
+        self.run_sim(stim)
+
+    def test_control_transfer_out_nak_status(self):
+        def stim():
+            addr = 20
+            setup_data = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
+            out_data = [0x00, 0x01]
+
+            # Setup stage
+            yield from self.transaction_setup(addr, 0, setup_data)
+            # Data stage
+            yield from self.transaction_data_out(addr, 0, out_data)
+
+            yield from self.send_token_packet(PID.IN, addr, 0)
+            yield from self.expect_nak()
+
+            yield from self.send_token_packet(PID.IN, addr, 0)
+            yield from self.expect_nak()
+
+            yield from self.set_data(0, [])
+            yield from self.send_token_packet(PID.IN, addr, 0)
+            yield from self.expect_data_packet(PID.DATA1, [])
+            yield from self.send_ack()
+
+        self.run_sim(stim)
+
 
     def test_control_transfer_out(self):
         def stim():
@@ -2574,9 +2634,8 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
         ep_mod = self.get_ep_mod(ep, EndpointType.OUT)
 
         pending = yield ep_mod.ev.packet.pending
-        if len(data) > 0:
-            # Make sure there is something pending
-            self.assertTrue(bool(pending))
+        # Make sure there is something pending
+        self.assertTrue(bool(pending))
 
         actual_data = []
         while range(0, 1024):

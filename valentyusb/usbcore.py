@@ -1769,11 +1769,12 @@ class UsbCore(Module):
         ]
 
         self.data_recv_ready = Signal()     # Assert when ready to received data
+        self.data_recv_have = Signal()      # Assert when ready to received data
         self.data_recv_put = Signal()       # Toggled when data is received
         self.data_recv_payload = Signal(8)  # Data received
 
         self.data_send_ready = Signal()     # Assert when data ready to send
-        self.data_send_have = Signal()     # Assert when data ready to send
+        self.data_send_have = Signal()      # Assert when data ready to send
         self.data_send_get = Signal()       # Toggled when data is sent
         self.data_send_payload = Signal(8)  # Data to be send
 
@@ -1855,17 +1856,22 @@ class UsbCore(Module):
         pe.act("RECV_DATA",
             If(self.data_recv_ready,
                 self.data_recv_put.eq(self.usbfsrx.decode.put_data),
+                # Packet finished
+                If(self.usbfsrx.o_pkt_end,
+                    self.usbfstx.i_pid.eq(PID.ACK),
+                    self.usbfstx.i_pkt_start.eq(1),
+                    NextState("SEND_HAND_ACK"),
+                ),
             ).Else(
                 # Was the data path not ready, NAK the packet
                 If(self.usbfsrx.decode.put_data,
                     NextState("WAIT_TO_NAK"),
                 ),
-            ),
-            # Packet finished
-            If(self.usbfsrx.o_pkt_end,
-                self.usbfstx.i_pid.eq(PID.ACK),
-                self.usbfstx.i_pkt_start.eq(1),
-                NextState("SEND_HAND_ACK"),
+                If(self.usbfsrx.o_pkt_end,
+                    self.usbfstx.i_pid.eq(PID.NAK),
+                    self.usbfstx.i_pkt_start.eq(1),
+                    NextState("SEND_HAND_NAK"),
+                ),
             ),
         )
         pe.act("SEND_DATA",
@@ -1922,7 +1928,7 @@ class Endpoint(Module, AutoCSR):
 
         # Make the pending value be true on reset
         # FIXME: Is this hack actually needed?
-        self.ev.packet.pending.reset = Constant(1)
+        #self.ev.packet.pending.reset = Constant(1)
 
         #self.respond = CSRStorage(1)
         # How to respond to requests;
@@ -2019,7 +2025,7 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
     Implements the SW->HW interface for UsbDevice.
     """
 
-    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR]):
+    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.OUT]):
         size = 9
 
         self.iobuf = iobuf
@@ -2062,14 +2068,15 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
 
         self.comb += [
             # Host->Device[Out Endpoint] pathway
-            self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.current_ep].writable & ~self.ep_outs[self.usb_core.current_ep].pending),
+            #self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.current_ep].writable & ~self.ep_outs[self.usb_core.current_ep].pending),
+            self.usb_core.data_recv_ready.eq(~self.ep_outs[self.usb_core.current_ep].pending),
             self.ep_outs[self.usb_core.current_ep].we.eq(self.usb_core.data_recv_put),
             self.ep_outs[self.usb_core.current_ep].din.eq(self.usb_core.data_recv_payload),
-            self.ep_outs[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_recv),
+            self.ep_outs[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_recv | ~iobuf.usb_pullup),
             # [In Endpoint]Device->Host pathway
             self.usb_core.data_send_ready.eq(~self.ep_ins[self.usb_core.current_ep].pending),
             self.usb_core.data_send_have.eq(self.ep_ins[self.usb_core.current_ep].readable),
             self.usb_core.data_send_payload.eq(self.ep_ins[self.usb_core.current_ep].dout),
             self.ep_ins[self.usb_core.current_ep].re.eq(self.usb_core.data_send_get),
-            self.ep_ins[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_sent),
+            self.ep_ins[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_sent | ~iobuf.usb_pullup),
         ]
