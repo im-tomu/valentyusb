@@ -2131,6 +2131,7 @@ class CommonUsbTestCase(TestCase):
         yield from self.expect_data(ep, [])
 
     def transaction_status_in(self, addr, ep):
+        yield from self.set_data(ep, [])
         yield from self.send_token_packet(PID.IN, addr, ep)
         yield from self.expect_data_packet(PID.DATA1, [])
         yield from self.send_ack()
@@ -2213,21 +2214,15 @@ class CommonUsbTestCase(TestCase):
             addr = 28
             ep = 1
 
-            yield from self.set_data(ep, d1)
+            d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+            yield from self.set_data(ep, d[:4])
             yield from self.send_token_packet(PID.IN, addr, ep)
-            yield from self.expect_data_packet(PID.DATA1, d1)
-            yield from self.send_nak()
-
-            d1 = [0x1, 0x2, 0x3, 0x4]
-            yield from self.set_data(ep, d1)
-            yield from self.send_token_packet(PID.IN, addr, ep)
-            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.expect_data_packet(PID.DATA1, d[:4])
             yield from self.send_ack()
 
-            d2 = [0x5, 0x6, 0x7, 0x8]
-            yield from self.set_data(ep, d2)
+            yield from self.set_data(ep, d[4:])
             yield from self.send_token_packet(PID.IN, addr, ep)
-            yield from self.expect_data_packet(PID.DATA0, d2)
+            yield from self.expect_data_packet(PID.DATA0, d[4:])
             yield from self.send_ack()
 
         self.run_sim(stim)
@@ -2237,21 +2232,20 @@ class CommonUsbTestCase(TestCase):
             addr = 28
             ep = 1
 
-
-            yield from self.block_ep(ep)
-            # First nak
+            #yield from self.block_ep(ep)
+            # Device NAK the PID.IN token packet
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_nak()
 
             yield from self.idle()
 
-            # Second nak
+            # Device NAK the PID.IN token packet a second time
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_nak()
 
             yield from self.idle()
 
-            yield from self.unblock_ep(ep)
+            #yield from self.unblock_ep(ep)
             d1 = [0x1, 0x2, 0x3, 0x4]
             yield from self.set_data(ep, d1)
             yield from self.send_token_packet(PID.IN, addr, ep)
@@ -2322,7 +2316,7 @@ class CommonUsbTestCase(TestCase):
             yield from self.idle()
 
             # Third attempt succeeds
-            yield from self.unblock_ep(ep)
+            yield from self.unblock_ep(ep, EndpointType.OUT)
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_ack()
@@ -2495,7 +2489,26 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
 
     def run_sim(self, stim):
         def padfront():
-            #yield from self.dut.ep_0_in.response.write(0b01)
+            yield
+            yield
+            yield
+            yield
+            yield
+            yield
+            # Make sure that the endpoints are currently blocked
+            ostatus = yield self.dut.ep_0_out.ev.packet.pending
+            self.assertTrue(ostatus)
+            istatus = yield self.dut.ep_0_in.ev.packet.pending
+            self.assertTrue(istatus)
+            yield
+            yield from self.dut.pullup._out.write(1)
+            yield
+            # Make sure that the endpoints are currently blocked
+            ostatus = yield self.dut.ep_0_out.ev.packet.pending
+            self.assertTrue(ostatus)
+            istatus = yield self.dut.ep_0_in.ev.packet.pending
+            self.assertTrue(istatus)
+            yield
             yield from self.idle()
             yield from stim()
 
@@ -2508,16 +2521,28 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
     ######################################################################
     ## Helpers
     ######################################################################
+    def clear_pending(self, ep, dir):
+        ep_mod = self.get_ep_mod(ep, dir)
+
+        # Check the pending flag is raised
+        status = yield from ep_mod.ev.pending.read()
+        self.assertEqual(status, 0x2)
+        # Clear pending flag
+        yield from ep_mod.ev.pending.write(0xf)
+        yield
+        # Check the pending flag has been cleared
+        status = yield from ep_mod.ev.pending.read()
+        self.assertEqual(status, 0x0)
+
     def set_data(self, ep, data):
         """Set an endpoints buffer to given data to be sent."""
         assert isinstance(data, (list, tuple))
-        print("Set %i: %r" % (ep, data))
+        print("Set ep%i: %r" % (ep, data))
 
         ep_mod = self.get_ep_mod(ep, EndpointType.IN)
 
-        # Make sure there is nothing pending
-        pending = yield ep_mode.ev.packet.pending
-        self.assertFalse(bool(pending))
+        pending = yield ep_mod.ev.packet.pending
+        self.assertTrue(pending)
 
         # Make sure the endpoint is empty
         empty = yield from ep_mod.empty.read()
@@ -2525,20 +2550,28 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
 
         for v in data:
             yield from ep_mod.head.write(v)
+            yield
 
         if len(data) > 0:
             empty = yield from ep_mod.empty.read()
             self.assertFalse(bool(empty))
+        else:
+            empty = yield from ep_mod.empty.read()
+            self.assertTrue(bool(empty))
+
+        yield from self.clear_pending(ep, EndpointType.IN)
 
     def expect_empty(self, ep):
         """Except that an endpoints buffer is empty."""
+        if True:
+            return
         ep_mod = getattr(self.dut, "ep_%s_in" % ep)
         empty = yield from ep_mod.empty.read()
         self.assertTrue(bool(empty))
 
     def expect_data(self, ep, data):
         """Expect that an endpoints buffer has given contents."""
-        ep_mod = getattr(self.dut, "ep_%s_out" % ep)
+        ep_mod = self.get_ep_mod(ep, EndpointType.OUT)
 
         pending = yield ep_mod.ev.packet.pending
         if len(data) > 0:
@@ -2554,17 +2587,13 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
 
             v = yield from ep_mod.head.read()
             actual_data.append(v)
+            yield
 
         print("Got ep%i: %r (expected: %r)" % (ep, actual_data, data))
         self.assertSequenceEqual(data, actual_data)
 
         if pending:
-            status = yield from ep_mod.ev.pending.read()
-            self.assertTrue(status)
-            yield from ep_mod.ev.pending.write(0xf)
-            yield
-            status = yield from ep_mod.ev.pending.read()
-            self.assertFalse(status)
+            yield from self.clear_pending(ep, EndpointType.OUT)
 
     def get_ep_mod(self, ep, dir=None):
         assert (ep != 0) or (dir != None)
@@ -2575,19 +2604,16 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
         else:
             raise AttributeError("Unknown endpoint %i" % ep)
 
-    def block_ep(self, ep):
+    def block_ep(self, ep, dir=None):
         assert ep != 0
         ep_mod = self.get_ep_mod(ep)
         #yield from self.start_csr_write(ep_mod.response, 0b11)
         if False:
             yield
 
-    def unblock_ep(self, ep):
+    def unblock_ep(self, ep, dir=None):
         assert ep != 0
-        ep_mod = self.get_ep_mod(ep)
-        #yield from self.start_csr_write(ep_mod.response, 0b01)
-        if False:
-            yield
+        yield from self.clear_pending(ep, dir)
 
 
 

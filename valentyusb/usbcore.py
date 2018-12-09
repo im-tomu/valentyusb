@@ -1824,7 +1824,6 @@ class UsbCore(Module):
         # >Ack
         # ---------------------------
         pe.act("WAIT_TOKEN",
-            #If(self.usbfsrx.decode.end_token,
             If(self.usbfsrx.o_pkt_end,
                 If(self.usbfsrx.decode.o_pid == PID.SETUP,
                     NextState("RECV_DATA"),
@@ -1859,7 +1858,7 @@ class UsbCore(Module):
             ).Else(
                 # Was the data path not ready, NAK the packet
                 If(self.usbfsrx.decode.put_data,
-                    NextState("WAIT_NAK"),
+                    NextState("WAIT_TO_NAK"),
                 ),
             ),
             # Packet finished
@@ -1882,7 +1881,7 @@ class UsbCore(Module):
                 NextState("WAIT_TOKEN"),
             ),
         )
-        pe.act("WAIT_NAK",
+        pe.act("WAIT_TO_NAK",
             If(~self.usbfsrx.decode.pkt_det.o_pkt_active,
                 self.usbfstx.i_pid.eq(PID.NAK),
                 self.usbfstx.i_pkt_start.eq(1),
@@ -1920,6 +1919,10 @@ class Endpoint(Module, AutoCSR):
         self.ev.submodules.error = ev.EventSourcePulse()
         self.ev.submodules.packet = ev.EventSourcePulse()
         self.ev.finalize()
+
+        # Make the pending value be true on reset
+        # FIXME: Is this hack actually needed?
+        self.ev.packet.pending.reset = Constant(1)
 
         #self.respond = CSRStorage(1)
         # How to respond to requests;
@@ -2062,11 +2065,11 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
             self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.current_ep].writable & ~self.ep_outs[self.usb_core.current_ep].pending),
             self.ep_outs[self.usb_core.current_ep].we.eq(self.usb_core.data_recv_put),
             self.ep_outs[self.usb_core.current_ep].din.eq(self.usb_core.data_recv_payload),
-            self.ep_outs[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_recv | ~iobuf.usb_pullup),
+            self.ep_outs[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_recv),
             # [In Endpoint]Device->Host pathway
             self.usb_core.data_send_ready.eq(~self.ep_ins[self.usb_core.current_ep].pending),
             self.usb_core.data_send_have.eq(self.ep_ins[self.usb_core.current_ep].readable),
             self.usb_core.data_send_payload.eq(self.ep_ins[self.usb_core.current_ep].dout),
             self.ep_ins[self.usb_core.current_ep].re.eq(self.usb_core.data_send_get),
-            self.ep_ins[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_sent | ~iobuf.usb_pullup),
+            self.ep_ins[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_sent),
         ]
