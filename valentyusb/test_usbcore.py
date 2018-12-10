@@ -2067,6 +2067,10 @@ class CommonUsbTestCase(TestCase):
         yield from self.expect_packet(handshake_packet(PID.STALL), "Expected STALL packet.")
         yield self.packet_d2h.eq(0)
 
+    def expect_last_tok(self, value):
+        last_tok = yield from self.dut.last_tok.read()
+        self.assertEqual(last_tok, value)
+
     # Full transactions
     # ->token  ->token
     # <-data   ->data
@@ -2087,6 +2091,7 @@ class CommonUsbTestCase(TestCase):
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_data_packet(i, chunk)
             yield from self.send_ack()
+            yield from self.expect_last_tok(0b10)
             if i == PID.DATA0:
                 i = PID.DATA1
             else:
@@ -2102,7 +2107,7 @@ class CommonUsbTestCase(TestCase):
         yield from self.send_data_packet(PID.DATA0, data)
         yield from self.expect_ack()
         yield from self.expect_data(ep, data)
-
+        yield from self.expect_last_tok(0b11)
 
     # Host to Device
     # ->out
@@ -2119,6 +2124,7 @@ class CommonUsbTestCase(TestCase):
             yield from self.send_data_packet(i, chunk)
             yield from self.expect_ack()
             yield from self.expect_data(ep, chunk)
+            yield from self.expect_last_tok(0b00)
             if i == PID.DATA0:
                 i = PID.DATA1
             else:

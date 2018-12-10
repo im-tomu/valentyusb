@@ -738,7 +738,7 @@ class RxPacketDecode(Module):
         shifter = self.shifter
 
         # PID
-        self.start_pid = Signal()
+        self.start_tok = Signal()
         self.end_pid = Signal()
 
         # No start handshake
@@ -771,7 +771,7 @@ class RxPacketDecode(Module):
         state.act("WAIT_SYNC",
             If(pkt_det.o_pkt_start,
                 i_reset.eq(1),
-                self.start_pid.eq(1),
+                self.start_tok.eq(1),
                 NextState("WAIT_PID"),
             ),
         )
@@ -1797,7 +1797,7 @@ class UsbCore(Module):
             ),
         ]
 
-        self.start_pid = Signal(4)
+        self.start_tok = Signal(2)
 
         # Host->Device data path (Out + Setup data path)
         #
@@ -1830,7 +1830,7 @@ class UsbCore(Module):
         # ---------------------------
         pe.act("WAIT_TOKEN",
             If(self.usbfsrx.o_pkt_end,
-                NextValue(self.start_pid, self.usbfsrx.decode.o_pid),
+                NextValue(self.start_tok, self.usbfsrx.decode.o_pid[2:]),
                 If(self.usbfsrx.decode.o_pid == PID.SETUP,
                     NextState("RECV_DATA"),
                     NextValue(self.last_sent_data, 0),
@@ -1934,10 +1934,10 @@ class UsbCore(Module):
             ),
         )
         self.packet_recv = Signal()
-        self.last_pid = Signal(4)
+        self.last_tok = Signal(2)
         pe.act("SEND_OKAY_HAND",
             self.packet_recv.eq(1),
-            NextValue(self.last_pid, self.start_pid),
+            NextValue(self.last_tok, self.start_tok),
             If(self.usbfstx.o_pkt_end,
                 NextState("WAIT_TOKEN"),
             ),
@@ -2083,9 +2083,9 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
             self.pkt_count.status.eq(self.usb_core.pkt_count),
         ]
         # Last PID?
-        self.last_pid = CSRStatus(4)
+        self.last_tok = CSRStatus(2)
         self.comb += [
-            self.last_pid.status.eq(self.usb_core.last_pid),
+            self.last_tok.status.eq(self.usb_core.last_tok),
         ]
 
         # Endpoint controls
