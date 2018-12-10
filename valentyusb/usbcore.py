@@ -1768,11 +1768,13 @@ class UsbCore(Module):
             self.current_ep.eq(self.usbfsrx.decode.o_ep),
         ]
 
+        self.data_recv_stall = Signal()     # Assert when core should stall
         self.data_recv_ready = Signal()     # Assert when ready to received data
         self.data_recv_have = Signal()      # Assert when ready to received data
         self.data_recv_put = Signal()       # Toggled when data is received
         self.data_recv_payload = Signal(8)  # Data received
 
+        self.data_send_stall = Signal()     # Assert when core should stall
         self.data_send_ready = Signal()     # Assert when data ready to send
         self.data_send_have = Signal()      # Assert when data ready to send
         self.data_send_get = Signal()       # Toggled when data is sent
@@ -1794,6 +1796,8 @@ class UsbCore(Module):
                 self.pkt_count.eq(self.pkt_count + 1),
             ),
         ]
+
+        self.last_pid = Signal(4)
 
         # Host->Device data path (Out + Setup data path)
         #
@@ -1826,6 +1830,7 @@ class UsbCore(Module):
         # ---------------------------
         pe.act("WAIT_TOKEN",
             If(self.usbfsrx.o_pkt_end,
+                NextValue(self.last_pid, self.usbfsrx.decode.o_pid),
                 If(self.usbfsrx.decode.o_pid == PID.SETUP,
                     NextState("RECV_DATA"),
                     NextValue(self.last_sent_data, 0),
@@ -1833,10 +1838,14 @@ class UsbCore(Module):
                     NextState("RECV_DATA"),
                 ).Elif(self.usbfsrx.decode.o_pid == PID.IN,
                     # Endpoint isn't ready
-                    If(~self.data_send_ready,
-                        self.usbfstx.i_pid.eq(PID.NAK),
+                    If(~self.data_send_ready | self.data_send_stall,
+                        If(self.data_send_stall,
+                            self.usbfstx.i_pid.eq(PID.STALL),
+                        ).Else(
+                            self.usbfstx.i_pid.eq(PID.NAK),
+                        ),
                         self.usbfstx.i_pkt_start.eq(1),
-                        NextState("SEND_HAND_NAK"),
+                        NextState("SEND_FAIL_HAND"),
                     ).Else(
                         If(self.last_sent_data,
                             self.usbfstx.i_pid.eq(PID.DATA0),
@@ -1851,26 +1860,47 @@ class UsbCore(Module):
                 )
             ),
         )
+        #            If(self.data_send_stall,
+        #                self.usbfstx.i_pid.eq(PID.STALL),
+        #                NextState("SEND_FAIL_HAND"),
+        #            ).Elif(~self.data_send_ready,
+        #                self.usbfstx.i_pid.eq(PID.NAK),
+        #                NextState("SEND_FAIL_HAND"),
+        #            ).Else(
+        #                If(self.last_sent_data,
+        #                    self.usbfstx.i_pid.eq(PID.DATA0),
+        #                    NextValue(self.last_sent_data, 0),
+        #                ).Else(
+        #                    self.usbfstx.i_pid.eq(PID.DATA1),
+        #                    NextValue(self.last_sent_data, 1),
+        #                ),
+        #                NextState("SEND_DATA"),
+        #            ),
+        #            self.usbfstx.i_pkt_start.eq(1),
 
         # Data packet
         pe.act("RECV_DATA",
-            If(self.data_recv_ready,
+            If(self.data_recv_ready & ~self.data_recv_stall,
                 self.data_recv_put.eq(self.usbfsrx.decode.put_data),
                 # Packet finished
                 If(self.usbfsrx.o_pkt_end,
-                    self.usbfstx.i_pid.eq(PID.ACK),
                     self.usbfstx.i_pkt_start.eq(1),
-                    NextState("SEND_HAND_ACK"),
+                    self.usbfstx.i_pid.eq(PID.ACK),
+                    NextState("SEND_OKAY_HAND"),
                 ),
             ).Else(
                 # Was the data path not ready, NAK the packet
                 If(self.usbfsrx.decode.put_data,
-                    NextState("WAIT_TO_NAK"),
+                    NextState("WAIT_TO_FAIL"),
                 ),
                 If(self.usbfsrx.o_pkt_end,
-                    self.usbfstx.i_pid.eq(PID.NAK),
+                    If(self.data_recv_stall,
+                        self.usbfstx.i_pid.eq(PID.STALL),
+                    ).Else(
+                        self.usbfstx.i_pid.eq(PID.NAK),
+                    ),
                     self.usbfstx.i_pkt_start.eq(1),
-                    NextState("SEND_HAND_NAK"),
+                    NextState("SEND_FAIL_HAND"),
                 ),
             ),
         )
@@ -1887,20 +1917,24 @@ class UsbCore(Module):
                 NextState("WAIT_TOKEN"),
             ),
         )
-        pe.act("WAIT_TO_NAK",
+        pe.act("WAIT_TO_FAIL",
             If(~self.usbfsrx.decode.pkt_det.o_pkt_active,
-                self.usbfstx.i_pid.eq(PID.NAK),
+                If(self.data_recv_stall,
+                    self.usbfstx.i_pid.eq(PID.STALL),
+                ).Else(
+                    self.usbfstx.i_pid.eq(PID.NAK),
+                ),
                 self.usbfstx.i_pkt_start.eq(1),
-                NextState("SEND_HAND_NAK"),
+                NextState("SEND_FAIL_HAND"),
             ),
         )
-        pe.act("SEND_HAND_NAK",
+        pe.act("SEND_FAIL_HAND",
             If(self.usbfstx.o_pkt_end,
                 NextState("WAIT_TOKEN"),
             ),
         )
         self.packet_recv = Signal()
-        pe.act("SEND_HAND_ACK",
+        pe.act("SEND_OKAY_HAND",
             self.packet_recv.eq(1),
             If(self.usbfstx.o_pkt_end,
                 NextState("WAIT_TOKEN"),
@@ -1941,6 +1975,7 @@ class Endpoint(Module, AutoCSR):
         self.head = CSR(8)
         self.empty = CSRStatus(1)
 
+        self.stall = CSRStorage(1)
 
 
 class EndpointOut(Endpoint):
@@ -1958,11 +1993,13 @@ class EndpointOut(Endpoint):
 
         self.buf.pending = self.ev.packet.pending
         self.buf.trigger = self.ev.packet.trigger
+        self.buf.stall = Signal()
 
         self.comb += [
             self.head.w.eq(self.buf.dout),
             self.buf.re.eq(self.head.re),
             self.empty.status.eq(~self.buf.readable),
+            self.buf.stall.eq(self.stall.storage),
         ]
 
 
@@ -1981,11 +2018,13 @@ class EndpointIn(Endpoint):
 
         self.buf.pending = self.ev.packet.pending
         self.buf.trigger = self.ev.packet.trigger
+        self.buf.stall = Signal()
 
         self.comb += [
             self.buf.din.eq(self.head.r),
             self.buf.we.eq(self.head.re),
             self.empty.status.eq(~self.buf.readable),
+            self.buf.stall.eq(self.stall.storage),
         ]
 
 
@@ -2018,6 +2057,7 @@ class FifoFake(Module):
 
         self.pending = Signal(1)
         self.trigger = Signal(1)
+        self.stall = Signal(1)
 
 
 class UsbDeviceCpuInterface(Module, AutoCSR):
@@ -2035,9 +2075,15 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         # USB Core
         self.submodules.usb_core = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
 
+        # Useful debug counter
         self.pkt_count = CSRStatus(8)
         self.comb += [
             self.pkt_count.status.eq(self.usb_core.pkt_count),
+        ]
+        # Last PID?
+        self.last_pid = CSRStatus(4)
+        self.comb += [
+            self.pkt_count.status.eq(self.usb_core.last_pid),
         ]
 
         # Endpoint controls
@@ -2070,10 +2116,12 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
             # Host->Device[Out Endpoint] pathway
             #self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.current_ep].writable & ~self.ep_outs[self.usb_core.current_ep].pending),
             self.usb_core.data_recv_ready.eq(~self.ep_outs[self.usb_core.current_ep].pending),
+            self.usb_core.data_recv_stall.eq(self.ep_outs[self.usb_core.current_ep].stall),
             self.ep_outs[self.usb_core.current_ep].we.eq(self.usb_core.data_recv_put),
             self.ep_outs[self.usb_core.current_ep].din.eq(self.usb_core.data_recv_payload),
             self.ep_outs[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_recv | ~iobuf.usb_pullup),
             # [In Endpoint]Device->Host pathway
+            self.usb_core.data_send_stall.eq(self.ep_ins[self.usb_core.current_ep].stall),
             self.usb_core.data_send_ready.eq(~self.ep_ins[self.usb_core.current_ep].pending),
             self.usb_core.data_send_have.eq(self.ep_ins[self.usb_core.current_ep].readable),
             self.usb_core.data_send_payload.eq(self.ep_ins[self.usb_core.current_ep].dout),

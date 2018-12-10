@@ -2062,6 +2062,11 @@ class CommonUsbTestCase(TestCase):
         yield from self.expect_packet(handshake_packet(PID.NAK), "Expected NAK packet.")
         yield self.packet_d2h.eq(0)
 
+    def expect_stall(self):
+        yield self.packet_d2h.eq(1)
+        yield from self.expect_packet(handshake_packet(PID.STALL), "Expected STALL packet.")
+        yield self.packet_d2h.eq(0)
+
     # Full transactions
     # ->token  ->token
     # <-data   ->data
@@ -2287,6 +2292,48 @@ class CommonUsbTestCase(TestCase):
 
         self.run_sim(stim)
 
+    def test_in_stall_ep0(self):
+        def stim():
+            addr = 28
+            ep = 0
+
+            d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+
+            yield from self.dut.ep_0_in.stall.write(1)
+
+            yield from self.set_data(ep, d[:4])
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_stall()
+
+            yield from self.dut.ep_0_in.stall.write(0)
+
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(PID.DATA1, d[:4])
+            yield from self.send_ack()
+
+        self.run_sim(stim)
+
+    def test_in_stall(self):
+        def stim():
+            addr = 28
+            ep = 1
+
+            d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+
+            yield from self.dut.ep_1_in.stall.write(1)
+
+            yield from self.set_data(ep, d[:4])
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_stall()
+
+            yield from self.dut.ep_1_in.stall.write(0)
+
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_data_packet(PID.DATA1, d[:4])
+            yield from self.send_ack()
+
+        self.run_sim(stim)
+
     def test_in_transfer_nak(self):
         def stim():
             addr = 28
@@ -2384,6 +2431,67 @@ class CommonUsbTestCase(TestCase):
 
         self.run_sim(stim)
 
+    def test_out_stall_ep0(self):
+        def stim():
+            addr = 28
+            ep = 0
+
+            d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+
+            # While pending, set stall
+            yield from self.dut.ep_0_out.stall.write(1)
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_stall()
+
+            yield from self.dut.ep_0_out.stall.write(0)
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_nak()
+
+            yield from self.clear_pending(0, EndpointType.OUT)
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_ack()
+            yield from self.expect_data(ep, d)
+
+            # While not pending, set stall
+            yield from self.dut.ep_0_out.stall.write(1)
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_stall()
+
+            yield from self.dut.ep_0_out.stall.write(0)
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_ack()
+            yield from self.expect_data(ep, d)
+
+        self.run_sim(stim)
+
+    def test_out_stall(self):
+        def stim():
+            addr = 28
+            ep = 2
+
+            d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+
+            yield from self.dut.ep_2_out.stall.write(1)
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_stall()
+
+            yield from self.dut.ep_2_out.stall.write(0)
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_ack()
+
+
+        self.run_sim(stim)
 
 
 class TestUsbDevice(CommonUsbTestCase):
