@@ -2286,12 +2286,23 @@ class CommonUsbTestCase(TestCase):
             ep = 1
 
             d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+
+            yield from self.dut.ep_1_in.respond.write(EndpointResponse.ACK)
+
             yield from self.set_data(ep, d[:4])
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_data_packet(PID.DATA1, d[:4])
             yield from self.send_ack()
 
+            pending = yield self.dut.ep_1_in.ev.packet.pending
+            self.assertEqual(pending, 1)
             yield from self.set_data(ep, d[4:])
+            pending = yield self.dut.ep_1_in.ev.packet.pending
+            self.assertEqual(pending, 0)
+            yield
+            respond = yield from self.dut.ep_1_in.respond.read()
+            self.assertEqual(respond, EndpointResponse.ACK)
+
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_data_packet(PID.DATA0, d[4:])
             yield from self.send_ack()
@@ -2305,13 +2316,13 @@ class CommonUsbTestCase(TestCase):
 
             d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
 
-            yield from self.dut.ep_0_in.stall.write(1)
+            yield from self.dut.ep_0_in.respond.write(EndpointResponse.STALL)
 
             yield from self.set_data(ep, d[:4])
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_stall()
 
-            yield from self.dut.ep_0_in.stall.write(0)
+            yield from self.dut.ep_0_in.respond.write(EndpointResponse.ACK)
 
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_data_packet(PID.DATA1, d[:4])
@@ -2326,17 +2337,55 @@ class CommonUsbTestCase(TestCase):
 
             d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
 
-            yield from self.dut.ep_1_in.stall.write(1)
+            yield from self.dut.ep_1_in.respond.write(EndpointResponse.STALL)
 
             yield from self.set_data(ep, d[:4])
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_stall()
 
-            yield from self.dut.ep_1_in.stall.write(0)
+            yield from self.dut.ep_1_in.respond.write(EndpointResponse.ACK)
 
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_data_packet(PID.DATA1, d[:4])
             yield from self.send_ack()
+
+        self.run_sim(stim)
+
+    def test_setup_clears_stall(self):
+        def stim():
+            addr = 28
+            ep = 0
+
+            d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+
+            yield from self.clear_pending(0, EndpointType.OUT)
+            yield from self.dut.ep_0_out.respond.write(EndpointResponse.ACK)
+            yield
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA0, d[:4])
+            yield from self.expect_ack()
+            yield from self.expect_data(ep, d[:4])
+
+            yield from self.dut.ep_0_out.respond.write(EndpointResponse.STALL)
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA0, d[4:])
+            yield from self.expect_stall()
+
+            yield from self.send_token_packet(PID.SETUP, addr, ep)
+            yield from self.send_data_packet(PID.DATA1, d)
+            yield from self.expect_ack()
+
+            yield
+            respond = yield from self.dut.ep_0_out.respond.read()
+            self.assertEqual(respond, EndpointResponse.NAK)
+            yield
+
+            yield from self.send_token_packet(PID.OUT, addr, ep)
+            yield from self.send_data_packet(PID.DATA0, d[:4])
+            yield from self.expect_nak()
+
 
         self.run_sim(stim)
 
@@ -2345,7 +2394,8 @@ class CommonUsbTestCase(TestCase):
             addr = 28
             ep = 1
 
-            #yield from self.block_ep(ep)
+            #yield from self.clear_pending(1, EndpointType.IN)
+
             # Device NAK the PID.IN token packet
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_nak()
@@ -2358,7 +2408,6 @@ class CommonUsbTestCase(TestCase):
 
             yield from self.idle()
 
-            #yield from self.unblock_ep(ep)
             d1 = [0x1, 0x2, 0x3, 0x4]
             yield from self.set_data(ep, d1)
             yield from self.send_token_packet(PID.IN, addr, ep)
@@ -2367,8 +2416,15 @@ class CommonUsbTestCase(TestCase):
 
             yield from self.idle()
 
+            # Have data but was asked to NAK
             d2 = [0x5, 0x6, 0x7, 0x8]
             yield from self.set_data(ep, d2)
+            yield from self.dut.ep_1_in.respond.write(EndpointResponse.NAK)
+            yield from self.send_token_packet(PID.IN, addr, ep)
+            yield from self.expect_nak()
+
+            # Actually send the data now
+            yield from self.dut.ep_1_in.respond.write(EndpointResponse.ACK)
             yield from self.send_token_packet(PID.IN, addr, ep)
             yield from self.expect_data_packet(PID.DATA0, d2)
             yield from self.send_ack()
@@ -2445,12 +2501,12 @@ class CommonUsbTestCase(TestCase):
             d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
 
             # While pending, set stall
-            yield from self.dut.ep_0_out.stall.write(1)
+            yield from self.dut.ep_0_out.respond.write(EndpointResponse.STALL)
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_stall()
 
-            yield from self.dut.ep_0_out.stall.write(0)
+            yield from self.dut.ep_0_out.respond.write(EndpointResponse.ACK)
 
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
@@ -2463,12 +2519,12 @@ class CommonUsbTestCase(TestCase):
             yield from self.expect_data(ep, d)
 
             # While not pending, set stall
-            yield from self.dut.ep_0_out.stall.write(1)
+            yield from self.dut.ep_0_out.respond.write(EndpointResponse.STALL)
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_stall()
 
-            yield from self.dut.ep_0_out.stall.write(0)
+            yield from self.dut.ep_0_out.respond.write(EndpointResponse.ACK)
 
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
@@ -2484,13 +2540,13 @@ class CommonUsbTestCase(TestCase):
 
             d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
 
-            yield from self.dut.ep_2_out.stall.write(1)
+            yield from self.dut.ep_2_out.respond.write(EndpointResponse.STALL)
 
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_stall()
 
-            yield from self.dut.ep_2_out.stall.write(0)
+            yield from self.dut.ep_2_out.respond.write(EndpointResponse.ACK)
 
             yield from self.send_token_packet(PID.OUT, addr, ep)
             yield from self.send_data_packet(PID.DATA1, d)
@@ -2651,10 +2707,10 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
     maxDiff=None
 
     def setUp(self):
-        endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.OUT]
+        self.endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.OUT]
 
         self.iobuf = TestIoBuf()
-        self.dut = UsbDeviceCpuInterface(self.iobuf, endpoints)
+        self.dut = UsbDeviceCpuInterface(self.iobuf, self.endpoints)
 
         self.packet_h2d = Signal(1)
         self.packet_d2h = Signal(1)
@@ -2682,6 +2738,7 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
             self.assertTrue(ostatus)
             istatus = yield self.dut.ep_0_in.ev.packet.pending
             self.assertTrue(istatus)
+
             yield
             yield from self.idle()
             yield from stim()

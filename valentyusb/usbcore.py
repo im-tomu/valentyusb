@@ -921,10 +921,9 @@ class UsbFsRx(Module):
         )
 
         self.o_bit_strobe = clock_data_recovery.line_state_valid
-        self.o_pkt_end = Signal()
-        self.sync += [
-            self.o_pkt_end.eq(self.decode.pkt_end),
-        ]
+        self.o_pkt_start = decode.start_tok
+        self.o_pkt_end = decode.pkt_end
+
 
 ###############################################################################
 ###############################################################################
@@ -1544,9 +1543,9 @@ class UsbFsTx(Module):
         pkt.act("EOP_1",
             pkt_active.eq(1),
             shift_eop.eq(1),
-            pkt_end.eq(1),
 
             If(i_bit_strobe,
+                pkt_end.eq(1),
                 NextState("IDLE")
             )
         )
@@ -1715,12 +1714,6 @@ class UsbIoBuf(Module):
         ]
 
 
-class EndpointType(IntEnum):
-    IN = 1
-    OUT = 2
-    BIDIR = IN | OUT
-
-
 class PID(IntEnum):
     # USB Packet IDs
     OUT     = 0b0001
@@ -1734,70 +1727,71 @@ class PID(IntEnum):
     STALL   = 0b1110
 
 
+
+# Token
+# Data
+# Handshake
+
 class UsbCore(Module):
     def __init__(self, iobuf):
         self.submodules.iobuf = iobuf
 
         #### RX Phy
-        self.submodules.usbfsrx = usbfsrx = UsbFsRx(
+        self.submodules.rx = rx = UsbFsRx(
             usbp_raw = self.iobuf.usb_p_rx,
             usbn_raw = self.iobuf.usb_n_rx
         )
 
         #### TX Phy
-        self.submodules.usbfstx = usbfstx = UsbFsTx(
-            i_bit_strobe = usbfsrx.o_bit_strobe,
+        self.submodules.tx = tx = UsbFsTx(
+            i_bit_strobe = rx.o_bit_strobe,
         )
 
         self.comb += [
-            self.iobuf.usb_tx_en.eq(usbfstx.o_oe),
-            self.iobuf.usb_p_tx.eq(usbfstx.o_usbp),
-            self.iobuf.usb_n_tx.eq(usbfstx.o_usbn),
+            self.iobuf.usb_tx_en.eq(tx.o_oe),
+            self.iobuf.usb_p_tx.eq(tx.o_usbp),
+            self.iobuf.usb_n_tx.eq(tx.o_usbn),
         ]
 
-        # Tracks if we are sending Data0 or Data1
-        self.last_sent_data = Signal()
-        self.last_recv_data = Signal()
+        self.reset = Signal()
 
-        self.submodules.pe = pe = FSM()
-
-        self.current_addr = Signal(7)
-        self.current_ep = Signal(4)
+        self.transfer_start  = Signal()     # Asserted when transfer starts
+        self.transfer_tok    = Signal(2)    # Contains the transfer token type
+        self.transfer_setup  = Signal()     # Asserted when a transfer is a setup
+        self.transfer_commit = Signal()     # Asserted when a transfer succeeds
+        self.transfer_abort  = Signal()     # Asserted when a transfer fails
+        self.transfer_end    = Signal()     # Asserted when transfer ends
         self.comb += [
-            self.current_addr.eq(self.usbfsrx.decode.o_addr),
-            self.current_ep.eq(self.usbfsrx.decode.o_ep),
+            self.transfer_end.eq(self.transfer_commit | self.transfer_abort),
         ]
 
-        self.data_recv_stall = Signal()     # Assert when core should stall
-        self.data_recv_ready = Signal()     # Assert when ready to received data
-        self.data_recv_have = Signal()      # Assert when ready to received data
-        self.data_recv_put = Signal()       # Toggled when data is received
-        self.data_recv_payload = Signal(8)  # Data received
-
-        self.data_send_stall = Signal()     # Assert when core should stall
-        self.data_send_ready = Signal()     # Assert when data ready to send
-        self.data_send_have = Signal()      # Assert when data ready to send
-        self.data_send_get = Signal()       # Toggled when data is sent
-        self.data_send_payload = Signal(8)  # Data to be send
-
+        self.ep_addr = Signal(5)
+        self.ep_num  = Signal(4)
+        self.ep_dir  = Signal()
         self.comb += [
-            # Host->Device, Input path
-            self.data_recv_payload.eq(self.usbfsrx.decode.data_n1),
-            # Device->Host, Output path
-            self.data_send_get.eq(self.usbfstx.o_data_get),
-            self.usbfstx.i_data_valid.eq(self.data_send_have),
-            self.usbfstx.i_data_payload.eq(self.data_send_payload),
+            self.ep_num.eq(self.rx.decode.o_ep),
+            self.ep_dir.eq(self.rx.decode.o_pid == PID.IN),
+            self.ep_addr.eq(Cat(self.ep_num, self.ep_dir)),
         ]
 
-        # Packet counter
-        self.pkt_count = Signal(8)
-        self.sync += [
-            If(self.usbfsrx.o_pkt_end,
-                self.pkt_count.eq(self.pkt_count + 1),
-            ),
+        self.data_recv_ready   = Signal()   # Assert when ready to receive data.
+        self.data_recv_put     = Signal()   # Toggled when data is received.
+        self.data_recv_payload = Signal(8)
+
+        self.data_send_have    = Signal()   # Assert when data is available.
+        self.data_send_get     = Signal()   # Toggled when data is sent.
+        self.data_send_payload = Signal(8)
+
+        pkt_end = Signal()
+        self.comb += [
+            pkt_end.eq(self.rx.o_pkt_end | self.tx.o_pkt_end),
         ]
 
-        self.start_tok = Signal(2)
+        datax = Signal()
+        next_datax = Signal()
+
+        self.transfer_resp = Signal(2)
+        response_pid = Signal(4)
 
         # Host->Device data path (Out + Setup data path)
         #
@@ -1828,131 +1822,133 @@ class UsbCore(Module):
         # <Data0[]
         # >Ack
         # ---------------------------
-        pe.act("WAIT_TOKEN",
-            If(self.usbfsrx.o_pkt_end,
-                NextValue(self.start_tok, self.usbfsrx.decode.o_pid[2:]),
-                If(self.usbfsrx.decode.o_pid == PID.SETUP,
+        self.submodules.transfer = transfer = FSM(reset_state="WAIT_TOKEN")
+        transfer.act("ERROR",
+            If(self.reset, NextState("WAIT_TOKEN")),
+        )
+
+        transfer.act("WAIT_TOKEN",
+            If(self.rx.o_pkt_start, NextState("RECV_TOKEN")),
+        )
+
+        transfer.act("RECV_TOKEN",
+            self.transfer_start.eq(1),
+            If(pkt_end,
+                NextValue(self.transfer_tok, self.rx.decode.o_pid[2:]),
+                #If(self.rx.decode.o_addr != addr, NextState("IGNORE")),
+
+                If(rx.decode.o_pid == PID.SETUP,
+                    NextValue(response_pid, PID.ACK),
+                ).Else(
+                    Case(self.transfer_resp, {
+                        EndpointResponse.ACK:   NextValue(response_pid, PID.ACK),
+                        EndpointResponse.NAK:   NextValue(response_pid, PID.NAK),
+                        EndpointResponse.STALL: NextValue(response_pid, PID.STALL),
+                        EndpointResponse.NONE:  NextValue(response_pid, 0),
+                    }),
+                ),
+
+                # Setup transfer
+                If(rx.decode.o_pid == PID.SETUP,
+                    NextValue(next_datax, 0),
                     NextState("RECV_DATA"),
-                    NextValue(self.last_sent_data, 0),
-                ).Elif(self.usbfsrx.decode.o_pid == PID.OUT,
+
+                # Out transfer
+                ).Elif(rx.decode.o_pid == PID.OUT,
+                    NextValue(next_datax, ~datax),
                     NextState("RECV_DATA"),
-                ).Elif(self.usbfsrx.decode.o_pid == PID.IN,
-                    # Endpoint isn't ready
-                    If(~self.data_send_ready | self.data_send_stall,
-                        If(self.data_send_stall,
-                            self.usbfstx.i_pid.eq(PID.STALL),
-                        ).Else(
-                            self.usbfstx.i_pid.eq(PID.NAK),
-                        ),
-                        self.usbfstx.i_pkt_start.eq(1),
-                        NextState("SEND_FAIL_HAND"),
+
+                # In transfer
+                ).Elif(rx.decode.o_pid == PID.IN,
+                    NextValue(next_datax, ~datax),
+                    If(self.transfer_resp != EndpointResponse.ACK,
+                        NextState("SEND_HAND"),
                     ).Else(
-                        If(self.last_sent_data,
-                            self.usbfstx.i_pid.eq(PID.DATA0),
-                            NextValue(self.last_sent_data, 0),
-                        ).Else(
-                            self.usbfstx.i_pid.eq(PID.DATA1),
-                            NextValue(self.last_sent_data, 1),
-                        ),
-                        self.usbfstx.i_pkt_start.eq(1),
                         NextState("SEND_DATA"),
                     ),
-                )
-            ),
-        )
-        #            If(self.data_send_stall,
-        #                self.usbfstx.i_pid.eq(PID.STALL),
-        #                NextState("SEND_FAIL_HAND"),
-        #            ).Elif(~self.data_send_ready,
-        #                self.usbfstx.i_pid.eq(PID.NAK),
-        #                NextState("SEND_FAIL_HAND"),
-        #            ).Else(
-        #                If(self.last_sent_data,
-        #                    self.usbfstx.i_pid.eq(PID.DATA0),
-        #                    NextValue(self.last_sent_data, 0),
-        #                ).Else(
-        #                    self.usbfstx.i_pid.eq(PID.DATA1),
-        #                    NextValue(self.last_sent_data, 1),
-        #                ),
-        #                NextState("SEND_DATA"),
-        #            ),
-        #            self.usbfstx.i_pkt_start.eq(1),
-
-        # Data packet
-        pe.act("RECV_DATA",
-            If(self.data_recv_ready & ~self.data_recv_stall,
-                self.data_recv_put.eq(self.usbfsrx.decode.put_data),
-                # Packet finished
-                If(self.usbfsrx.o_pkt_end,
-                    self.usbfstx.i_pkt_start.eq(1),
-                    self.usbfstx.i_pid.eq(PID.ACK),
-                    NextState("SEND_OKAY_HAND"),
-                ),
-            ).Else(
-                # Was the data path not ready, NAK the packet
-                If(self.usbfsrx.decode.put_data,
-                    NextState("WAIT_TO_FAIL"),
-                ),
-                If(self.usbfsrx.o_pkt_end,
-                    If(self.data_recv_stall,
-                        self.usbfstx.i_pid.eq(PID.STALL),
-                    ).Else(
-                        self.usbfstx.i_pid.eq(PID.NAK),
-                    ),
-                    self.usbfstx.i_pkt_start.eq(1),
-                    NextState("SEND_FAIL_HAND"),
-                ),
-            ),
-        )
-        pe.act("SEND_DATA",
-            If(self.usbfstx.o_pkt_end,
-                NextState("RECV_HAND"),
-            ),
-        )
-        # Handshake
-        self.packet_sent = Signal()
-        pe.act("RECV_HAND",
-            self.packet_sent.eq(1),
-            If(self.usbfsrx.o_pkt_end,
-                NextState("WAIT_TOKEN"),
-            ),
-        )
-        pe.act("WAIT_TO_FAIL",
-            If(~self.usbfsrx.decode.pkt_det.o_pkt_active,
-                If(self.data_recv_stall,
-                    self.usbfstx.i_pid.eq(PID.STALL),
                 ).Else(
-                    self.usbfstx.i_pid.eq(PID.NAK),
+                    NextState("ERROR"),
                 ),
-                self.usbfstx.i_pkt_start.eq(1),
-                NextState("SEND_FAIL_HAND"),
-            ),
-        )
-        pe.act("SEND_FAIL_HAND",
-            If(self.usbfstx.o_pkt_end,
-                NextState("WAIT_TOKEN"),
-            ),
-        )
-        self.packet_recv = Signal()
-        self.last_tok = Signal(2)
-        pe.act("SEND_OKAY_HAND",
-            self.packet_recv.eq(1),
-            NextValue(self.last_tok, self.start_tok),
-            If(self.usbfstx.o_pkt_end,
-                NextState("WAIT_TOKEN"),
             ),
         )
 
-        self.error = Signal()
-        self.reset = Signal()
-        pe.act("ERROR",
-            self.error.eq(1),
-            If(self.reset,
-                NextState("WAIT_TOKEN"),
+        # Out + Setup pathway
+        transfer.act("RECV_DATA",
+            If(response_pid == PID.ACK,
+                self.data_recv_put.eq(self.rx.decode.put_data),
             ),
+            If(pkt_end, NextState("SEND_HAND")),
         )
+        self.comb += [
+            self.data_recv_payload.eq(self.rx.decode.data_n1),
+        ]
+
+        # In pathway
+        transfer.act("SEND_DATA",
+            self.data_send_get.eq(self.tx.o_data_get),
+            If(pkt_end, NextState("RECV_HAND")),
+        )
+        self.comb += [
+            self.tx.i_data_valid.eq(self.data_send_have),
+            self.tx.i_data_payload.eq(self.data_send_payload),
+        ]
+
+        # Handshake
+        transfer.act("RECV_HAND",
+            # Host can't reject?
+            self.transfer_commit.eq(1),
+            NextValue(datax, next_datax),
+            If(pkt_end, NextState("WAIT_TOKEN")),
+        )
+        transfer.act("SEND_HAND",
+            self.transfer_setup.eq(self.transfer_tok == (PID.SETUP >> 2)),
+            If(response_pid == PID.ACK,
+                self.transfer_commit.eq(1),
+                NextValue(datax, next_datax),
+            ).Else(
+                self.transfer_abort.eq(1),
+            ),
+            If(pkt_end, NextState("WAIT_TOKEN")),
+        )
+
+        # Code to initiate the sending of packets when entering the SEND_XXX
+        # states.
+        self.comb += [
+            If(transfer.after_entering("SEND_DATA"),
+                If(next_datax,
+                    self.tx.i_pid.eq(PID.DATA1),
+                ).Else(
+                    self.tx.i_pid.eq(PID.DATA0),
+                ),
+                self.tx.i_pkt_start.eq(1),
+            ),
+            If(transfer.after_entering("SEND_HAND"),
+                self.tx.i_pid.eq(response_pid),
+                self.tx.i_pkt_start.eq(1),
+            ),
+        ]
+
 
         # --------------------------
+
+
+class EndpointType(IntEnum):
+    IN = 1
+    OUT = 2
+    BIDIR = IN | OUT
+
+    @classmethod
+    def epaddr(cls, ep_num, ep_dir):
+        assert ep_dir != cls.BIDIR
+        return ep_num << 1 | (ep_dir == cls.IN)
+
+
+class EndpointResponse(IntEnum):
+    # Clearing top bit of STALL -> NAK
+    STALL = 0b11
+    ACK   = 0b00
+    NAK   = 0b01
+    NONE  = 0b10
 
 
 class Endpoint(Module, AutoCSR):
@@ -1962,22 +1958,33 @@ class Endpoint(Module, AutoCSR):
         self.ev.submodules.packet = ev.EventSourcePulse()
         self.ev.finalize()
 
-        # Make the pending value be true on reset
-        # FIXME: Is this hack actually needed?
-        #self.ev.packet.pending.reset = Constant(1)
-
-        #self.respond = CSRStorage(1)
         # How to respond to requests;
-        #  - 00 - No response
-        #  - 01 - ACK
-        #  - 11 - NAK
-        #  - 10 - STALL
-        #self.response = CSRStorage(2, write_from_dev=True)
+        #  - 10 - No response
+        #  - 00 - ACK
+        #  - 01 - NAK
+        #  - 11 - STALL
+        self.submodules.respond = CSRStorage(2, write_from_dev=True)
+        #self.respond = CSRStorage(2, write_from_dev=True)
+        #self.respond.finalize()
 
         self.head = CSR(8)
         self.empty = CSRStatus(1)
 
-        self.stall = CSRStorage(1)
+        self.response = Signal(2)
+        self.reset = Signal()
+
+        self.comb += [
+            self.response.eq(Cat(
+                    self.respond.storage[0] | self.ev.packet.pending,
+                    self.respond.storage[1],
+            )),
+        ]
+        self.comb += [
+            self.respond.dat_w.eq(EndpointResponse.NAK),
+            #self.respond.we.eq(self.ev.packet.trigger),
+            self.respond.we.eq(self.reset),
+        ]
+
 
 
 class EndpointOut(Endpoint):
@@ -1995,13 +2002,13 @@ class EndpointOut(Endpoint):
 
         self.buf.pending = self.ev.packet.pending
         self.buf.trigger = self.ev.packet.trigger
-        self.buf.stall = Signal()
+        self.buf.response = self.response
+        self.buf.reset = self.reset
 
         self.comb += [
             self.head.w.eq(self.buf.dout),
             self.buf.re.eq(self.head.re),
             self.empty.status.eq(~self.buf.readable),
-            self.buf.stall.eq(self.stall.storage),
         ]
 
 
@@ -2020,31 +2027,14 @@ class EndpointIn(Endpoint):
 
         self.buf.pending = self.ev.packet.pending
         self.buf.trigger = self.ev.packet.trigger
-        self.buf.stall = Signal()
+        self.buf.response = self.response
+        self.buf.reset = self.reset
 
         self.comb += [
             self.buf.din.eq(self.head.r),
             self.buf.we.eq(self.head.re),
             self.empty.status.eq(~self.buf.readable),
-            self.buf.stall.eq(self.stall.storage),
         ]
-
-
-class EndpointEmpty(Module):
-    def __init__(self):
-        self.ev = object()
-        self.ev.error = Signal()
-        self.ev.packet = Signal()
-
-        self.buf = object()
-
-        self.buf.din = Signal(8)
-        self.buf.writable = Signal(1)
-        self.buf.we = Signal(1)
-
-        self.buf.dout = Signal(8)
-        self.buf.readable = Signal(1)
-        self.buf.re = Signal(1)
 
 
 class FifoFake(Module):
@@ -2059,7 +2049,8 @@ class FifoFake(Module):
 
         self.pending = Signal(1)
         self.trigger = Signal(1)
-        self.stall = Signal(1)
+        self.response = Signal(2)
+        self.reset = Signal(1)
 
 
 class UsbDeviceCpuInterface(Module, AutoCSR):
@@ -2077,56 +2068,65 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         # USB Core
         self.submodules.usb_core = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
 
-        # Useful debug counter
-        self.pkt_count = CSRStatus(8)
-        self.comb += [
-            self.pkt_count.status.eq(self.usb_core.pkt_count),
-        ]
         # Last PID?
         self.last_tok = CSRStatus(2)
-        self.comb += [
-            self.last_tok.status.eq(self.usb_core.last_tok),
-        ]
 
         # Endpoint controls
         ems = []
-        ep_ins = []
         ep_outs = []
+        ep_ins = []
+        trigger_all = []
         for i, endp in enumerate(endpoints):
-            if endp & EndpointType.IN:
-                exec("self.submodules.ep_%s_in = EndpointIn()" % i)
-                ep = getattr(self, "ep_%s_in" % i)
-                ep_ins.append(ep.buf)
-                ems.append(ep.ev)
-            else:
-                ep_ins.append(FifoFake())
-
             if endp & EndpointType.OUT:
                 exec("self.submodules.ep_%s_out = EndpointOut()" % i)
                 ep = getattr(self, "ep_%s_out" % i)
+                trigger_all.append(ep.buf.trigger.eq(1)),
                 ep_outs.append(ep.buf)
                 ems.append(ep.ev)
             else:
                 ep_outs.append(FifoFake())
 
+            if endp & EndpointType.IN:
+                exec("self.submodules.ep_%s_in = EndpointIn()" % i)
+                ep = getattr(self, "ep_%s_in" % i)
+                trigger_all.append(ep.buf.trigger.eq(1)),
+                ep_ins.append(ep.buf)
+                ems.append(ep.ev)
+            else:
+                ep_ins.append(FifoFake())
+
         self.submodules.ev = ev.SharedIRQ(*ems)
 
-        self.ep_ins = Array(ep_ins)
         self.ep_outs = Array(ep_outs)
+        self.ep_ins = Array(ep_ins)
 
         self.comb += [
+            If(~iobuf.usb_pullup,
+                *trigger_all,
             # Host->Device[Out Endpoint] pathway
-            #self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.current_ep].writable & ~self.ep_outs[self.usb_core.current_ep].pending),
-            self.usb_core.data_recv_ready.eq(~self.ep_outs[self.usb_core.current_ep].pending),
-            self.usb_core.data_recv_stall.eq(self.ep_outs[self.usb_core.current_ep].stall),
-            self.ep_outs[self.usb_core.current_ep].we.eq(self.usb_core.data_recv_put),
-            self.ep_outs[self.usb_core.current_ep].din.eq(self.usb_core.data_recv_payload),
-            self.ep_outs[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_recv | ~iobuf.usb_pullup),
-            # [In Endpoint]Device->Host pathway
-            self.usb_core.data_send_stall.eq(self.ep_ins[self.usb_core.current_ep].stall),
-            self.usb_core.data_send_ready.eq(~self.ep_ins[self.usb_core.current_ep].pending),
-            self.usb_core.data_send_have.eq(self.ep_ins[self.usb_core.current_ep].readable),
-            self.usb_core.data_send_payload.eq(self.ep_ins[self.usb_core.current_ep].dout),
-            self.ep_ins[self.usb_core.current_ep].re.eq(self.usb_core.data_send_get),
-            self.ep_ins[self.usb_core.current_ep].trigger.eq(self.usb_core.packet_sent | ~iobuf.usb_pullup),
+            ).Elif(~self.usb_core.ep_dir,
+                # FIFO
+                self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.ep_num].writable),
+                self.ep_outs[self.usb_core.ep_num].we.eq(self.usb_core.data_recv_put),
+                self.ep_outs[self.usb_core.ep_num].din.eq(self.usb_core.data_recv_payload),
+                # Control signals
+                self.usb_core.transfer_resp.eq(self.ep_outs[self.usb_core.ep_num].response),
+                self.ep_outs[self.usb_core.ep_num].trigger.eq(self.usb_core.transfer_commit),
+                self.ep_outs[self.usb_core.ep_num].reset.eq(self.usb_core.transfer_setup),
+            ).Else(
+                # [In Endpoint]Device->Host pathway
+                self.usb_core.data_send_have.eq(self.ep_ins[self.usb_core.ep_num].readable),
+                self.usb_core.data_send_payload.eq(self.ep_ins[self.usb_core.ep_num].dout),
+                self.ep_ins[self.usb_core.ep_num].re.eq(self.usb_core.data_send_get),
+                # Control signals
+                self.usb_core.transfer_resp.eq(self.ep_ins[self.usb_core.ep_num].response),
+                self.ep_ins[self.usb_core.ep_num].trigger.eq(self.usb_core.transfer_commit),
+                self.ep_ins[self.usb_core.ep_num].reset.eq(self.usb_core.transfer_setup),
+            ),
+        ]
+
+        self.sync += [
+            If(self.usb_core.transfer_commit,
+                self.last_tok.status.eq(self.usb_core.transfer_tok),
+            ),
         ]
