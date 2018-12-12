@@ -1867,7 +1867,7 @@ class UsbCore(Module):
                         NextState("SEND_DATA"),
                     ),
                 ).Else(
-                    NextState("ERROR"),
+                    NextState("WAIT_TOKEN"),
                 ),
             ),
         )
