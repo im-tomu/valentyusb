@@ -1951,93 +1951,7 @@ class EndpointResponse(IntEnum):
     NONE  = 0b10
 
 
-class Endpoint(Module, AutoCSR):
-    def __init__(self):
-        self.submodules.ev = ev.EventManager()
-        self.ev.submodules.error = ev.EventSourcePulse()
-        self.ev.submodules.packet = ev.EventSourcePulse()
-        self.ev.finalize()
-
-        # How to respond to requests;
-        #  - 10 - No response
-        #  - 00 - ACK
-        #  - 01 - NAK
-        #  - 11 - STALL
-        self.submodules.respond = CSRStorage(2, write_from_dev=True)
-        #self.respond = CSRStorage(2, write_from_dev=True)
-        #self.respond.finalize()
-
-        self.head = CSR(8)
-        self.empty = CSRStatus(1)
-
-        self.response = Signal(2)
-        self.reset = Signal()
-
-        self.comb += [
-            self.response.eq(Cat(
-                    self.respond.storage[0] | self.ev.packet.pending,
-                    self.respond.storage[1],
-            )),
-        ]
-        self.comb += [
-            self.respond.dat_w.eq(EndpointResponse.NAK),
-            #self.respond.we.eq(self.ev.packet.trigger),
-            self.respond.we.eq(self.reset),
-        ]
-
-
-
-class EndpointOut(Endpoint):
-    """Endpoint for Host->Device data.
-
-    Raises packet IRQ when new packet has arrived.
-    CPU reads from the head CSR to get front data from FIFO.
-    CPU writes to head CSR to advance the FIFO by one.
-    """
-    def __init__(self):
-        Endpoint.__init__(self)
-
-        buf = fifo.AsyncFIFOBuffered(width=8, depth=512)
-        self.submodules.buf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(buf)
-
-        self.buf.pending = self.ev.packet.pending
-        self.buf.trigger = self.ev.packet.trigger
-        self.buf.response = self.response
-        self.buf.reset = self.reset
-
-        self.comb += [
-            self.head.w.eq(self.buf.dout),
-            self.buf.re.eq(self.head.re),
-            self.empty.status.eq(~self.buf.readable),
-        ]
-
-
-class EndpointIn(Endpoint):
-    """Endpoint for Device->Host data.
-
-    Reads from the buffer memory.
-    Raises packet IRQ when packet has been sent.
-    CPU writes to the head CSRT to push data onto the FIFO.
-    """
-    def __init__(self):
-        Endpoint.__init__(self)
-
-        buf = fifo.AsyncFIFOBuffered(width=8, depth=512)
-        self.submodules.buf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(buf)
-
-        self.buf.pending = self.ev.packet.pending
-        self.buf.trigger = self.ev.packet.trigger
-        self.buf.response = self.response
-        self.buf.reset = self.reset
-
-        self.comb += [
-            self.buf.din.eq(self.head.r),
-            self.buf.we.eq(self.head.re),
-            self.empty.status.eq(~self.buf.readable),
-        ]
-
-
-class FifoFake(Module):
+class FakeFifo(Module):
     def __init__(self):
         self.din = Signal(8)
         self.writable = Signal(1)
@@ -2047,10 +1961,75 @@ class FifoFake(Module):
         self.readable = Signal(1)
         self.re = Signal(1)
 
-        self.pending = Signal(1)
-        self.trigger = Signal(1)
+
+class Endpoint(Module, AutoCSR):
+    def __init__(self, etype):
+        self.submodules.ev = ev.EventManager()
+        self.ev.submodules.error = ev.EventSourcePulse()
+        self.ev.submodules.packet = ev.EventSourcePulse()
+        self.ev.finalize()
+
+        self.trigger = self.ev.packet.trigger
+
+        # How to respond to requests;
+        #  - 10 - No response
+        #  - 00 - ACK
+        #  - 01 - NAK
+        #  - 11 - STALL
+        self.submodules.respond = CSRStorage(2, write_from_dev=True)
+
         self.response = Signal(2)
-        self.reset = Signal(1)
+        self.reset = Signal()
+        self.comb += [
+            self.response.eq(Cat(
+                    self.respond.storage[0] | self.ev.packet.pending,
+                    self.respond.storage[1],
+            )),
+        ]
+        self.comb += [
+            self.respond.dat_w.eq(EndpointResponse.NAK),
+            self.respond.we.eq(self.reset),
+        ]
+
+        """Endpoint for Device->Host data.
+
+        Reads from the buffer memory.
+        Raises packet IRQ when packet has been sent.
+        CPU writes to the head CSRT to push data onto the FIFO.
+        """
+        if etype & EndpointType.IN:
+            ibuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+            self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(ibuf)
+
+            self.ibuf_head = CSR(8)
+            self.ibuf_empty = CSRStatus(1)
+            self.comb += [
+                self.ibuf.din.eq(self.ibuf_head.r),
+                self.ibuf.we.eq(self.ibuf_head.re),
+                self.ibuf_empty.status.eq(~self.ibuf.readable),
+            ]
+        else:
+            self.ibuf = FakeFifo()
+
+        """Endpoint for Host->Device data.
+
+        Raises packet IRQ when new packet has arrived.
+        CPU reads from the head CSR to get front data from FIFO.
+        CPU writes to head CSR to advance the FIFO by one.
+        """
+        if etype & EndpointType.OUT:
+            outbuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+            self.submodules.obuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(outbuf)
+
+            self.obuf_head = CSR(8)
+            self.obuf_empty = CSRStatus(1)
+            self.comb += [
+                self.obuf_head.w.eq(self.obuf.dout),
+                self.obuf.re.eq(self.obuf_head.re),
+                self.obuf_empty.status.eq(~self.obuf.readable),
+            ]
+        else:
+            self.obuf = FakeFifo()
 
 
 class UsbDeviceCpuInterface(Module, AutoCSR):
@@ -2073,56 +2052,37 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
 
         # Endpoint controls
         ems = []
-        ep_outs = []
-        ep_ins = []
+        eps = []
         trigger_all = []
         for i, endp in enumerate(endpoints):
-            if endp & EndpointType.OUT:
-                exec("self.submodules.ep_%s_out = EndpointOut()" % i)
-                ep = getattr(self, "ep_%s_out" % i)
-                trigger_all.append(ep.buf.trigger.eq(1)),
-                ep_outs.append(ep.buf)
-                ems.append(ep.ev)
-            else:
-                ep_outs.append(FifoFake())
-
-            if endp & EndpointType.IN:
-                exec("self.submodules.ep_%s_in = EndpointIn()" % i)
-                ep = getattr(self, "ep_%s_in" % i)
-                trigger_all.append(ep.buf.trigger.eq(1)),
-                ep_ins.append(ep.buf)
-                ems.append(ep.ev)
-            else:
-                ep_ins.append(FifoFake())
+            exec("self.submodules.ep_%s = ep = Endpoint(endp)" % i)
+            ep = getattr(self, "ep_%s" % i)
+            trigger_all.append(ep.trigger.eq(1)),
+            eps.append(ep)
+            ems.append(ep.ev)
 
         self.submodules.ev = ev.SharedIRQ(*ems)
 
-        self.ep_outs = Array(ep_outs)
-        self.ep_ins = Array(ep_ins)
+        self.eps = Array(eps)
 
         self.comb += [
+            # Control signals
             If(~iobuf.usb_pullup,
                 *trigger_all,
-            # Host->Device[Out Endpoint] pathway
-            ).Elif(~self.usb_core.ep_dir,
-                # FIFO
-                self.usb_core.data_recv_ready.eq(self.ep_outs[self.usb_core.ep_num].writable),
-                self.ep_outs[self.usb_core.ep_num].we.eq(self.usb_core.data_recv_put),
-                self.ep_outs[self.usb_core.ep_num].din.eq(self.usb_core.data_recv_payload),
-                # Control signals
-                self.usb_core.transfer_resp.eq(self.ep_outs[self.usb_core.ep_num].response),
-                self.ep_outs[self.usb_core.ep_num].trigger.eq(self.usb_core.transfer_commit),
-                self.ep_outs[self.usb_core.ep_num].reset.eq(self.usb_core.transfer_setup),
             ).Else(
-                # [In Endpoint]Device->Host pathway
-                self.usb_core.data_send_have.eq(self.ep_ins[self.usb_core.ep_num].readable),
-                self.usb_core.data_send_payload.eq(self.ep_ins[self.usb_core.ep_num].dout),
-                self.ep_ins[self.usb_core.ep_num].re.eq(self.usb_core.data_send_get),
-                # Control signals
-                self.usb_core.transfer_resp.eq(self.ep_ins[self.usb_core.ep_num].response),
-                self.ep_ins[self.usb_core.ep_num].trigger.eq(self.usb_core.transfer_commit),
-                self.ep_ins[self.usb_core.ep_num].reset.eq(self.usb_core.transfer_setup),
+                self.eps[self.usb_core.ep_num].trigger.eq(self.usb_core.transfer_commit),
             ),
+            self.usb_core.transfer_resp.eq(self.eps[self.usb_core.ep_num].response),
+            self.eps[self.usb_core.ep_num].reset.eq(self.usb_core.transfer_setup),
+            # FIFO
+            # Host->Device[Out Endpoint] pathway
+            self.usb_core.data_recv_ready.eq(self.eps[self.usb_core.ep_num].obuf.writable),
+            self.eps[self.usb_core.ep_num].obuf.we.eq(self.usb_core.data_recv_put),
+            self.eps[self.usb_core.ep_num].obuf.din.eq(self.usb_core.data_recv_payload),
+            # [In Endpoint]Device->Host pathway
+            self.usb_core.data_send_have.eq(self.eps[self.usb_core.ep_num].ibuf.readable),
+            self.usb_core.data_send_payload.eq(self.eps[self.usb_core.ep_num].ibuf.dout),
+            self.eps[self.usb_core.ep_num].ibuf.re.eq(self.usb_core.data_send_get),
         ]
 
         self.sync += [
