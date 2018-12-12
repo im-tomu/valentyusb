@@ -2037,7 +2037,7 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
     Implements the SW->HW interface for UsbDevice.
     """
 
-    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.OUT]):
+    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]):
         size = 9
 
         self.iobuf = iobuf

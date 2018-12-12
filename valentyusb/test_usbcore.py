@@ -2043,7 +2043,6 @@ class CommonUsbTestCase(TestCase):
 
         self.assertMultiLineEqual(expected, actual, msg)
 
-
     # No expect_token_packet, as the host is the only one who generates tokens.
 
     def expect_data_packet(self, pid, data):
