@@ -2019,7 +2019,7 @@ class Endpoint(Module, AutoCSR):
         """
         if etype & EndpointType.OUT:
             outbuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
-            self.submodules.obuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(outbuf)
+            self.submodules.obuf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(outbuf)
 
             self.obuf_head = CSR(8)
             self.obuf_empty = CSRStatus(1)
