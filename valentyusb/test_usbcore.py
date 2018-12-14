@@ -2066,8 +2066,9 @@ class CommonUsbTestCase(TestCase):
         yield from self.expect_packet(handshake_packet(PID.STALL), "Expected STALL packet.")
         yield self.packet_d2h.eq(0)
 
-    def expect_last_tok(self, value):
-        last_tok = yield from self.dut.last_tok.read()
+    def expect_last_tok(self, ep, value):
+        endpoint = self.get_endpoint(ep)
+        last_tok = yield from endpoint.last_tok.read()
         self.assertEqual(last_tok, value)
 
     def check_pending_and_response(self, ep):
@@ -2097,7 +2098,7 @@ class CommonUsbTestCase(TestCase):
         self.assertFalse((yield from self.pending(0)))
 
         # Check the token is set correctly and stall is cleared.
-        yield from self.expect_last_tok(0b11)
+        yield from self.expect_last_tok(0, 0b11)
         endpoint = self.get_endpoint(0)
         self.assertEqual((yield from endpoint.respond.read()), EndpointResponse.NAK)
 
@@ -2120,7 +2121,7 @@ class CommonUsbTestCase(TestCase):
             yield from self.expect_data(ep, chunk)
             yield from self.clear_pending(ep)
 
-            yield from self.expect_last_tok(0b00)
+            yield from self.expect_last_tok(ep, 0b00)
             if datax == PID.DATA0:
                 datax = PID.DATA1
             else:
@@ -2167,7 +2168,7 @@ class CommonUsbTestCase(TestCase):
             yield from self.expect_data_packet(datax, chunk)
             yield from self.send_ack()
 
-            yield from self.expect_last_tok(0b10)
+            yield from self.expect_last_tok(ep, 0b10)
             if datax == PID.DATA0:
                 datax = PID.DATA1
             else:

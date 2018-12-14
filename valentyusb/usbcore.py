@@ -1971,6 +1971,9 @@ class Endpoint(Module, AutoCSR):
 
         self.trigger = self.ev.packet.trigger
 
+        # Last PID?
+        self.last_tok = CSRStatus(2)
+
         # How to respond to requests;
         #  - 10 - No response
         #  - 00 - ACK
@@ -2047,9 +2050,6 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         # USB Core
         self.submodules.usb_core = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
 
-        # Last PID?
-        self.last_tok = CSRStatus(2)
-
         # Endpoint controls
         ems = []
         eps = []
@@ -2087,6 +2087,6 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
 
         self.sync += [
             If(self.usb_core.transfer_commit,
-                self.last_tok.status.eq(self.usb_core.transfer_tok),
+                self.eps[self.usb_core.ep_num].last_tok.status.eq(self.usb_core.transfer_tok),
             ),
         ]
