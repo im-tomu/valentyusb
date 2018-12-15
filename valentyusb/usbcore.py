@@ -1765,13 +1765,14 @@ class UsbCore(Module):
             self.transfer_end.eq(self.transfer_commit | self.transfer_abort),
         ]
 
+        self.fast_ep_num  = Signal(4)
+        self.fast_ep_dir  = Signal()
+        self.fast_ep_addr = Signal(5)
         self.ep_addr = Signal(5)
-        self.ep_num  = Signal(4)
-        self.ep_dir  = Signal()
         self.comb += [
-            self.ep_num.eq(self.rx.decode.o_ep),
-            self.ep_dir.eq(self.rx.decode.o_pid == PID.IN),
-            self.ep_addr.eq(Cat(self.ep_num, self.ep_dir)),
+            self.fast_ep_num.eq(self.rx.decode.o_ep),
+            self.fast_ep_dir.eq(self.rx.decode.o_pid == PID.IN),
+            self.fast_ep_addr.eq(Cat(self.fast_ep_dir, self.fast_ep_num)),
         ]
 
         self.data_recv_ready   = Signal()   # Assert when ready to receive data.
@@ -1834,6 +1835,7 @@ class UsbCore(Module):
         transfer.act("RECV_TOKEN",
             self.transfer_start.eq(1),
             If(pkt_end,
+                NextValue(self.ep_addr, self.fast_ep_addr),
                 NextValue(self.transfer_tok, self.rx.decode.o_pid[2:]),
                 #If(self.rx.decode.o_addr != addr, NextState("IGNORE")),
 
@@ -1942,6 +1944,17 @@ class EndpointType(IntEnum):
         assert ep_dir != cls.BIDIR
         return ep_num << 1 | (ep_dir == cls.IN)
 
+    @classmethod
+    def epnum(cls, ep_addr):
+        return ep_addr >> 1
+
+    @classmethod
+    def epdir(cls, ep_addr):
+        if ep_addr & 0x1 == 0:
+            return cls.OUT
+        else:
+            return cls.IN
+
 
 class EndpointResponse(IntEnum):
     # Clearing top bit of STALL -> NAK
@@ -1954,16 +1967,16 @@ class EndpointResponse(IntEnum):
 class FakeFifo(Module):
     def __init__(self):
         self.din = Signal(8)
-        self.writable = Signal(1)
-        self.we = Signal(1)
+        self.writable = Signal(1, reset=1)
+        self.we = Signal(1, reset=1)
 
         self.dout = Signal(8)
-        self.readable = Signal(1)
-        self.re = Signal(1)
+        self.readable = Signal(1, reset=1)
+        self.re = Signal(1, reset=1)
 
 
 class Endpoint(Module, AutoCSR):
-    def __init__(self, etype):
+    def __init__(self):
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.error = ev.EventSourcePulse()
         self.ev.submodules.packet = ev.EventSourcePulse()
@@ -1994,45 +2007,64 @@ class Endpoint(Module, AutoCSR):
             self.respond.we.eq(self.reset),
         ]
 
-        """Endpoint for Device->Host data.
+        self.ibuf = FakeFifo()
+        self.obuf = FakeFifo()
 
-        Reads from the buffer memory.
-        Raises packet IRQ when packet has been sent.
-        CPU writes to the head CSRT to push data onto the FIFO.
-        """
-        if etype & EndpointType.IN:
-            ibuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
-            self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(ibuf)
 
-            self.ibuf_head = CSR(8)
-            self.ibuf_empty = CSRStatus(1)
-            self.comb += [
-                self.ibuf.din.eq(self.ibuf_head.r),
-                self.ibuf.we.eq(self.ibuf_head.re),
-                self.ibuf_empty.status.eq(~self.ibuf.readable),
-            ]
-        else:
-            self.ibuf = FakeFifo()
+class EndpointNone(Module):
+    def __init__(self):
+        self.ibuf = FakeFifo()
+        self.obuf = FakeFifo()
+        self.response = Signal(reset=EndpointResponse.NAK)
+        self.trigger = Signal()
+        self.reset = Signal()
 
-        """Endpoint for Host->Device data.
+        self.last_tok = Module()
+        self.last_tok.status = Signal(2)
 
-        Raises packet IRQ when new packet has arrived.
-        CPU reads from the head CSR to get front data from FIFO.
-        CPU writes to head CSR to advance the FIFO by one.
-        """
-        if etype & EndpointType.OUT:
-            outbuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
-            self.submodules.obuf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(outbuf)
 
-            self.obuf_head = CSR(8)
-            self.obuf_empty = CSRStatus(1)
-            self.comb += [
-                self.obuf_head.w.eq(self.obuf.dout),
-                self.obuf.re.eq(self.obuf_head.re),
-                self.obuf_empty.status.eq(~self.obuf.readable),
-            ]
-        else:
-            self.obuf = FakeFifo()
+class EndpointIn(Module, AutoCSR):
+    """Endpoint for Device->Host data.
+
+    Reads from the buffer memory.
+    Raises packet IRQ when packet has been sent.
+    CPU writes to the head CSRT to push data onto the FIFO.
+    """
+    def __init__(self):
+        Endpoint.__init__(self)
+
+        ibuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(ibuf)
+
+        self.ibuf_head = CSR(8)
+        self.ibuf_empty = CSRStatus(1)
+        self.comb += [
+            self.ibuf.din.eq(self.ibuf_head.r),
+            self.ibuf.we.eq(self.ibuf_head.re),
+            self.ibuf_empty.status.eq(~self.ibuf.readable),
+        ]
+
+
+class EndpointOut(Module, AutoCSR):
+    """Endpoint for Host->Device data.
+
+    Raises packet IRQ when new packet has arrived.
+    CPU reads from the head CSR to get front data from FIFO.
+    CPU writes to head CSR to advance the FIFO by one.
+    """
+    def __init__(self):
+        Endpoint.__init__(self)
+
+        outbuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        self.submodules.obuf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(outbuf)
+
+        self.obuf_head = CSR(8)
+        self.obuf_empty = CSRStatus(1)
+        self.comb += [
+            self.obuf_head.w.eq(self.obuf.dout),
+            self.obuf.re.eq(self.obuf_head.re),
+            self.obuf_empty.status.eq(~self.obuf.readable),
+        ]
 
 
 class UsbDeviceCpuInterface(Module, AutoCSR):
@@ -2055,38 +2087,58 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         eps = []
         trigger_all = []
         for i, endp in enumerate(endpoints):
-            exec("self.submodules.ep_%s = ep = Endpoint(endp)" % i)
-            ep = getattr(self, "ep_%s" % i)
-            trigger_all.append(ep.trigger.eq(1)),
-            eps.append(ep)
-            ems.append(ep.ev)
+            if endp & EndpointType.OUT:
+                exec("self.submodules.ep_%s_out = ep = EndpointOut()" % i)
+                oep = getattr(self, "ep_%s_out" % i)
+                ems.append(oep.ev)
+            else:
+                oep = EndpointNone()
+
+            trigger_all.append(oep.trigger.eq(1)),
+            eps.append(oep)
+
+            if endp & EndpointType.IN:
+                exec("self.submodules.ep_%s_in = ep = EndpointIn()" % i)
+                iep = getattr(self, "ep_%s_in" % i)
+                ems.append(iep.ev)
+            else:
+                iep = EndpointNone()
+
+            trigger_all.append(iep.trigger.eq(1)),
+            eps.append(iep)
 
         self.submodules.ev = ev.SharedIRQ(*ems)
 
         self.eps = Array(eps)
 
+        transfer_commit = Signal()
+        self.specials += cdc.MultiReg(self.usb_core.transfer_commit, transfer_commit, n=2)
+
         self.comb += [
+            # This needs to be correct *before* token is finished, everything
+            # else uses registered outputs.
+            self.usb_core.transfer_resp.eq(self.eps[self.usb_core.fast_ep_addr].response),
+
             # Control signals
             If(~iobuf.usb_pullup,
                 *trigger_all,
             ).Else(
-                self.eps[self.usb_core.ep_num].trigger.eq(self.usb_core.transfer_commit),
+                self.eps[self.usb_core.ep_addr].trigger.eq(transfer_commit),
             ),
-            self.usb_core.transfer_resp.eq(self.eps[self.usb_core.ep_num].response),
-            self.eps[self.usb_core.ep_num].reset.eq(self.usb_core.transfer_setup),
+            self.eps[self.usb_core.ep_addr].reset.eq(self.usb_core.transfer_setup),
             # FIFO
             # Host->Device[Out Endpoint] pathway
-            self.usb_core.data_recv_ready.eq(self.eps[self.usb_core.ep_num].obuf.writable),
-            self.eps[self.usb_core.ep_num].obuf.we.eq(self.usb_core.data_recv_put),
-            self.eps[self.usb_core.ep_num].obuf.din.eq(self.usb_core.data_recv_payload),
+            self.usb_core.data_recv_ready.eq(self.eps[self.usb_core.ep_addr].obuf.writable),
+            self.eps[self.usb_core.ep_addr].obuf.we.eq(self.usb_core.data_recv_put),
+            self.eps[self.usb_core.ep_addr].obuf.din.eq(self.usb_core.data_recv_payload),
             # [In Endpoint]Device->Host pathway
-            self.usb_core.data_send_have.eq(self.eps[self.usb_core.ep_num].ibuf.readable),
-            self.usb_core.data_send_payload.eq(self.eps[self.usb_core.ep_num].ibuf.dout),
-            self.eps[self.usb_core.ep_num].ibuf.re.eq(self.usb_core.data_send_get),
+            self.usb_core.data_send_have.eq(self.eps[self.usb_core.ep_addr].ibuf.readable),
+            self.usb_core.data_send_payload.eq(self.eps[self.usb_core.ep_addr].ibuf.dout),
+            self.eps[self.usb_core.ep_addr].ibuf.re.eq(self.usb_core.data_send_get),
         ]
 
         self.sync += [
-            If(self.usb_core.transfer_commit,
-                self.eps[self.usb_core.ep_num].last_tok.status.eq(self.usb_core.transfer_tok),
+            If(transfer_commit,
+                self.eps[self.usb_core.ep_addr].last_tok.status.eq(self.usb_core.transfer_tok),
             ),
         ]
