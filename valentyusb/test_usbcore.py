@@ -1476,7 +1476,19 @@ def nrzi(data, clock_width=4):
     state = "K"
     output = ""
 
+    stuffed = []
+    i = 0
     for bit in data:
+        stuffed.append(bit)
+        if bit == '1':
+            i += 1
+        else:
+            i = 0
+        if i > 5:
+            stuffed.append('0')
+            i = 0
+
+    for bit in stuffed:
         # only toggle the state on '0'
         if bit == '0':
             state = toggle_state(state)
@@ -1866,6 +1878,104 @@ def pp_packet(p):
     ____ SE0
     ____ SE0
     JJJJ END
+    >>> print(pp_packet(wrap_packet(data_packet(PID.DATA0, [5, 6]))))
+    KKKK 1 Sync
+    JJJJ 2 Sync
+    KKKK 3 Sync
+    JJJJ 4 Sync
+    KKKK 5 Sync
+    JJJJ 6 Sync
+    KKKK 7 Sync
+    KKKK 8 Sync
+    KKKK 1 PID (PID.DATA0)
+    KKKK 2 PID
+    JJJJ 3 PID
+    KKKK 4 PID
+    JJJJ 5 PID
+    KKKK 6 PID
+    KKKK 7 PID
+    KKKK 8 PID
+    KKKK
+    JJJJ
+    JJJJ
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ
+    JJJJ
+    JJJJ
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ
+    KKKK
+    KKKK  1 CRC16
+    JJJJ  2 CRC16
+    JJJJ  3 CRC16
+    JJJJ  4 CRC16
+    JJJJ  5 CRC16
+    JJJJ  6 CRC16
+    JJJJ  7 CRC16
+    KKKK  8 CRC16
+    KKKK  9 CRC16
+    JJJJ 10 CRC16
+    JJJJ 11 CRC16
+    JJJJ 12 CRC16
+    JJJJ 13 CRC16
+    KKKK 14 CRC16
+    JJJJ 15 CRC16
+    KKKK SE0
+    ____ SE0
+    ____ END
+
+    >>> # Requires bit stuffing!
+    >>> print(pp_packet(wrap_packet(data_packet(PID.DATA0, [0x1]))))
+    KKKK 1 Sync
+    JJJJ 2 Sync
+    KKKK 3 Sync
+    JJJJ 4 Sync
+    KKKK 5 Sync
+    JJJJ 6 Sync
+    KKKK 7 Sync
+    KKKK 8 Sync
+    KKKK 1 PID (PID.DATA0)
+    KKKK 2 PID
+    JJJJ 3 PID
+    KKKK 4 PID
+    JJJJ 5 PID
+    KKKK 6 PID
+    KKKK 7 PID
+    KKKK 8 PID
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ
+    JJJJ
+    KKKK  1 CRC16
+    JJJJ  2 CRC16
+    KKKK  3 CRC16
+    JJJJ  4 CRC16
+    KKKK  5 CRC16
+    JJJJ  6 CRC16
+    JJJJ  7 CRC16
+    JJJJ  8 CRC16
+    JJJJ  9 CRC16
+    JJJJ 10 CRC16
+    JJJJ 11 CRC16
+    JJJJ 12 CRC16
+    KKKK 13 CRC16
+    KKKK 14 CRC16
+    KKKK 15 CRC16
+    JJJJ SE0
+    ____ SE0
+    ____ END
+
     """
     output = []
     chunks = [p[i:i+4] for i in range(0, len(p), 4)]
@@ -1884,18 +1994,25 @@ def pp_packet(p):
                 output.extend([chunks.pop(0), ' %i PID (%s)\n' % (i, pid_type)])
             else:
                 output.extend([chunks.pop(0), ' %i PID\n' % i])
-    for i in range(1, 8):
-        if chunks:
-            output.extend([chunks.pop(0), ' %i Address\n' % i])
-    for i in range(1, 5):
-        if chunks:
-            output.extend([chunks.pop(0), ' %i Endpoint\n' % i])
-    for i in range(1, 6):
-        if chunks:
-            output.extend([chunks.pop(0), ' %i CRC5\n' % i])
 
-    while len(chunks) > 3:
-        output.extend([chunks.pop(0), '\n'])
+    if pid_type == PID.DATA0 or pid_type == PID.DATA1:
+        while len(chunks) > 16+3:
+            output.extend([chunks.pop(0), '\n'])
+        for i in range(1, 16):
+            if chunks:
+                output.extend([chunks.pop(0), ' %2i CRC16\n' % i])
+    else:
+        for i in range(1, 8):
+            if chunks:
+                output.extend([chunks.pop(0), ' %i Address\n' % i])
+        for i in range(1, 5):
+            if chunks:
+                output.extend([chunks.pop(0), ' %i Endpoint\n' % i])
+        for i in range(1, 6):
+            if chunks:
+                output.extend([chunks.pop(0), ' %i CRC5\n' % i])
+        while len(chunks) > 3:
+            output.extend([chunks.pop(0), '\n'])
 
     if chunks:
         output.extend([chunks.pop(0), ' SE0\n'])
@@ -2506,6 +2623,60 @@ class CommonUsbTestCase(TestCase):
             yield from self.send_token_packet(PID.IN, addr, epaddr)
             yield from self.expect_data_packet(PID.DATA0, d[4:])
             yield from self.send_ack()
+
+        self.run_sim(stim)
+
+    def test_data_in_byte_1(self):
+        def stim():
+            addr = 28
+
+            ep1 = EndpointType.epaddr(1, EndpointType.IN)
+            yield from self.clear_pending(ep1)
+            yield from self.set_response(ep1, EndpointResponse.NAK)
+
+            d1 = [0x1]
+            yield from self.set_data(ep1, d1)
+            yield from self.set_response(ep1, EndpointResponse.ACK)
+            yield from self.send_token_packet(PID.IN, addr, ep1)
+            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.send_ack()
+            yield from self.clear_pending(ep1)
+
+        self.run_sim(stim)
+
+    def test_data_in_byte_2(self):
+        def stim():
+            addr = 28
+
+            ep1 = EndpointType.epaddr(1, EndpointType.IN)
+            yield from self.clear_pending(ep1)
+            yield from self.set_response(ep1, EndpointResponse.NAK)
+
+            d1 = [0x2]
+            yield from self.set_data(ep1, d1)
+            yield from self.set_response(ep1, EndpointResponse.ACK)
+            yield from self.send_token_packet(PID.IN, addr, ep1)
+            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.send_ack()
+            yield from self.clear_pending(ep1)
+
+        self.run_sim(stim)
+
+    def test_data_in_byte_a(self):
+        def stim():
+            addr = 28
+
+            ep1 = EndpointType.epaddr(1, EndpointType.IN)
+            yield from self.clear_pending(ep1)
+            yield from self.set_response(ep1, EndpointResponse.NAK)
+
+            d1 = [0xa]
+            yield from self.set_data(ep1, d1)
+            yield from self.set_response(ep1, EndpointResponse.ACK)
+            yield from self.send_token_packet(PID.IN, addr, ep1)
+            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.send_ack()
+            yield from self.clear_pending(ep1)
 
         self.run_sim(stim)
 
