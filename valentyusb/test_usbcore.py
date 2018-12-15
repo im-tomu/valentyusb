@@ -2215,6 +2215,7 @@ class CommonUsbTestCase(TestCase):
     # <-ack
     def transaction_setup(self, addr, data):
         epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+        epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
 
         yield from self.send_token_packet(PID.SETUP, addr, epaddr_out)
         yield from self.send_data_packet(PID.DATA0, data)
@@ -2231,8 +2232,8 @@ class CommonUsbTestCase(TestCase):
         # Check the in/out endpoint is reset to NAK
         endpoint = self.get_endpoint(epaddr_out)
         self.assertEqual((yield from endpoint.respond.read()), EndpointResponse.NAK)
-        #endpoint = self.get_endpoint(epaddr_in)
-        #self.assertEqual((yield from endpoint.respond.read()), EndpointResponse.NAK)
+        endpoint = self.get_endpoint(epaddr_in)
+        self.assertEqual((yield from endpoint.respond.read()), EndpointResponse.NAK)
 
     # Host to Device
     # ->out
@@ -2288,10 +2289,10 @@ class CommonUsbTestCase(TestCase):
     # <-data1[...]
     # ->ack
     # ....
-    def transaction_data_in(self, addr, epaddr, data, chunk_size=8):
+    def transaction_data_in(self, addr, epaddr, data, chunk_size=8, dtb=PID.DATA1):
         assert EndpointType.epdir(epaddr) == EndpointType.IN
 
-        datax = PID.DATA1
+        datax = dtb
         for i, chunk in enumerate(grouper(chunk_size, data, pad=0)):
             yield from self.check_pending_and_response(epaddr)
             yield from self.set_response(epaddr, EndpointResponse.NAK)
@@ -2680,6 +2681,125 @@ class CommonUsbTestCase(TestCase):
 
         self.run_sim(stim)
 
+    def test_setup_clears_data_toggle_bit(self):
+        def stim():
+            addr = 28
+
+            ep0in = EndpointType.epaddr(0, EndpointType.IN)
+            yield from self.clear_pending(ep0in)
+            yield from self.set_response(ep0in, EndpointResponse.NAK)
+
+            ep0out = EndpointType.epaddr(0, EndpointType.OUT)
+            yield from self.clear_pending(ep0out)
+            yield from self.set_response(ep0out, EndpointResponse.NAK)
+            yield
+
+            # Setup stage
+            yield from self.transaction_setup(28, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
+
+            dtbi = yield from self.dtb(ep0in)
+            self.assertTrue(dtbi)
+
+            dtbo = yield from self.dtb(ep0out)
+            self.assertTrue(dtbo)
+
+            # Data stage
+            yield from self.set_response(ep0in, EndpointResponse.ACK)
+            yield from self.transaction_data_in(addr, ep0in, [0x1])
+
+            dtbi = yield from self.dtb(ep0in)
+            self.assertFalse(dtbi)
+
+            dtbo = yield from self.dtb(ep0out)
+            self.assertTrue(dtbo)
+
+            # Status stage
+            yield from self.set_response(ep0out, EndpointResponse.ACK)
+            yield from self.transaction_status_out(addr, ep0out)
+
+            dtbi = yield from self.dtb(ep0in)
+            self.assertFalse(dtbi)
+
+            dtbo = yield from self.dtb(ep0out)
+            self.assertFalse(dtbo)
+
+            # Data transfer
+            yield from self.set_response(ep0in, EndpointResponse.ACK)
+            yield from self.transaction_data_in(addr, ep0in, [0x1], dtb=PID.DATA0)
+
+            dtbi = yield from self.dtb(ep0in)
+            self.assertTrue(dtbi)
+
+            dtbo = yield from self.dtb(ep0out)
+            self.assertFalse(dtbo)
+
+            # Data transfer
+            yield from self.set_response(ep0in, EndpointResponse.ACK)
+            yield from self.transaction_data_in(addr, ep0in, [0x2], dtb=PID.DATA1)
+
+            dtbi = yield from self.dtb(ep0in)
+            self.assertFalse(dtbi)
+
+            dtbo = yield from self.dtb(ep0out)
+            self.assertFalse(dtbo)
+
+            # New setup stage should reset dtb
+            yield from self.transaction_setup(28, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
+
+            dtbi = yield from self.dtb(ep0in)
+            self.assertTrue(dtbi)
+
+            dtbo = yield from self.dtb(ep0out)
+            self.assertTrue(dtbo)
+
+        self.run_sim(stim)
+
+    def test_data_toggle_bit_multiple_endpoints(self):
+        def stim():
+            addr = 28
+
+            ep1 = EndpointType.epaddr(1, EndpointType.IN)
+            yield from self.clear_pending(ep1)
+            yield from self.set_response(ep1, EndpointResponse.NAK)
+            ep2 = EndpointType.epaddr(2, EndpointType.IN)
+            yield from self.clear_pending(ep2)
+            yield from self.set_response(ep2, EndpointResponse.NAK)
+            yield
+
+            d1 = [0x1]
+            yield from self.set_data(ep1, d1)
+            yield from self.set_response(ep1, EndpointResponse.ACK)
+            yield from self.send_token_packet(PID.IN, addr, ep1)
+            yield from self.expect_data_packet(PID.DATA1, d1)
+            yield from self.send_ack()
+            yield from self.clear_pending(ep1)
+
+            d2 = [0x2]
+            yield from self.set_data(ep2, d2)
+            yield from self.set_response(ep2, EndpointResponse.ACK)
+            yield from self.send_token_packet(PID.IN, addr, ep2)
+            yield from self.expect_data_packet(PID.DATA1, d2)
+            yield from self.send_ack()
+            yield from self.clear_pending(ep2)
+
+            d3 = [0x3]
+            yield from self.set_data(ep2, d3)
+            yield from self.set_response(ep2, EndpointResponse.ACK)
+            yield from self.send_token_packet(PID.IN, addr, ep2)
+            yield from self.expect_data_packet(PID.DATA0, d3)
+            yield from self.send_ack()
+            yield from self.clear_pending(ep2)
+
+            d4 = [0x5]
+            yield from self.set_data(ep1, d4)
+            yield from self.set_response(ep1, EndpointResponse.ACK)
+            yield from self.send_token_packet(PID.IN, addr, ep1)
+            yield from self.expect_data_packet(PID.DATA0, d4)
+            yield from self.send_ack()
+            yield from self.clear_pending(ep1)
+
+        self.run_sim(stim)
+
     def test_in_transfer_nak(self):
         def stim():
             addr = 28
@@ -2880,7 +3000,7 @@ class TestUsbDevice(CommonUsbTestCase):
     maxDiff=None
 
     def setUp(self):
-        endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.OUT]
+        endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]
 
         self.iobuf = TestIoBuf()
         self.dut = UsbDevice(self.iobuf, 0, endpoints)
@@ -2993,7 +3113,7 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
     maxDiff=None
 
     def setUp(self):
-        self.endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.OUT]
+        self.endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]
 
         self.iobuf = TestIoBuf()
         self.dut = UsbDeviceCpuInterface(self.iobuf, self.endpoints)
@@ -3053,6 +3173,11 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
         status = yield from endpoint.ev.pending.read()
         return bool(status & 0x2)
 
+    def dtb(self, epaddr):
+        endpoint = self.get_endpoint(epaddr)
+        status = yield from endpoint.dtb.read()
+        return bool(status)
+
     def trigger(self, epaddr):
         endpoint = self.get_endpoint(epaddr)
         status = yield endpoint.ev.packet.trigger
@@ -3106,6 +3231,9 @@ class TestUsbDeviceCpuInterface(CommonUsbTestCase):
             yield from endpoint.ibuf_head.write(v)
             yield
 
+        yield
+        yield
+        yield
         if len(data) > 0:
             empty = yield from endpoint.ibuf_empty.read()
             self.assertFalse(bool(empty))

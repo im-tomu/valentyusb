@@ -1788,8 +1788,7 @@ class UsbCore(Module):
             pkt_end.eq(self.rx.o_pkt_end | self.tx.o_pkt_end),
         ]
 
-        datax = Signal()
-        next_datax = Signal()
+        self.data_toggle_bit = Signal()
 
         self.transfer_resp = Signal(2)
         response_pid = Signal(4)
@@ -1852,17 +1851,14 @@ class UsbCore(Module):
 
                 # Setup transfer
                 If(rx.decode.o_pid == PID.SETUP,
-                    NextValue(next_datax, 0),
                     NextState("RECV_DATA"),
 
                 # Out transfer
                 ).Elif(rx.decode.o_pid == PID.OUT,
-                    NextValue(next_datax, ~datax),
                     NextState("RECV_DATA"),
 
                 # In transfer
                 ).Elif(rx.decode.o_pid == PID.IN,
-                    NextValue(next_datax, ~datax),
                     If(self.transfer_resp != EndpointResponse.ACK,
                         NextState("SEND_HAND"),
                     ).Else(
@@ -1899,14 +1895,12 @@ class UsbCore(Module):
         transfer.act("RECV_HAND",
             # Host can't reject?
             self.transfer_commit.eq(1),
-            NextValue(datax, next_datax),
             If(pkt_end, NextState("WAIT_TOKEN")),
         )
         transfer.act("SEND_HAND",
             self.transfer_setup.eq(self.transfer_tok == (PID.SETUP >> 2)),
             If(response_pid == PID.ACK,
                 self.transfer_commit.eq(1),
-                NextValue(datax, next_datax),
             ).Else(
                 self.transfer_abort.eq(1),
             ),
@@ -1917,7 +1911,7 @@ class UsbCore(Module):
         # states.
         self.comb += [
             If(transfer.after_entering("SEND_DATA"),
-                If(next_datax,
+                If(self.data_toggle_bit,
                     self.tx.i_pid.eq(PID.DATA1),
                 ).Else(
                     self.tx.i_pid.eq(PID.DATA0),
@@ -2007,9 +2001,24 @@ class Endpoint(Module, AutoCSR):
             self.respond.we.eq(self.reset),
         ]
 
-        self.ibuf = FakeFifo()
-        self.obuf = FakeFifo()
-
+        self.submodules.dtb = CSRStorage(1, write_from_dev=True)
+        self.comb += [
+            self.dtb.dat_w.eq(~self.dtb.storage | self.reset),
+        ]
+        # When triggered, flip the data toggle bit
+        toggle = Signal()
+        self.sync += [
+            If(self.trigger | self.reset,
+                If(~toggle,
+                    toggle.eq(1),
+                    self.dtb.we.eq(1),
+                ).Else(
+                    self.dtb.we.eq(0),
+                ),
+            ).Else(
+                toggle.eq(0),
+            ),
+        ]
 
 class EndpointNone(Module):
     def __init__(self):
@@ -2021,6 +2030,9 @@ class EndpointNone(Module):
 
         self.last_tok = Module()
         self.last_tok.status = Signal(2)
+
+        self.dtb = Module()
+        self.dtb.storage = Signal()
 
 
 class EndpointIn(Module, AutoCSR):
@@ -2043,6 +2055,7 @@ class EndpointIn(Module, AutoCSR):
             self.ibuf.we.eq(self.ibuf_head.re),
             self.ibuf_empty.status.eq(~self.ibuf.readable),
         ]
+        self.obuf = FakeFifo()
 
 
 class EndpointOut(Module, AutoCSR):
@@ -2065,6 +2078,7 @@ class EndpointOut(Module, AutoCSR):
             self.obuf.re.eq(self.obuf_head.re),
             self.obuf_empty.status.eq(~self.obuf.readable),
         ]
+        self.ibuf = FakeFifo()
 
 
 class UsbDeviceCpuInterface(Module, AutoCSR):
@@ -2114,6 +2128,15 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
         transfer_commit = Signal()
         self.specials += cdc.MultiReg(self.usb_core.transfer_commit, transfer_commit, n=2)
 
+        ep0out_addr = EndpointType.epaddr(0, EndpointType.OUT)
+        ep0in_addr = EndpointType.epaddr(0, EndpointType.IN)
+
+        # Setup packet causes ep0 in and ep0 out to reset
+        self.comb += [
+            self.eps[ep0out_addr].reset.eq(self.usb_core.transfer_setup),
+            self.eps[ep0in_addr].reset.eq(self.usb_core.transfer_setup),
+        ]
+
         self.comb += [
             # This needs to be correct *before* token is finished, everything
             # else uses registered outputs.
@@ -2124,8 +2147,8 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
                 *trigger_all,
             ).Else(
                 self.eps[self.usb_core.ep_addr].trigger.eq(transfer_commit),
+                self.usb_core.data_toggle_bit.eq(self.eps[self.usb_core.ep_addr].dtb.storage),
             ),
-            self.eps[self.usb_core.ep_addr].reset.eq(self.usb_core.transfer_setup),
             # FIFO
             # Host->Device[Out Endpoint] pathway
             self.usb_core.data_recv_ready.eq(self.eps[self.usb_core.ep_addr].obuf.writable),
