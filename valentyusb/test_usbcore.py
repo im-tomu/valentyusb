@@ -3347,6 +3347,9 @@ class TestUsbDeviceCpuMemInterface(CommonUsbTestCase):
             yield
             yield
             yield
+            yield from self.dut.pullup._out.write(1)
+            yield
+            yield
             yield
             yield
             yield from self.idle()
@@ -3378,14 +3381,18 @@ class TestUsbDeviceCpuMemInterface(CommonUsbTestCase):
         epnum = EndpointType.epnum(epaddr)
         return self.get_module(epaddr, "ep{}".format(epnum), obj=self.dut.packet)
 
-    def get_ptr(self, epaddr):
+    def get_ptr_csr(self, epaddr):
         epnum = EndpointType.epnum(epaddr)
         return self.get_module(epaddr, "ptr_ep{}".format(epnum))
 
+    def get_len_csr(self, epaddr):
+        epnum = EndpointType.epnum(epaddr)
+        return self.get_module(epaddr, "len_ep{}".format(epnum))
+
     def set_csr(self, csr, epaddr, v):
-        c = yield from self.csr.read()
+        c = yield from csr.read()
         v = _set_bit(c, epaddr, v)
-        yield from self.csr.write(v)
+        yield from csr.write(v)
 
     # Data Toggle Bit
     def dtb(self, epaddr):
@@ -3465,14 +3472,14 @@ class TestUsbDeviceCpuMemInterface(CommonUsbTestCase):
     def set_response(self, epaddr, v):
         assert isinstance(v, EndpointResponse), v
         if v == EndpointResponse.STALL:
-            yield from self.set_sta(self, epaddr, 1)
+            yield from self.set_sta(epaddr)
         else:
-            yield from self.set_sta(self, epaddr, 0)
+            yield from self.clear_sta(epaddr)
 
         if v == EndpointResponse.ACK:
-            yield from self.set_arm(self, epaddr, 1)
+            yield from self.set_arm(epaddr)
         elif v == EndpointResponse.NAK:
-            yield from self.set_arm(self, epaddr, 0)
+            yield from self.clear_arm(epaddr)
 
     # Get/set endpoint data ----------------
     def set_data(self, epaddr, data):
@@ -3480,17 +3487,20 @@ class TestUsbDeviceCpuMemInterface(CommonUsbTestCase):
         assert isinstance(data, (list, tuple))
         self.ep_print(epaddr, "Set: %r", data)
 
-        ep_ptr = yield from self.get_ptr(epaddr).read()
+        ep_ptr = yield from self.get_ptr_csr(epaddr).read()
         buf = self.get_module(epaddr, "buf")
 
         for i, v in enumerate(data):
             yield buf[ep_ptr+i].eq(v)
 
+        ep_len = self.get_len_csr(epaddr)
+        yield from ep_len.write(ep_ptr + len(data))
+
         yield
 
     def expect_data(self, epaddr, data):
         """Expect that an endpoints buffer has given contents."""
-        ep_ptr = yield from self.get_ptr(epaddr).read()
+        ep_ptr = yield from self.get_ptr_csr(epaddr).read()
         buf = self.get_module(epaddr, "buf")
 
         # Make sure there is something pending

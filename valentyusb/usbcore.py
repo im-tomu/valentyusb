@@ -2171,6 +2171,13 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
 
 
 class UsbDeviceCpuMemInterface(Module, AutoCSR):
+
+    def csr_bits(self, csr):
+        l = value_bits_sign(csr.storage)[0]
+        bits = [Signal() for i in range(l)]
+        self.comb += [bits[i].eq(csr.storage[i]) for i in range(l)]
+        return Array(bits)
+
     def __init__(self, iobuf, num_endpoints=3, depth=512):
 
         ptr_width = 9 # Signal(max=depth).size
@@ -2184,32 +2191,39 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
         #self.submodules.setup_ptr = CSRStatus(ptr_width)
 
         # Output endpoints
+        all_trig = []
         trig = []
 
         self.submodules.packet = ev.EventManager()
         for i in range(0, num_endpoints):
             exec("self.packet.oep{} = ev.EventSourcePulse()".format(i))
-            trig.append(getattr(self.packet, "oep{}".format(i)).trigger)
+            t = getattr(self.packet, "oep{}".format(i)).trigger
+            all_trig.append(t.eq(1))
+            trig.append(t)
 
             exec("self.packet.iep{} = ev.EventSourcePulse()".format(i))
-            trig.append(getattr(self.packet, "iep{}".format(i)).trigger)
+            t = getattr(self.packet, "iep{}".format(i)).trigger
+            all_trig.append(t.eq(1))
+            trig.append(t)
 
         self.packet.finalize()
 
-        self.submodules.sta = CSRStorage(num_endpoints * 2)
-        self.submodules.dtb = CSRStorage(num_endpoints * 2, write_from_dev=True)
-        self.submodules.arm = CSRStorage(num_endpoints * 2)
+        l = num_endpoints * 2
+
+        self.submodules.sta = CSRStorage(l)                         # Stall endpoint
+        self.submodules.dtb = CSRStorage(l, write_from_dev=True)    # Data toggle bit
+        self.submodules.arm = CSRStorage(l)                         # Endpoint is ready
 
         self.comb += [
-            self.usb.sta.eq(Array(self.sta.storage)[self.usb.fast_ep_addr]),
-            self.usb.dtb.eq(Array(self.dtb.storage)[self.usb.fast_ep_addr]),
-            self.usb.arm.eq(Array(self.sta.storage)[self.usb.fast_ep_addr]), # & Array(self.packet.pending.r)[self.usb.fast_ep_addr]),
-            Array(trig)[self.usb.ep_addr].eq(self.usb.transfer_commit),
+            self.usb.sta.eq(self.csr_bits(self.sta)[self.usb.fast_ep_addr]),
+            self.usb.dtb.eq(self.csr_bits(self.dtb)[self.usb.fast_ep_addr]),
+            self.usb.arm.eq(self.csr_bits(self.arm)[self.usb.fast_ep_addr]), # & Array(self.packet.pending.r)[self.usb.fast_ep_addr]),
+            If(~iobuf.usb_pullup,
+                *all_trig,
+            ).Else(
+                Array(trig)[self.usb.ep_addr].eq(self.usb.transfer_commit),
+            ),
         ]
-        #self.sync += [
-        #    If(self.usb.transfer_commit,
-        #        self.usb.dtb.storage
-        #]
 
         # Output pathway
         # -----------------------
@@ -2246,10 +2260,21 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
         self.specials.iport_wr = self.ibuf.get_port(write_capable=True, clock_domain="sys")
         self.specials.iport_rd = self.ibuf.get_port(clock_domain="usb_48")
 
-        iptrs = []
-        for i in range(0, num_endpoints):
-            exec("self.submodules.iptr_ep{0} = CSRStorage(ptr_width, name='iptr_ep{0}')".format(i))
-            iptrs.append(getattr(self, "iptr_ep{}".format(i)).storage)
+        #for i in range(0, num_endpoints):
+        #    exec("self.submodules.iptr_ep{0} = CSRStorage(ptr_width, name='iptr_ep{0}')".format(i))
+        #    iptrs.append(getattr(self, "iptr_ep{}".format(i)).storage)
+        #
+        #    exec("self.submodules.ilen_ep{0} = CSRStorage(ptr_width, name='ilen_ep{0}')".format(i))
+        #    ilens.append(getattr(self, "ilen_ep{}".format(i)).storage)
+        assert num_endpoints == 3
+        self.submodules.iptr_ep0 = CSRStorage(ptr_width)
+        self.submodules.ilen_ep0 = CSRStorage(ptr_width)
+        self.submodules.iptr_ep1 = CSRStorage(ptr_width)
+        self.submodules.ilen_ep1 = CSRStorage(ptr_width)
+        self.submodules.iptr_ep2 = CSRStorage(ptr_width)
+        self.submodules.ilen_ep2 = CSRStorage(ptr_width)
+        iptrs = [self.iptr_ep0.storage,self.iptr_ep1.storage,self.iptr_ep2.storage]
+        ilens = [self.ilen_ep0.storage,self.ilen_ep1.storage,self.ilen_ep2.storage]
 
         self.ibuf_ptr = Signal(ptr_width)
         self.comb += [
@@ -2266,13 +2291,6 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
         self.sync.usb_48 += [
             If(self.usb.data_send_get, self.ibuf_ptr.eq(self.ibuf_ptr + 1)),
         ]
-
-        ####
-
-
-
-
-
-
-
-
+        self.comb += [
+            self.usb.data_send_have.eq(self.ibuf_ptr != Array(ilens)[self.usb.ep_num]),
+        ]
