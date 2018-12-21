@@ -1755,8 +1755,8 @@ class UsbCore(Module):
 
         self.reset = Signal()
 
-        self.transfer_start  = Signal()     # Asserted when transfer starts
-        self.transfer_tok    = Signal(2)    # Contains the transfer token type
+        self.transfer_tok    = Signal(4)    # Contains the transfer token type
+        self.transfer_start  = Signal()     # Asserted when a transfer is starting
         self.transfer_setup  = Signal()     # Asserted when a transfer is a setup
         self.transfer_commit = Signal()     # Asserted when a transfer succeeds
         self.transfer_abort  = Signal()     # Asserted when a transfer fails
@@ -1769,13 +1769,14 @@ class UsbCore(Module):
         self.fast_ep_dir  = Signal()
         self.fast_ep_addr = Signal(5)
         self.ep_addr = Signal(5)
+        self.ep_num = self.ep_addr[1:]
         self.comb += [
             self.fast_ep_num.eq(self.rx.decode.o_ep),
             self.fast_ep_dir.eq(self.rx.decode.o_pid == PID.IN),
             self.fast_ep_addr.eq(Cat(self.fast_ep_dir, self.fast_ep_num)),
         ]
 
-        self.data_recv_ready   = Signal()   # Assert when ready to receive data.
+        #self.data_recv_ready   = Signal()   # Assert when ready to receive data.
         self.data_recv_put     = Signal()   # Toggled when data is received.
         self.data_recv_payload = Signal(8)
 
@@ -1788,10 +1789,11 @@ class UsbCore(Module):
             pkt_end.eq(self.rx.o_pkt_end | self.tx.o_pkt_end),
         ]
 
-        self.data_toggle_bit = Signal()
-
-        self.transfer_resp = Signal(2)
         response_pid = Signal(4)
+
+        self.dtb = Signal()
+        self.arm = Signal()
+        self.sta = Signal()
 
         # Host->Device data path (Out + Setup data path)
         #
@@ -1835,18 +1837,19 @@ class UsbCore(Module):
             self.transfer_start.eq(1),
             If(pkt_end,
                 NextValue(self.ep_addr, self.fast_ep_addr),
-                NextValue(self.transfer_tok, self.rx.decode.o_pid[2:]),
+                NextValue(self.transfer_tok, self.rx.decode.o_pid),
                 #If(self.rx.decode.o_addr != addr, NextState("IGNORE")),
 
                 If(rx.decode.o_pid == PID.SETUP,
                     NextValue(response_pid, PID.ACK),
                 ).Else(
-                    Case(self.transfer_resp, {
-                        EndpointResponse.ACK:   NextValue(response_pid, PID.ACK),
-                        EndpointResponse.NAK:   NextValue(response_pid, PID.NAK),
-                        EndpointResponse.STALL: NextValue(response_pid, PID.STALL),
-                        EndpointResponse.NONE:  NextValue(response_pid, 0),
-                    }),
+                    If(self.sta,
+                        NextValue(response_pid, PID.STALL),
+                    ).Elif(self.arm,
+                        NextValue(response_pid, PID.ACK),
+                    ).Else(
+                        NextValue(response_pid, PID.NAK),
+                    ),
                 ),
 
                 # Setup transfer
@@ -1859,7 +1862,7 @@ class UsbCore(Module):
 
                 # In transfer
                 ).Elif(rx.decode.o_pid == PID.IN,
-                    If(self.transfer_resp != EndpointResponse.ACK,
+                    If(~self.arm,
                         NextState("SEND_HAND"),
                     ).Else(
                         NextState("SEND_DATA"),
@@ -1911,7 +1914,7 @@ class UsbCore(Module):
         # states.
         self.comb += [
             If(transfer.after_entering("SEND_DATA"),
-                If(self.data_toggle_bit,
+                If(self.dtb,
                     self.tx.i_pid.eq(PID.DATA1),
                 ).Else(
                     self.tx.i_pid.eq(PID.DATA0),
@@ -2147,7 +2150,7 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
                 *trigger_all,
             ).Else(
                 self.eps[self.usb_core.ep_addr].trigger.eq(transfer_commit),
-                self.usb_core.data_toggle_bit.eq(self.eps[self.usb_core.ep_addr].dtb.storage),
+                self.usb_core.dtb.eq(self.eps[self.usb_core.ep_addr].dtb.storage),
             ),
             # FIFO
             # Host->Device[Out Endpoint] pathway
@@ -2165,3 +2168,111 @@ class UsbDeviceCpuInterface(Module, AutoCSR):
                 self.eps[self.usb_core.ep_addr].last_tok.status.eq(self.usb_core.transfer_tok),
             ),
         ]
+
+
+class UsbDeviceCpuMemInterface(Module, AutoCSR):
+    def __init__(self, iobuf, num_endpoints=3, depth=512):
+
+        ptr_width = 9 # Signal(max=depth).size
+
+        self.iobuf = iobuf
+        self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
+        self.submodules.usb = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
+
+        #self.submodules.packet = ev.EventManager()
+        #self.packet.setup = ev.EventSourcePulse()
+        #self.submodules.setup_ptr = CSRStatus(ptr_width)
+
+        # Output endpoints
+        trig = []
+
+        self.submodules.packet = ev.EventManager()
+        for i in range(0, num_endpoints):
+            exec("self.packet.oep{} = ev.EventSourcePulse()".format(i))
+            trig.append(getattr(self.packet, "oep{}".format(i)).trigger)
+
+            exec("self.packet.iep{} = ev.EventSourcePulse()".format(i))
+            trig.append(getattr(self.packet, "iep{}".format(i)).trigger)
+
+        self.packet.finalize()
+
+        self.submodules.sta = CSRStorage(num_endpoints * 2)
+        self.submodules.dtb = CSRStorage(num_endpoints * 2, write_from_dev=True)
+        self.submodules.arm = CSRStorage(num_endpoints * 2)
+
+        self.comb += [
+            self.usb.sta.eq(Array(self.sta.storage)[self.usb.fast_ep_addr]),
+            self.usb.dtb.eq(Array(self.dtb.storage)[self.usb.fast_ep_addr]),
+            self.usb.arm.eq(Array(self.sta.storage)[self.usb.fast_ep_addr]), # & Array(self.packet.pending.r)[self.usb.fast_ep_addr]),
+            Array(trig)[self.usb.ep_addr].eq(self.usb.transfer_commit),
+        ]
+        #self.sync += [
+        #    If(self.usb.transfer_commit,
+        #        self.usb.dtb.storage
+        #]
+
+        # Output pathway
+        # -----------------------
+        self.specials.obuf = Memory(8, depth)
+        self.specials.oport_wr = self.obuf.get_port(write_capable=True, clock_domain="usb_48")
+        self.specials.oport_rd = self.obuf.get_port(clock_domain="sys")
+
+        optrs = []
+        for i in range(0, num_endpoints):
+            exec("self.submodules.optr_ep{0} = CSRStatus(ptr_width, name='optr_ep{0}')".format(i))
+            optrs.append(getattr(self, "optr_ep{}".format(i)).status)
+
+        self.obuf_ptr = Signal(ptr_width)
+        self.comb += [
+            self.oport_wr.adr.eq(self.obuf_ptr),
+            self.oport_wr.dat_w.eq(self.usb.data_recv_payload),
+            self.oport_wr.we.eq(self.usb.data_recv_put),
+        ]
+        # On a commit, copy the current obuf_ptr to the CSR register.
+        self.sync += [
+            If(self.usb.transfer_commit,
+                If((self.usb.transfer_tok == PID.OUT) | (self.usb.transfer_tok == PID.SETUP),
+                    Array(optrs)[self.usb.ep_num].eq(self.obuf_ptr),
+                ),
+            ),
+        ]
+        self.sync.usb_48 += [
+            If(self.usb.data_recv_put, self.obuf_ptr.eq(self.obuf_ptr + 1)),
+        ]
+
+        # Input pathway
+        # -----------------------
+        self.specials.ibuf = Memory(8, depth)
+        self.specials.iport_wr = self.ibuf.get_port(write_capable=True, clock_domain="sys")
+        self.specials.iport_rd = self.ibuf.get_port(clock_domain="usb_48")
+
+        iptrs = []
+        for i in range(0, num_endpoints):
+            exec("self.submodules.iptr_ep{0} = CSRStorage(ptr_width, name='iptr_ep{0}')".format(i))
+            iptrs.append(getattr(self, "iptr_ep{}".format(i)).storage)
+
+        self.ibuf_ptr = Signal(ptr_width)
+        self.comb += [
+            self.iport_rd.adr.eq(self.ibuf_ptr),
+            self.usb.data_send_payload.eq(self.iport_rd.dat_r),
+            #self.iport_rd.re.eq(),
+        ]
+        # On a transfer start, copy the CSR register into ibuf_ptr
+        self.sync += [
+            If(self.usb.transfer_start,
+                self.ibuf_ptr.eq(Array(iptrs)[self.usb.fast_ep_num]),
+            ),
+        ]
+        self.sync.usb_48 += [
+            If(self.usb.data_send_get, self.ibuf_ptr.eq(self.ibuf_ptr + 1)),
+        ]
+
+        ####
+
+
+
+
+
+
+
+
