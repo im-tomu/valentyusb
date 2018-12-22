@@ -468,7 +468,7 @@ class RxPacketDetect(Module):
         self.o_pkt_active = Signal(1)
         self.o_pkt_end = Signal(1)
 
-        self.comb += [
+        self.sync += [
             self.o_pkt_start.eq(pkt_start),
             self.o_pkt_active.eq(pkt_active),
             self.o_pkt_end.eq(pkt_end),
@@ -519,40 +519,10 @@ class RxShifter(Module):
     o_put : Signal(1)
         Asserted for one clock once the register is full.
     """
-    def __init__(self, width, i_valid=None, i_data=None, i_reset=None):
-        if i_valid is None:
-            i_valid = Signal()
-        self.i_valid = i_valid
-        if i_data is None:
-            i_data = Signal()
-        self.i_data = i_data
-        if i_reset is None:
-            i_reset = Signal()
-        self.i_reset = i_reset
-
+    def __init__(self, width, i_valid, i_data, i_reset):
         # Instead of using a counter, we will use a sentinal bit in the shift
         # register to indicate when it is full.
-        self.data = Signal(width)
-
-        self.o_put = Signal()
-        self.o_full = Signal()
-        self.sync += [
-            If(i_reset | self.o_put,
-                self.data.eq(1),
-                self.o_put.eq(0),
-            ),
-            If(i_valid,
-                self.data.eq(Cat(i_data, self.data[:-1])),
-                self.o_put.eq(self.data[-1]),
-                self.o_full.eq(self.data[-1]),
-            ),
-        ]
-
-        self.o_output = Signal(width)
-        self.comb += [
-            self.o_output.eq(self.data[::-1]),
-        ]
-        return
+        shift_reg = Signal(width + 1)
 
         self.o_full = Signal(1)
 
@@ -572,10 +542,13 @@ class RxShifter(Module):
             )
         ]
 
+        self.o_output = Signal(width)
+
         self.comb += [
             self.o_output.eq(shift_reg[1:width + 1])
         ]
 
+        self.o_put = Signal(1)
 
         self.sync += [
             self.o_put.eq((shift_reg[0:2] == 0b10) & i_valid)
@@ -701,15 +674,13 @@ class RxPacketSimple(Module):
         #i_bitstuff_error = bitstuff.o_bitstuff_error
 
         reset = Signal()
-        self.submodules.shifter = RxShifter(
+        self.submodules.shifter = shifter = RxShifter(
             8,
             i_valid = bitstuff.o_valid,
             i_data = bitstuff.o_data,
-            i_reset = reset,
-        )
-        shifter = self.shifter
+            i_reset = reset)
         self.comb += [
-            reset.eq(shifter.o_put | pkt_det.o_pkt_start),
+            reset.eq(shifter.o_full | pkt_det.o_pkt_start),
         ]
 
         self.submodules.state = state = FSM()
@@ -728,12 +699,10 @@ class RxPacketSimple(Module):
         self.o_data_put = Signal()
         self.o_data_payload = Signal(8)
         self.sync += [
-            If(shifter.o_put & pkt_det.o_pkt_active,
+            If(shifter.o_put,
                 self.o_data_payload.eq(shifter.o_output),
-                self.o_data_put.eq(1),
-            ).Else(
-                self.o_data_put.eq(0),
-            )
+            ),
+            self.o_data_put.eq(shifter.o_put & pkt_det.o_pkt_active),
         ]
 
         self.o_pkt_end = Signal()
@@ -864,9 +833,9 @@ class RxPacketDecode(Module):
                 self.data_n0.eq(shifter.o_output),
             ),
         ]
-        #self.comb += [
-        #    i_reset.eq(shifter.o_put),
-        #]
+        self.comb += [
+            i_reset.eq(shifter.o_put),
+        ]
 
         self.submodules.state = state = FSM()
 
@@ -1454,11 +1423,9 @@ class TxPacketSimple(Module):
     def __init__(self, i_bit_strobe):
 
         self.i_more_data = Signal()
-
-        bitstuff_stall = Signal()
         more_data = Signal()
         self.sync += [
-            If(~i_bit_strobe & ~bitstuff_stall,
+            If(i_bit_strobe,
                 more_data.eq(self.i_more_data),
             ),
         ]
@@ -1466,11 +1433,11 @@ class TxPacketSimple(Module):
         self.i_data = Signal(8)
 
         empty = Signal()
+        bitstuff_stall = Signal()
 
-        self.pkt_active = Signal()
         self.submodules.shifter = shifter = TxShifter(
             width = 8,
-            i_put = empty & self.pkt_active,
+            i_put = more_data & empty,
             i_shift = i_bit_strobe & ~bitstuff_stall,
             i_data = self.i_data,
         )
@@ -1478,6 +1445,7 @@ class TxPacketSimple(Module):
             empty.eq(shifter.o_empty),
         ]
 
+        self.pkt_active = Signal()
         self.comb += [
             self.pkt_active.eq(~empty | more_data)
         ]
