@@ -9,6 +9,7 @@ from migen.genlib import cdc
 from litex.soc.interconnect import stream
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect import csr_eventmanager as ev
+from litex.soc.interconnect.csr import *
 
 from litex.soc.cores.gpio import GPIOOut
 
@@ -467,7 +468,7 @@ class RxPacketDetect(Module):
         self.o_pkt_active = Signal(1)
         self.o_pkt_end = Signal(1)
 
-        self.sync += [
+        self.comb += [
             self.o_pkt_start.eq(pkt_start),
             self.o_pkt_active.eq(pkt_active),
             self.o_pkt_end.eq(pkt_end),
@@ -518,10 +519,40 @@ class RxShifter(Module):
     o_put : Signal(1)
         Asserted for one clock once the register is full.
     """
-    def __init__(self, width, i_valid, i_data, i_reset):
+    def __init__(self, width, i_valid=None, i_data=None, i_reset=None):
+        if i_valid is None:
+            i_valid = Signal()
+        self.i_valid = i_valid
+        if i_data is None:
+            i_data = Signal()
+        self.i_data = i_data
+        if i_reset is None:
+            i_reset = Signal()
+        self.i_reset = i_reset
+
         # Instead of using a counter, we will use a sentinal bit in the shift
         # register to indicate when it is full.
-        shift_reg = Signal(width + 1)
+        self.data = Signal(width)
+
+        self.o_put = Signal()
+        self.o_full = Signal()
+        self.sync += [
+            If(i_reset | self.o_put,
+                self.data.eq(1),
+                self.o_put.eq(0),
+            ),
+            If(i_valid,
+                self.data.eq(Cat(i_data, self.data[:-1])),
+                self.o_put.eq(self.data[-1]),
+                self.o_full.eq(self.data[-1]),
+            ),
+        ]
+
+        self.o_output = Signal(width)
+        self.comb += [
+            self.o_output.eq(self.data[::-1]),
+        ]
+        return
 
         self.o_full = Signal(1)
 
@@ -541,13 +572,10 @@ class RxShifter(Module):
             )
         ]
 
-        self.o_output = Signal(width)
-
         self.comb += [
             self.o_output.eq(shift_reg[1:width + 1])
         ]
 
-        self.o_put = Signal(1)
 
         self.sync += [
             self.o_put.eq((shift_reg[0:2] == 0b10) & i_valid)
@@ -638,6 +666,80 @@ class RxCrcChecker(Module):
             self.o_crc_good.eq(crc_good)
         ]
 
+
+class RxPacketSimple(Module):
+    def __init__(self, usbp_raw, usbn_raw):
+        self.submodules.clock_data_recovery = clock_data_recovery = RxClockDataRecovery(
+            usbp_raw,
+            usbn_raw,
+        )
+        self.o_bit_strobe = clock_data_recovery.line_state_valid
+
+        self.raw_valid = clock_data_recovery.line_state_valid
+        self.raw_dj = clock_data_recovery.line_state_dj
+        self.raw_dk = clock_data_recovery.line_state_dk
+        self.raw_se0 = clock_data_recovery.line_state_se0
+
+        self.submodules.nrzi = nrzi = RxNRZIDecoder(
+            i_valid = clock_data_recovery.line_state_valid,
+            i_dj = clock_data_recovery.line_state_dj,
+            i_dk = clock_data_recovery.line_state_dk,
+            i_se0 = clock_data_recovery.line_state_se0,
+        )
+
+        self.submodules.bitstuff = bitstuff = RxBitstuffRemover(
+            i_valid = nrzi.o_valid,
+            i_data = nrzi.o_data,
+            i_se0 = nrzi.o_se0,
+        )
+
+        self.submodules.pkt_det = pkt_det = RxPacketDetect(
+            i_valid = bitstuff.o_valid,
+            i_data = bitstuff.o_data,
+            i_se0 = bitstuff.o_se0,
+        )
+        #i_bitstuff_error = bitstuff.o_bitstuff_error
+
+        reset = Signal()
+        self.submodules.shifter = RxShifter(
+            8,
+            i_valid = bitstuff.o_valid,
+            i_data = bitstuff.o_data,
+            i_reset = reset,
+        )
+        shifter = self.shifter
+        self.comb += [
+            reset.eq(shifter.o_put | pkt_det.o_pkt_start),
+        ]
+
+        self.submodules.state = state = FSM()
+
+        state.act("WAIT_SYNC",
+            If(pkt_det.o_pkt_start,
+                NextState("WAIT_BYTES"),
+            ),
+        )
+        state.act("WAIT_BYTES",
+            If(pkt_det.o_pkt_end,
+                NextState("WAIT_SYNC"),
+            ),
+        )
+
+        self.o_data_put = Signal()
+        self.o_data_payload = Signal(8)
+        self.sync += [
+            If(shifter.o_put & pkt_det.o_pkt_active,
+                self.o_data_payload.eq(shifter.o_output),
+                self.o_data_put.eq(1),
+            ).Else(
+                self.o_data_put.eq(0),
+            )
+        ]
+
+        self.o_pkt_end = Signal()
+        self.comb += [
+            self.o_pkt_end.eq(pkt_det.o_pkt_end),
+        ]
 
 
 class RxPacketDecode(Module):
@@ -762,9 +864,9 @@ class RxPacketDecode(Module):
                 self.data_n0.eq(shifter.o_output),
             ),
         ]
-        self.comb += [
-            i_reset.eq(shifter.o_put),
-        ]
+        #self.comb += [
+        #    i_reset.eq(shifter.o_put),
+        #]
 
         self.submodules.state = state = FSM()
 
@@ -1001,32 +1103,31 @@ class TxShifter(Module):
 
     """
     def __init__(self, width, i_put, i_shift, i_data):
-        shifter = Signal(width + 1)
+        shifter = Signal(width + 1, reset=0b1)
 
+        empty = Signal(1)
         self.sync += [
             If(i_put,
                 shifter.eq(Cat(i_data[0:width], C(1, 1)))
             ).Elif(i_shift,
-                shifter.eq(shifter >> 1)
-            )
+                If(~empty,
+                    shifter.eq(shifter >> 1)
+                ),
+            ),
         ]
 
         self.o_data = Signal(1)
-        self.o_empty = Signal(1)
-        not_empty = Signal(1)
 
         self.comb += [
+            empty.eq(shifter[0:width + 1] == C(1, width+1)),
             self.o_data.eq(shifter[0]),
-            self.o_empty.eq(~not_empty)
         ]
 
-        self.sync += [
-            If((shifter[1:width + 1] == C(1, width)) & i_shift,
-                not_empty.eq(0)
-            ).Elif(i_put,
-                not_empty.eq(1)
-            )
+        self.o_empty = Signal(1)
+        self.comb += [
+            self.o_empty.eq(empty),
         ]
+
 
 
 class TxCrcGenerator(Module):
@@ -1348,6 +1449,82 @@ class TxNrziEncoder(Module):
         ]
 
 
+class TxPacketSimple(Module):
+
+    def __init__(self, i_bit_strobe):
+
+        self.i_more_data = Signal()
+
+        bitstuff_stall = Signal()
+        more_data = Signal()
+        self.sync += [
+            If(~i_bit_strobe & ~bitstuff_stall,
+                more_data.eq(self.i_more_data),
+            ),
+        ]
+
+        self.i_data = Signal(8)
+
+        empty = Signal()
+
+        self.pkt_active = Signal()
+        self.submodules.shifter = shifter = TxShifter(
+            width = 8,
+            i_put = empty & self.pkt_active,
+            i_shift = i_bit_strobe & ~bitstuff_stall,
+            i_data = self.i_data,
+        )
+        self.comb += [
+            empty.eq(shifter.o_empty),
+        ]
+
+        self.comb += [
+            self.pkt_active.eq(~empty | more_data)
+        ]
+        self.pkt_active_n2 = Signal()
+        self.pkt_active_n1 = Signal()
+        self.pkt_end = Signal()
+        self.sync += [
+            If(i_bit_strobe,
+                self.pkt_active_n2.eq(self.pkt_active_n1),
+                self.pkt_active_n1.eq(self.pkt_active),
+            ),
+        ]
+        self.comb += [
+            self.pkt_end.eq(self.pkt_active_n2 & ~self.pkt_active),
+        ]
+
+        self.submodules.bitstuffer = bitstuffer = TxBitstuffer(
+            i_valid = i_bit_strobe,
+            i_oe = self.pkt_active,
+            i_data = shifter.o_data,
+            i_se0 = self.pkt_end,
+        )
+        self.comb += [
+             bitstuff_stall.eq(bitstuffer.o_stall)
+        ]
+
+        self.submodules.nrzi = nrzi = TxNrziEncoder(
+            i_valid = i_bit_strobe,
+            i_oe = bitstuffer.o_oe,
+            i_data = bitstuffer.o_data,
+            i_se0 = bitstuffer.o_se0
+        )
+
+        ######################################################################
+        #
+        # Flop all outputs
+        #
+        self.o_usbp = Signal(1)
+        self.o_usbn = Signal(1)
+        self.o_oe = Signal(1)
+
+        self.sync += [
+            self.o_usbp.eq(nrzi.o_usbp),
+            self.o_usbn.eq(nrzi.o_usbn),
+            self.o_oe.eq(nrzi.o_oe)
+        ]
+
 
 class UsbFsTx(Module):
     """
@@ -1648,11 +1825,10 @@ class UsbFsTx(Module):
 ###############################################################################
 ###############################################################################
 
+
 class Raw(Instance.PreformattedParam):
     def __init__(self, value):
         self.value = value
-
-from litex.soc.interconnect.csr import *
 
 
 class UsbIoBuf(Module):
@@ -1727,6 +1903,74 @@ class PID(IntEnum):
     STALL   = 0b1110
 
 
+class UsbSimpleFifo(Module, AutoCSR):
+
+    def __init__(self, iobuf):
+        self.submodules.ev = ev.EventManager()
+        self.ev.submodules.rx = ev.EventSourcePulse()
+
+        # ---------------------
+        # RX side
+        # ---------------------
+        self.submodules.rx = rx = ClockDomainsRenamer("usb_48")(
+            RxPacketSimple(iobuf.usb_p_rx, iobuf.usb_n_rx))
+
+        obuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        self.submodules.obuf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(obuf)
+
+        # USB side (writing)
+        self.comb += [
+            self.obuf.din.eq(self.rx.o_data_payload),
+            self.obuf.we.eq(self.rx.o_data_put),
+            self.ev.rx.trigger.eq(self.rx.o_pkt_end),
+        ]
+
+        # System side (reading)
+        self.submodules.obuf_head = CSR(8)
+        self.submodules.obuf_empty = CSRStatus(1)
+        self.comb += [
+            self.obuf_head.w.eq(self.obuf.dout),
+            self.obuf.re.eq(self.obuf_head.re),
+            self.obuf_empty.status.eq(~self.obuf.readable),
+        ]
+
+        # ---------------------
+        # TX side
+        # ---------------------
+        self.submodules.tx = tx = ClockDomainsRenamer("usb_48")(
+            TxPacketSimple(i_bit_strobe = rx.o_bit_strobe))
+
+        ibuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(ibuf)
+
+        # System side (writing)
+        self.submodules.arm = CSRStorage(1)
+        self.submodules.ibuf_head = CSR(8)
+        self.submodules.ibuf_empty = CSRStatus(1)
+        self.comb += [
+            self.ibuf.din.eq(self.ibuf_head.r),
+            self.ibuf.we.eq(self.ibuf_head.re),
+            self.ibuf_empty.status.eq(~self.ibuf.readable & ~tx.pkt_active),
+        ]
+
+        # USB side (reading)
+        self.comb += [
+            tx.i_more_data.eq(self.ibuf.readable & self.arm.storage),
+            tx.i_data.eq(self.ibuf.dout),
+            self.ibuf.re.eq(tx.shifter.o_empty & tx.pkt_active),
+        ]
+
+        # ----------------------
+        # Tristate
+        # ----------------------
+        self.submodules.iobuf = iobuf
+        self.comb += [
+            iobuf.usb_tx_en.eq(tx.o_oe),
+            iobuf.usb_p_tx.eq(tx.o_usbp),
+            iobuf.usb_n_tx.eq(tx.o_usbn),
+        ]
+        self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
+
 
 # Token
 # Data
@@ -1744,7 +1988,7 @@ class UsbCore(Module):
 
         #### TX Phy
         self.submodules.tx = tx = UsbFsTx(
-            i_bit_strobe = rx.o_bit_strobe,
+            _bit_strobe = rx.o_bit_strobe,
         )
 
         self.comb += [
