@@ -475,7 +475,6 @@ class RxPacketDetect(Module):
         ]
 
 
-
 class RxShifter(Module):
     """
     Shifter
@@ -660,41 +659,28 @@ class RxPacketSimple(Module):
             i_se0 = clock_data_recovery.line_state_se0,
         )
 
-        self.submodules.bitstuff = bitstuff = RxBitstuffRemover(
+        self.submodules.pkt_det = pkt_det = RxPacketDetect(
             i_valid = nrzi.o_valid,
             i_data = nrzi.o_data,
             i_se0 = nrzi.o_se0,
         )
 
-        self.submodules.pkt_det = pkt_det = RxPacketDetect(
-            i_valid = bitstuff.o_valid,
-            i_data = bitstuff.o_data,
-            i_se0 = bitstuff.o_se0,
+        self.submodules.bitstuff = bitstuff = RxBitstuffRemover(
+            i_valid = nrzi.o_valid & pkt_det.o_pkt_active,
+            i_data = nrzi.o_data,
+            i_se0 = nrzi.o_se0,
         )
-        #i_bitstuff_error = bitstuff.o_bitstuff_error
 
         reset = Signal()
         self.submodules.shifter = shifter = RxShifter(
             8,
             i_valid = bitstuff.o_valid,
             i_data = bitstuff.o_data,
-            i_reset = reset)
+            i_reset = reset,
+        )
         self.comb += [
             reset.eq(shifter.o_full | pkt_det.o_pkt_start),
         ]
-
-        self.submodules.state = state = FSM()
-
-        state.act("WAIT_SYNC",
-            If(pkt_det.o_pkt_start,
-                NextState("WAIT_BYTES"),
-            ),
-        )
-        state.act("WAIT_BYTES",
-            If(pkt_det.o_pkt_end,
-                NextState("WAIT_SYNC"),
-            ),
-        )
 
         self.o_data_put = Signal()
         self.o_data_payload = Signal(8)
@@ -1226,7 +1212,7 @@ class TxBitstuffer(Module):
 
     o_se0 : Signal(1)
         Overrides value of o_data when asserted and indicates that SE0 state
-        shoulde be asserted on USB. Qualified by o_valid.
+        should be asserted on USB. Qualified by o_valid.
 
     o_oe : Signal(1)
         Indicates that the transmit pipeline should be driving USB.
@@ -1423,48 +1409,54 @@ class TxPacketSimple(Module):
     def __init__(self, i_bit_strobe):
 
         self.i_more_data = Signal()
-        more_data = Signal()
-        self.sync += [
-            If(i_bit_strobe,
-                more_data.eq(self.i_more_data),
-            ),
-        ]
-
         self.i_data = Signal(8)
 
         empty = Signal()
         bitstuff_stall = Signal()
 
+        bit_strobe = Signal()
+        self.comb += [
+            bit_strobe.eq(i_bit_strobe & ~bitstuff_stall),
+        ]
+
         self.submodules.shifter = shifter = TxShifter(
             width = 8,
-            i_put = more_data & empty,
-            i_shift = i_bit_strobe & ~bitstuff_stall,
+            i_put = self.i_more_data & empty,
+            i_shift = bit_strobe,
             i_data = self.i_data,
         )
         self.comb += [
             empty.eq(shifter.o_empty),
         ]
 
-        self.pkt_active = Signal()
-        self.comb += [
-            self.pkt_active.eq(~empty | more_data)
-        ]
-        self.pkt_active_n2 = Signal()
-        self.pkt_active_n1 = Signal()
         self.pkt_end = Signal()
-        self.sync += [
-            If(i_bit_strobe,
-                self.pkt_active_n2.eq(self.pkt_active_n1),
-                self.pkt_active_n1.eq(self.pkt_active),
+        self.pkt_active = Signal()
+        self.pkt_start = Signal()
+
+        self.submodules.pkt = pkt = FSM()
+        pkt.act("IDLE",
+            If(bit_strobe,
+                If(self.i_more_data,
+                    self.pkt_start.eq(1),
+                    self.pkt_active.eq(1),
+                    NextState("PKT_ACTIVE"),
+                ),
             ),
-        ]
-        self.comb += [
-            self.pkt_end.eq(self.pkt_active_n2 & ~self.pkt_active),
-        ]
+        )
+        pkt.act("PKT_ACTIVE",
+            self.pkt_active.eq(1),
+            If(bit_strobe,
+                If(~self.i_more_data & shifter.o_empty,
+                    self.pkt_active.eq(0),
+                    self.pkt_end.eq(1),
+                    NextState("IDLE"),
+                ),
+            ),
+        )
 
         self.submodules.bitstuffer = bitstuffer = TxBitstuffer(
             i_valid = i_bit_strobe,
-            i_oe = self.pkt_active,
+            i_oe = self.i_more_data,
             i_data = shifter.o_data,
             i_se0 = self.pkt_end,
         )

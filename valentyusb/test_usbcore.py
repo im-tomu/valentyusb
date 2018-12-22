@@ -1879,6 +1879,7 @@ def sof_packet(frame):
 def pp_packet(p):
     """
     >>> print(pp_packet(wrap_packet(token_packet(PID.SETUP, 0, 0))))
+    ----
     KKKK 1 Sync
     JJJJ 2 Sync
     KKKK 3 Sync
@@ -1887,6 +1888,7 @@ def pp_packet(p):
     JJJJ 6 Sync
     KKKK 7 Sync
     KKKK 8 Sync
+    ----
     KKKK 1 PID (PID.SETUP)
     JJJJ 2 PID
     JJJJ 3 PID
@@ -1895,6 +1897,7 @@ def pp_packet(p):
     KKKK 6 PID
     JJJJ 7 PID
     KKKK 8 PID
+    ----
     JJJJ 1 Address
     KKKK 2 Address
     JJJJ 3 Address
@@ -1903,6 +1906,7 @@ def pp_packet(p):
     KKKK 6 Address
     JJJJ 7 Address
     KKKK 1 Endpoint
+    ----
     JJJJ 2 Endpoint
     KKKK 3 Endpoint
     JJJJ 4 Endpoint
@@ -1911,10 +1915,12 @@ def pp_packet(p):
     JJJJ 3 CRC5
     KKKK 4 CRC5
     JJJJ 5 CRC5
+    ----
     ____ SE0
     ____ SE0
     JJJJ END
     >>> print(pp_packet(wrap_packet(data_packet(PID.DATA0, [5, 6]))))
+    ----
     KKKK 1 Sync
     JJJJ 2 Sync
     KKKK 3 Sync
@@ -1923,6 +1929,7 @@ def pp_packet(p):
     JJJJ 6 Sync
     KKKK 7 Sync
     KKKK 8 Sync
+    ----
     KKKK 1 PID (PID.DATA0)
     KKKK 2 PID
     JJJJ 3 PID
@@ -1931,6 +1938,7 @@ def pp_packet(p):
     KKKK 6 PID
     KKKK 7 PID
     KKKK 8 PID
+    ----
     KKKK
     JJJJ
     JJJJ
@@ -1939,6 +1947,7 @@ def pp_packet(p):
     KKKK
     JJJJ
     KKKK
+    ----
     JJJJ
     JJJJ
     JJJJ
@@ -1947,6 +1956,7 @@ def pp_packet(p):
     KKKK
     JJJJ
     KKKK
+    ----
     KKKK  1 CRC16
     JJJJ  2 CRC16
     JJJJ  3 CRC16
@@ -1955,6 +1965,7 @@ def pp_packet(p):
     JJJJ  6 CRC16
     JJJJ  7 CRC16
     KKKK  8 CRC16
+    ----
     KKKK  9 CRC16
     JJJJ 10 CRC16
     JJJJ 11 CRC16
@@ -1962,12 +1973,16 @@ def pp_packet(p):
     JJJJ 13 CRC16
     KKKK 14 CRC16
     JJJJ 15 CRC16
-    KKKK SE0
+    KKKK 16 CRC16
+    ----
     ____ SE0
-    ____ END
+    ____ SE0
+    JJJJ END
+
 
     >>> # Requires bit stuffing!
     >>> print(pp_packet(wrap_packet(data_packet(PID.DATA0, [0x1]))))
+    ----
     KKKK 1 Sync
     JJJJ 2 Sync
     KKKK 3 Sync
@@ -1976,6 +1991,7 @@ def pp_packet(p):
     JJJJ 6 Sync
     KKKK 7 Sync
     KKKK 8 Sync
+    ----
     KKKK 1 PID (PID.DATA0)
     KKKK 2 PID
     JJJJ 3 PID
@@ -1984,6 +2000,7 @@ def pp_packet(p):
     KKKK 6 PID
     KKKK 7 PID
     KKKK 8 PID
+    ----
     KKKK
     JJJJ
     KKKK
@@ -1992,71 +2009,309 @@ def pp_packet(p):
     JJJJ
     KKKK
     JJJJ
-    JJJJ
-    KKKK  1 CRC16
-    JJJJ  2 CRC16
-    KKKK  3 CRC16
-    JJJJ  4 CRC16
-    KKKK  5 CRC16
-    JJJJ  6 CRC16
+    ----
+    JJJJ  1 CRC16
+    KKKK  2 CRC16
+    JJJJ  3 CRC16
+    KKKK  4 CRC16
+    JJJJ  5 CRC16
+    KKKK  6 CRC16
     JJJJ  7 CRC16
     JJJJ  8 CRC16
+    ----
     JJJJ  9 CRC16
     JJJJ 10 CRC16
     JJJJ 11 CRC16
     JJJJ 12 CRC16
-    KKKK 13 CRC16
+    JJJJ 13 CRC16
+    KKKK    Bitstuff
     KKKK 14 CRC16
     KKKK 15 CRC16
-    JJJJ SE0
+    JJJJ 16 CRC16
+    ----
     ____ SE0
-    ____ END
+    ____ SE0
+    JJJJ END
+
+    >>> print(pp_packet(wrap_packet(data_packet(PID.DATA0, [0x1]))[:96]))
+    ----
+    KKKK 1 Sync
+    JJJJ 2 Sync
+    KKKK 3 Sync
+    JJJJ 4 Sync
+    KKKK 5 Sync
+    JJJJ 6 Sync
+    KKKK 7 Sync
+    KKKK 8 Sync
+    ----
+    KKKK 1 PID (PID.DATA0)
+    KKKK 2 PID
+    JJJJ 3 PID
+    KKKK 4 PID
+    JJJJ 5 PID
+    KKKK 6 PID
+    KKKK 7 PID
+    KKKK 8 PID
+    ----
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ
+    KKKK
+    JJJJ ERROR!
+    KKKK ERROR!
+    JJJJ END
+    >>> print(pp_packet(wrap_packet(sof_packet(12))))
+    ----
+    KKKK 1 Sync
+    JJJJ 2 Sync
+    KKKK 3 Sync
+    JJJJ 4 Sync
+    KKKK 5 Sync
+    JJJJ 6 Sync
+    KKKK 7 Sync
+    KKKK 8 Sync
+    ----
+    KKKK 1 PID (PID.SOF)
+    JJJJ 2 PID
+    JJJJ 3 PID
+    KKKK 4 PID
+    JJJJ 5 PID
+    JJJJ 6 PID
+    KKKK 7 PID
+    KKKK 8 PID
+    ----
+    KKKK  1 Frame #
+    JJJJ  2 Frame #
+    KKKK  3 Frame #
+    JJJJ  4 Frame #
+    KKKK  5 Frame #
+    JJJJ  6 Frame #
+    KKKK  7 Frame #
+    JJJJ  8 Frame #
+    ----
+    JJJJ  9 Frame #
+    JJJJ 10 Frame #
+    KKKK 11 Frame #
+    KKKK 1 CRC5
+    JJJJ 2 CRC5
+    KKKK 3 CRC5
+    JJJJ 4 CRC5
+    JJJJ 5 CRC5
+    ----
+    ____ SE0
+    ____ SE0
+    JJJJ END
 
     """
+
     output = []
     chunks = [p[i:i+4] for i in range(0, len(p), 4)]
-    for i in range(1, 9):
-        if chunks:
-            output.extend([chunks.pop(0), ' %i Sync\n' % i])
 
-    pid_type = None
-    for i in range(1, 9):
-        if chunks:
-            if i == 1:
-                pid_encoded = "".join(chunks[:8])
-                for p in PID:
-                    if nrzi(encode_pid(p.value)) == pid_encoded:
-                        pid_type = p
-                output.extend([chunks.pop(0), ' %i PID (%s)\n' % (i, pid_type)])
+    class BitStuff:
+        def __init__(self):
+            self.i = 0
+
+        def __call__(self, chunk):
+            if self.i == 7:
+                self.i = 0
+                if chunk == 'KKKK':
+                    output.extend([chunk, '    Bitstuff\n'])
+                else:
+                    output.extend([chunk, '    Bitstuff ERROR!\n'])
+                return True
+
+            if chunk == 'JJJJ':
+                self.i += 1
             else:
-                output.extend([chunks.pop(0), ' %i PID\n' % i])
+                self.i = 0
+            return False
 
-    if pid_type == PID.DATA0 or pid_type == PID.DATA1:
-        while len(chunks) > 16+3:
-            output.extend([chunks.pop(0), '\n'])
-        for i in range(1, 16):
-            if chunks:
-                output.extend([chunks.pop(0), ' %2i CRC16\n' % i])
-    else:
-        for i in range(1, 8):
-            if chunks:
-                output.extend([chunks.pop(0), ' %i Address\n' % i])
-        for i in range(1, 5):
-            if chunks:
-                output.extend([chunks.pop(0), ' %i Endpoint\n' % i])
-        for i in range(1, 6):
-            if chunks:
-                output.extend([chunks.pop(0), ' %i CRC5\n' % i])
-        while len(chunks) > 3:
-            output.extend([chunks.pop(0), '\n'])
+    class Seperator:
+        def __init__(self):
+            self.i = 0
 
-    if chunks:
-        output.extend([chunks.pop(0), ' SE0\n'])
-    if chunks:
-        output.extend([chunks.pop(0), ' SE0\n'])
-    if chunks:
-        output.extend([chunks.pop(0), ' END'])
+        def __call__(self, chunk):
+            if self.i % 8 == 0:
+                output.append('----\n')
+            self.i += 1
+            return False
 
+    class Sync:
+        def __init__(self):
+            self.i = 0
+
+        def __call__(self, chunk):
+            if self.i > 7:
+                return False
+            self.i += 1
+            output.extend([chunk, ' %i Sync\n' % self.i])
+            return True
+
+    class Pid:
+        def __init__(self):
+            self.done = False
+            self.pid_chunks = []
+            self.type = None
+
+        def __call__(self, chunk):
+            if self.done:
+                return False
+
+            self.pid_chunks.append(chunk)
+            if len(self.pid_chunks) < 8:
+                return True
+
+            self.done = True
+            pid_encoded = "".join(self.pid_chunks)
+            for p in PID:
+                if nrzi(encode_pid(p.value)) == pid_encoded:
+                    self.type = p
+
+            for i, chunk in enumerate(self.pid_chunks):
+                if self.type is not None and i == 0:
+                    output.extend([chunk, ' %i PID (%s)\n' % (i+1, self.type)])
+                else:
+                    output.extend([chunk, ' %i PID\n' % (i+1,)])
+
+            return True
+
+    class SOF:
+        def __init__(self, pid):
+            self.pid = pid
+            self.i = 0
+            self.state = 'FRAME NUMBER'
+
+        def __call__(self, chunk):
+            if len(chunks) < 3:
+                return False
+
+            if self.pid.type != PID.SOF:
+                return False
+
+            self.i += 1
+            if self.state == 'FRAME NUMBER':
+                output.extend([chunk, ' %2i Frame #\n' % self.i])
+                if self.i == 11:
+                    self.state = 'CRC5'
+                    self.i = 0
+            elif self.state == 'CRC5':
+                output.extend([chunk, ' %i CRC5\n' % self.i])
+                if self.i == 5:
+                    self.state = "DATA"
+                    self.i = 0
+            else:
+                output.extend([chunk, ' ERROR!\n'])
+
+            return True
+
+    class Data:
+        def __init__(self, pid):
+            self.done = False
+            self.pid = pid
+            self.last16 = []
+
+        def __call__(self, chunk):
+            if self.pid.type not in (PID.DATA0, PID.DATA1):
+                return False
+
+            if len(chunks) < 3:
+                if output.count(None) == 0:
+                    return False
+
+                assert output.count(None) == len(self.last16), (output.count(None), len(self.last16))
+                if len(self.last16) == 16:
+                    for i, chunk in enumerate(self.last16):
+                        self.patch(chunk+' %2i CRC16\n' % (i+1,))
+                else:
+                    for i, chunk in enumerate(self.last16):
+                        self.patch(chunk+'\n')
+                assert output.count(None) == 0
+                return False
+
+            self.last16.append(chunk)
+            output.append(None)
+
+            if len(self.last16) > 16:
+                self.patch(self.last16.pop(0)+'\n')
+
+            return True
+
+        def patch(self, s):
+            assert isinstance(s, str), s
+            p = output.index(None)
+            output[p] = s
+
+
+    class Token:
+        def __init__(self, pid):
+            self.pid = pid
+            self.i = 0
+            self.state = 'ADDRESS'
+
+        def __call__(self, chunk):
+            if len(chunks) < 3:
+                return False
+
+            if self.pid.type in (PID.DATA0, PID.DATA1):
+                return False
+
+            self.i += 1
+
+            if self.state == 'ADDRESS':
+                output.extend([chunk, ' %i Address\n' % self.i])
+                if self.i == 7:
+                    self.state = "ENDPOINT"
+                    self.i = 0
+            elif self.state == 'ENDPOINT':
+                output.extend([chunk, ' %i Endpoint\n' % self.i])
+                if self.i == 4:
+                    self.state = "CRC5"
+                    self.i = 0
+            elif self.state == 'CRC5':
+                output.extend([chunk, ' %i CRC5\n' % self.i])
+                if self.i == 5:
+                    self.state = "DATA"
+                    self.i = 0
+            elif self.state == 'DATA':
+                output.extend([chunk, ' ERROR\n'])
+
+            return True
+
+    class End:
+        def __init__(self):
+            pass
+
+        def __call__(self, chunk):
+            if chunk == '____':
+                output.extend([chunk, ' SE0\n'])
+                return True
+            if len(chunks) == 0:
+                output.extend([chunk, ' END\n'])
+                return True
+            return False
+
+    printers = []
+    printers.append(BitStuff())
+    printers.append(Seperator())
+    printers.append(Sync())
+    pid_printer = Pid()
+    printers.append(pid_printer)
+    printers.append(SOF(pid_printer))
+    printers.append(Data(pid_printer))
+    printers.append(Token(pid_printer))
+    printers.append(End())
+
+    while len(chunks) > 0:
+        chunk = chunks.pop(0)
+        for printer in printers:
+            if printer(chunk):
+                break
+        else:
+            output.extend([chunk, ' ERROR!\n'])
+
+    assert output.count(None) == 0, output
+    output[-1] = output[-1][:-1]
     return "".join(output)
 
 
@@ -2065,6 +2320,12 @@ def wrap_packet(data):
 
     >>> wrap_packet(handshake_packet(PID.ACK))
     'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKJJJJJJJJKKKKJJJJJJJJKKKKKKKKKKKK________JJJJ'
+    >>> wrap_packet(token_packet(PID.SETUP, 0, 0))
+    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKKKKKJJJJJJJJJJJJKKKKKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKJJJJKKKKJJJJ________JJJJ'
+    >>> wrap_packet(data_packet(PID.DATA0, [5, 6]))
+    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJJJJJKKKKJJJJKKKKJJJJKKKKJJJJJJJJJJJJKKKKJJJJKKKKJJJJKKKKKKKKJJJJJJJJJJJJJJJJJJJJJJJJKKKKKKKKJJJJJJJJJJJJJJJJKKKKJJJJKKKK________JJJJ'
+    >>> wrap_packet(data_packet(PID.DATA0, [0x1]))
+    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJJJJJKKKKJJJJKKKKJJJJKKKKJJJJJJJJJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKJJJJ________JJJJ'
 
     """
     return nrzi(sync() + data + eop())
@@ -3704,7 +3965,7 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
             pkt_data = encode_data(pkt_data[:1])
             pidt = int(pkt_data[0:4][::-1], 2)
             pidb = int(pkt_data[4:8][::-1], 2)
-            #self.assertEqual(pidt ^ 0b1111, pidb)
+            self.assertEqual(pidt ^ 0b1111, pidb)
             return PID(pidt)
 
         for ep in self.endpoints.values():
@@ -3720,7 +3981,7 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
             pkt_data = yield from self.recv_packet()
             if not pkt_data:
                 return
-            print(pkt_data)
+
             self.assertEqual(len(pkt_data), 3, pkt_data)
             pid = decode_pid(pkt_data)
             pkt_data = encode_data(pkt_data)
@@ -3894,9 +4155,14 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
         return self.endpoints[epaddr].dtb
 
 
-
-
 if __name__ == '__main__':
     import doctest
+    import sys
+    run_unittest = True
+    if len(sys.argv) == 2 and sys.argv[1] == "doctest":
+        sys.argv.pop(-1)
+        sys.argv.append("-v")
+        run_unittest = False
     doctest.testmod()
-    unittest.main()
+    if run_unittest:
+        unittest.main()
