@@ -1058,15 +1058,18 @@ class TxShifter(Module):
 
     """
     def __init__(self, width, i_put, i_shift, i_data):
-        shifter = Signal(width + 1, reset=0b1)
+        shifter = Signal(width)
+        pos = Signal(width+1, reset=0b1)
 
         empty = Signal(1)
         self.sync += [
             If(i_put,
-                shifter.eq(Cat(i_data[0:width], C(1, 1)))
+                shifter.eq(i_data),
+                pos.eq(1 << width),
             ).Elif(i_shift,
                 If(~empty,
-                    shifter.eq(shifter >> 1)
+                    pos.eq(pos >> 1),
+                    shifter.eq(shifter >> 1),
                 ),
             ),
         ]
@@ -1074,7 +1077,7 @@ class TxShifter(Module):
         self.o_data = Signal(1)
 
         self.comb += [
-            empty.eq(shifter[0:width + 1] == C(1, width+1)),
+            empty.eq(pos[0]),
             self.o_data.eq(shifter[0]),
         ]
 
@@ -1252,7 +1255,7 @@ class TxBitstuffer(Module):
         self.o_oe = Signal(1)
 
         self.comb += [
-            self.o_stall.eq(stuff_bit & self.o_oe)
+            self.o_stall.eq(stuff_bit)
         ]
 
         # flop outputs
@@ -1424,7 +1427,7 @@ class TxPacketSimple(Module):
         self.submodules.shifter = shifter = TxShifter(
             width = 8,
             i_put = self.i_more_data & empty,
-            i_shift = bit_strobe,
+            i_shift = bit_strobe, #i_bit_strobe & ~bitstuff_stall,
             i_data = self.i_data,
         )
         self.comb += [
@@ -1438,7 +1441,7 @@ class TxPacketSimple(Module):
 
         self.submodules.pkt = pkt = FSM()
         pkt.act("IDLE",
-            If(bit_strobe,
+            If(bit_strobe, #i_bit_strobe & ~bitstuff_stall,
                 If(have_data,
                     self.pkt_start.eq(1),
                     self.pkt_active.eq(1),
@@ -1448,7 +1451,7 @@ class TxPacketSimple(Module):
         )
         pkt.act("PKT_ACTIVE",
             self.pkt_active.eq(1),
-            If(bit_strobe,
+            If(bit_strobe, #i_bit_strobe & ~bitstuff_stall,
                 If(~have_data,
                     self.pkt_active.eq(0),
                     self.pkt_end.eq(1),
@@ -1886,7 +1889,7 @@ class UsbSimpleFifo(Module, AutoCSR):
         self.submodules.rx = rx = ClockDomainsRenamer("usb_48")(
             RxPacketSimple(iobuf.usb_p_rx, iobuf.usb_n_rx))
 
-        obuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        obuf = fifo.AsyncFIFOBuffered(width=8, depth=16)
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(obuf)
 
         # USB side (writing)
@@ -1911,7 +1914,7 @@ class UsbSimpleFifo(Module, AutoCSR):
         self.submodules.tx = tx = ClockDomainsRenamer("usb_48")(
             TxPacketSimple(i_bit_strobe = rx.o_bit_strobe))
 
-        ibuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        ibuf = fifo.AsyncFIFOBuffered(width=8, depth=16)
         self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(ibuf)
 
         # System side (writing)
