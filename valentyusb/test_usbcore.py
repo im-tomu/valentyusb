@@ -2058,8 +2058,8 @@ def pp_packet(p):
     KKKK
     JJJJ
     KKKK
-    JJJJ ERROR!
-    KKKK ERROR!
+    JJJJ
+    KKKK
     JJJJ END
     >>> print(pp_packet(wrap_packet(sof_packet(12))))
     ----
@@ -2137,6 +2137,7 @@ def pp_packet(p):
             self.i += 1
             return False
 
+
     class Sync:
         def __init__(self):
             self.i = 0
@@ -2147,6 +2148,7 @@ def pp_packet(p):
             self.i += 1
             output.extend([chunk, ' %i Sync\n' % self.i])
             return True
+
 
     class Pid:
         def __init__(self):
@@ -2168,13 +2170,17 @@ def pp_packet(p):
                 if nrzi(encode_pid(p.value)) == pid_encoded:
                     self.type = p
 
+            if self.type is None:
+                self.type = 'ERROR'
+
             for i, chunk in enumerate(self.pid_chunks):
-                if self.type is not None and i == 0:
-                    output.extend([chunk, ' %i PID (%s)\n' % (i+1, self.type)])
+                if i == 0:
+                    output.extend([chunk, ' %i PID (%s)\n' % (1, self.type)])
                 else:
                     output.extend([chunk, ' %i PID\n' % (i+1,)])
 
             return True
+
 
     class SOF:
         def __init__(self, pid):
@@ -2183,9 +2189,6 @@ def pp_packet(p):
             self.state = 'FRAME NUMBER'
 
         def __call__(self, chunk):
-            if len(chunks) < 3:
-                return False
-
             if self.pid.type != PID.SOF:
                 return False
 
@@ -2205,6 +2208,10 @@ def pp_packet(p):
 
             return True
 
+        def finish(self):
+            pass
+
+
     class Data:
         def __init__(self, pid):
             self.done = False
@@ -2213,20 +2220,6 @@ def pp_packet(p):
 
         def __call__(self, chunk):
             if self.pid.type not in (PID.DATA0, PID.DATA1):
-                return False
-
-            if len(chunks) < 3:
-                if output.count(None) == 0:
-                    return False
-
-                assert output.count(None) == len(self.last16), (output.count(None), len(self.last16))
-                if len(self.last16) == 16:
-                    for i, chunk in enumerate(self.last16):
-                        self.patch(chunk+' %2i CRC16\n' % (i+1,))
-                else:
-                    for i, chunk in enumerate(self.last16):
-                        self.patch(chunk+'\n')
-                assert output.count(None) == 0
                 return False
 
             self.last16.append(chunk)
@@ -2242,6 +2235,19 @@ def pp_packet(p):
             p = output.index(None)
             output[p] = s
 
+        def finish(self):
+            if output.count(None) == 0:
+                return False
+
+            assert output.count(None) == len(self.last16), (output.count(None), len(self.last16))
+            if len(self.last16) == 16:
+                for i, chunk in enumerate(self.last16):
+                    self.patch(chunk+' %2i CRC16\n' % (i+1,))
+            else:
+                for i, chunk in enumerate(self.last16):
+                    self.patch(chunk+'\n')
+            assert output.count(None) == 0
+
 
     class Token:
         def __init__(self, pid):
@@ -2250,9 +2256,6 @@ def pp_packet(p):
             self.state = 'ADDRESS'
 
         def __call__(self, chunk):
-            if len(chunks) < 3:
-                return False
-
             if self.pid.type in (PID.DATA0, PID.DATA1):
                 return False
 
@@ -2278,6 +2281,7 @@ def pp_packet(p):
 
             return True
 
+
     class End:
         def __init__(self):
             pass
@@ -2297,10 +2301,10 @@ def pp_packet(p):
     printers.append(Sync())
     pid_printer = Pid()
     printers.append(pid_printer)
+    printers.append(End())
     printers.append(SOF(pid_printer))
     printers.append(Data(pid_printer))
     printers.append(Token(pid_printer))
-    printers.append(End())
 
     while len(chunks) > 0:
         chunk = chunks.pop(0)
@@ -2309,6 +2313,11 @@ def pp_packet(p):
                 break
         else:
             output.extend([chunk, ' ERROR!\n'])
+
+    for p in printers:
+        if not hasattr(p, "finish"):
+            continue
+        p.finish()
 
     assert output.count(None) == 0, output
     output[-1] = output[-1][:-1]
@@ -2372,6 +2381,10 @@ def squash_packet(data):
 #
 #
 
+import tempfile
+import subprocess
+
+
 def grouper(n, iterable, pad=None):
     """Group iterable into multiples of n (with optional padding).
 
@@ -2384,6 +2397,25 @@ def grouper(n, iterable, pad=None):
 
 class CommonUsbTestCase(TestCase):
     maxDiff=None
+
+    def assertMultiLineEqualSideBySide(self, data1, data2, msg):
+        if data1 == data2:
+            return
+        f1 = tempfile.NamedTemporaryFile()
+        f1.write(data1.encode('utf-8'))
+        f1.flush()
+
+        f2 = tempfile.NamedTemporaryFile()
+        f2.write(data2.encode('utf-8'))
+        f2.flush()
+
+        p = subprocess.Popen(["sdiff", f1.name, f2.name], stdout=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        diff = stdout.decode('utf-8')
+
+        f1.close()
+        f2.close()
+        assert False, msg+'\n'+diff
 
     def ep_print(self, epaddr, msg, *args):
         print("ep(%i, %s): %s" % (
@@ -2464,8 +2496,7 @@ class CommonUsbTestCase(TestCase):
         # Check the packet received matches
         expected = pp_packet(wrap_packet(packet))
         actual = pp_packet(result)
-
-        self.assertMultiLineEqual(expected, actual, msg)
+        self.assertMultiLineEqualSideBySide(expected, actual, msg)
 
     # No expect_token_packet, as the host is the only one who generates tokens.
 

@@ -1252,7 +1252,7 @@ class TxBitstuffer(Module):
         self.o_oe = Signal(1)
 
         self.comb += [
-            self.o_stall.eq(stuff_bit)
+            self.o_stall.eq(stuff_bit & self.o_oe)
         ]
 
         # flop outputs
@@ -1293,7 +1293,7 @@ class TxNrziEncoder(Module):
 
     i_se0 : Signal(1)
         Overrides value of o_data when asserted and indicates that SE0 state
-        shoulde be asserted on USB. Qualified by o_valid.
+        should be asserted on USB. Qualified by o_valid.
 
     Output Ports
     ------------
@@ -1415,8 +1415,10 @@ class TxPacketSimple(Module):
         bitstuff_stall = Signal()
 
         bit_strobe = Signal()
+        have_data = Signal()
         self.comb += [
             bit_strobe.eq(i_bit_strobe & ~bitstuff_stall),
+            have_data.eq(self.i_more_data | ~empty),
         ]
 
         self.submodules.shifter = shifter = TxShifter(
@@ -1432,11 +1434,12 @@ class TxPacketSimple(Module):
         self.pkt_end = Signal()
         self.pkt_active = Signal()
         self.pkt_start = Signal()
+        self.pkt_se0 = Signal()
 
         self.submodules.pkt = pkt = FSM()
         pkt.act("IDLE",
             If(bit_strobe,
-                If(self.i_more_data,
+                If(have_data,
                     self.pkt_start.eq(1),
                     self.pkt_active.eq(1),
                     NextState("PKT_ACTIVE"),
@@ -1446,19 +1449,27 @@ class TxPacketSimple(Module):
         pkt.act("PKT_ACTIVE",
             self.pkt_active.eq(1),
             If(bit_strobe,
-                If(~self.i_more_data & shifter.o_empty,
+                If(~have_data,
                     self.pkt_active.eq(0),
                     self.pkt_end.eq(1),
-                    NextState("IDLE"),
+                    self.pkt_se0.eq(1),
+                    NextState("PKT_SE0"),
                 ),
+            ),
+        )
+
+        pkt.act("PKT_SE0",
+            self.pkt_se0.eq(1),
+            If(i_bit_strobe,
+                NextState("IDLE"),
             ),
         )
 
         self.submodules.bitstuffer = bitstuffer = TxBitstuffer(
             i_valid = i_bit_strobe,
-            i_oe = self.i_more_data,
+            i_oe = have_data,
             i_data = shifter.o_data,
-            i_se0 = self.pkt_end,
+            i_se0 = self.pkt_se0,
         )
         self.comb += [
              bitstuff_stall.eq(bitstuffer.o_stall)
@@ -1917,7 +1928,7 @@ class UsbSimpleFifo(Module, AutoCSR):
         self.comb += [
             tx.i_more_data.eq(self.ibuf.readable & self.arm.storage),
             tx.i_data.eq(self.ibuf.dout),
-            self.ibuf.re.eq(tx.shifter.o_empty & tx.pkt_active),
+            self.ibuf.re.eq(tx.shifter.o_empty & self.arm.storage),
         ]
 
         # ----------------------
