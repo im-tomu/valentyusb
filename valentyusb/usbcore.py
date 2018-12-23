@@ -13,358 +13,9 @@ from litex.soc.interconnect.csr import *
 
 from litex.soc.cores.gpio import GPIOOut
 
-###############################################################################
-###############################################################################
-###############################################################################
-######
-###### Physical Layer Receive Path
-######
-###############################################################################
-###############################################################################
-###############################################################################
-
-class RxClockDataRecovery(Module):
-    """
-    RxClockDataRecovery synchronizes the USB differential pair with the FPGAs
-    clocks, de-glitches the differential pair, and recovers the incoming clock
-    and data.
-
-    Input Ports
-    -----------
-    Input ports are passed in via the constructor.
-
-    usbp_raw : Signal(1)
-        Raw USB+ input from the FPGA IOs, no need to synchronize.
-
-    usbn_raw : Signal(1)
-        Raw USB- input from the FPGA IOs, no need to synchronize.
-
-    Output Ports
-    ------------
-    Output ports are data members of the module. All output ports are flopped.
-    The line_state_dj/dk/se0/se1 outputs are 1-hot encoded.
-
-    line_state_valid : Signal(1)
-        Asserted for one clock when the output line state is ready to be sampled.
-
-    line_state_dj : Signal(1)
-        Represents Full Speed J-state on the incoming USB data pair.
-        Qualify with line_state_valid.
-
-    line_state_dk : Signal(1)
-        Represents Full Speed K-state on the incoming USB data pair.
-        Qualify with line_state_valid.
-
-    line_state_se0 : Signal(1)
-        Represents SE0 on the incoming USB data pair.
-        Qualify with line_state_valid.
-
-    line_state_se1 : Signal(1)
-        Represents SE1 on the incoming USB data pair.
-        Qualify with line_state_valid.
-    """
-    def __init__(self, usbp_raw, usbn_raw):
-        #######################################################################
-        # Synchronize raw USB signals
-        #
-        # We need to synchronize the raw USB signals with the usb_48 clock
-        # domain.  MultiReg implements a multi-stage shift register that takes
-        # care of this for us.  Without MultiReg we would have metastability
-        # issues.
-        #
-        usbp = Signal()
-        usbn = Signal()
-
-        self.specials += cdc.MultiReg(usbp_raw, usbp, n=3)
-        self.specials += cdc.MultiReg(usbn_raw, usbn, n=3)
-
-
-        #######################################################################
-        # Line State Recovery State Machine
-        #
-        # The receive path doesn't use a differential receiver.  Because of
-        # this there is a chance that one of the differential pairs will appear
-        # to have changed to the new state while the other is still in the old
-        # state.  The following state machine detects transitions and waits an
-        # extra sampling clock before decoding the state on the differential
-        # pair.  This transition period # will only ever last for one clock as
-        # long as there is no noise on the line.  If there is enough noise on
-        # the line then the data may be corrupted and the packet will fail the
-        # data integrity checks.
-        #
-        self.submodules.lsr = lsr = FSM()
-
-        dpair = Signal(2)
-        self.comb += dpair.eq(Cat(usbn, usbp))
-
-        # output signals for use by the clock recovery stage
-        line_state_dt = Signal()
-        line_state_dj = Signal()
-        line_state_dk = Signal()
-        line_state_se0 = Signal()
-        line_state_se1 = Signal()
-
-        # If we are in a transition state, then we can sample the pair and
-        # move to the next corresponding line state.
-        lsr.act("DT",
-            line_state_dt.eq(1),
-            Case(dpair, {
-                0b10 : NextState("DJ"),
-                0b01 : NextState("DK"),
-                0b00 : NextState("SE0"),
-                0b11 : NextState("SE1")
-            })
-        )
-
-        # If we are in a valid line state and the value of the pair changes,
-        # then we need to move to the transition state.
-        lsr.act("DJ",  line_state_dj.eq(1),  If(dpair != 0b10, NextState("DT")))
-        lsr.act("DK",  line_state_dk.eq(1),  If(dpair != 0b01, NextState("DT")))
-        lsr.act("SE0", line_state_se0.eq(1), If(dpair != 0b00, NextState("DT")))
-        lsr.act("SE1", line_state_se1.eq(1), If(dpair != 0b11, NextState("DT")))
-
-
-        #######################################################################
-        # Clock and Data Recovery
-        #
-        # The DT state from the line state recovery state machine is used to align to
-        # transmit clock.  The line state is sampled in the middle of the bit time.
-        #
-        # Example of signal relationships
-        # -------------------------------
-        # line_state        DT  DJ  DJ  DJ  DT  DK  DK  DK  DK  DK  DK  DT  DJ  DJ  DJ
-        # line_state_valid  ________----____________----____________----________----____
-        # bit_phase         0   0   1   2   3   0   1   2   3   0   1   2   0   1   2
-        #
-
-        line_state_phase = Signal(2)
-
-        self.line_state_valid = Signal()
-        self.line_state_dj = Signal()
-        self.line_state_dk = Signal()
-        self.line_state_se0 = Signal()
-        self.line_state_se1 = Signal()
-
-        self.sync += [
-            self.line_state_valid.eq(line_state_phase == 1),
-
-            If(line_state_dt,
-                # re-align the phase with the incoming transition
-                line_state_phase.eq(0),
-
-                # make sure we never assert valid on a transition
-                self.line_state_valid.eq(0),
-            ).Else(
-                # keep tracking the clock by incrementing the phase
-                line_state_phase.eq(line_state_phase + 1)
-            ),
-
-            # flop all the outputs to help with timing
-            self.line_state_dj.eq(line_state_dj),
-            self.line_state_dk.eq(line_state_dk),
-            self.line_state_se0.eq(line_state_se0),
-            self.line_state_se1.eq(line_state_se1),
-        ]
-
-
-
-class RxNRZIDecoder(Module):
-    """
-    NRZI decode
-
-    In order to ensure there are enough bit transitions for a receiver to recover
-    the clock usb uses NRZI encoding.  This module processes the incoming
-    dj, dk, se0, and valid signals and decodes them to data values.  It
-    also pipelines the se0 signal and passes it through unmodified.
-
-    https://www.pjrc.com/teensy/beta/usb20.pdf, USB2 Spec, 7.1.8
-    https://en.wikipedia.org/wiki/Non-return-to-zero
-
-    Input Ports
-    -----------
-    Input ports are passed in via the constructor.
-
-    i_valid : Signal(1)
-        Qualifier for all of the input signals.  Indicates one bit of valid
-        data is present on the inputs.
-
-    i_dj : Signal(1)
-        Indicates the bus is currently in a Full-Speed J-state.
-        Qualified by valid.
-
-    i_dk : Signal(1)
-        Indicates the bus is currently in a Full-Speed K-state.
-        Qualified by valid.
-
-    i_se0 : Signal(1)
-        Indicates the bus is currently in a SE0 state.
-        Qualified by valid.
-
-    Output Ports
-    ------------
-    Output ports are data members of the module. All output ports are flopped.
-
-    o_valid : Signal(1)
-        Qualifier for all of the output signals. Indicates one bit of valid
-        data is present on the outputs.
-
-    o_data : Signal(1)
-        Decoded data bit from USB bus.
-        Qualified by valid.
-
-    o_se0 : Signal(1)
-        Indicates the bus is currently in a SE0 state.
-        Qualified by valid.
-    """
-
-    def __init__(self, i_valid, i_dj, i_dk, i_se0):
-        o_valid = Signal(1)
-        o_data = Signal(1)
-
-
-        # simple state machine decodes a JK transition as a '0' and no
-        # transition as a '1'.  se0 is ignored.
-        self.submodules.nrzi = nrzi = FSM()
-
-        nrzi.act("DJ",
-            If(i_valid,
-                o_valid.eq(1),
-
-                If(i_dj,
-                    o_data.eq(1)
-                ).Elif(i_dk,
-                    o_data.eq(0),
-                    NextState("DK")
-                )
-            )
-        )
-
-        nrzi.act("DK",
-            If(i_valid,
-                o_valid.eq(1),
-
-                If(i_dj,
-                    o_data.eq(0),
-                    NextState("DJ")
-                ).Elif(i_dk,
-                    o_data.eq(1)
-                )
-            )
-        )
-
-
-        # pass all of the outputs through a pipe stage
-        self.o_valid = Signal(1)
-        self.o_data = Signal(1)
-        self.o_se0 = Signal(1)
-
-        self.sync += [
-            self.o_se0.eq(i_se0),
-            self.o_valid.eq(o_valid),
-            self.o_data.eq(o_data),
-        ]
-
-
-
-class RxBitstuffRemover(Module):
-    """
-    Bitstuff Removal
-
-    Long sequences of 1's would cause the receiver to lose it's lock on the
-    transmitter's clock.  USB solves this with bitstuffing.  A '0' is stuffed
-    after every 6 consecutive 1's.  This extra bit is required to recover the
-    clock, but it should not be passed on to higher layers in the device.
-
-    https://www.pjrc.com/teensy/beta/usb20.pdf, USB2 Spec, 7.1.9
-    https://en.wikipedia.org/wiki/Bit_stuffing
-
-    Input Ports
-    ------------
-    Input ports are passed in via the constructor.
-
-    i_valid : Signal(1)
-        Qualifier for all of the output signals. Indicates one bit of valid
-        data is present on the outputs.
-
-    i_data : Signal(1)
-        Decoded data bit from USB bus.
-        Qualified by valid.
-
-    i_se0 : Signal(1)
-        Indicates the bus is currently in a SE0 state.
-        Qualified by valid.
-
-    Output Ports
-    ------------
-    Output ports are data members of the module. All output ports are flopped.
-
-    o_valid : Signal(1)
-        Qualifier for all of the output signals. Indicates one bit of valid
-        data is present on the outputs.
-
-    o_data : Signal(1)
-        Decoded data bit from USB bus.
-        Qualified by valid.
-
-    o_se0 : Signal(1)
-        Indicates the bus is currently in a SE0 state.
-        Qualified by valid.
-
-    o_bitstuff_error : Signal(1)
-        Indicates there has been a bitstuff error. A bitstuff error occurs
-        when there should be a stuffed '0' after 6 consecutive 1's; but instead
-        of a '0', there is an additional '1'.  This is normal during IDLE, but
-        should never happen within a packet.
-        Qualified by valid.
-    """
-
-    def __init__(self, i_valid, i_data, i_se0):
-        # This statemachine recognizes sequences of 6 bits and drops the 7th bit.
-        # The fsm implements a counter in a series of several states.  This is
-        # intentional to help absolutely minimize the levels of logic used.
-        self.submodules.stuff = stuff = FSM()
-
-        drop_bit = Signal(1)
-
-        for i in range(6):
-            stuff.act("D%d" % i,
-                If(i_valid,
-                    If(i_data,
-                        # Receiving '1' increments the bitstuff counter.
-                        NextState("D%d" % (i + 1))
-                    ).Else(
-                        # Receiving '0' resets the bitstuff counter.
-                        NextState("D0")
-                    )
-                )
-            )
-
-        stuff.act("D6",
-            drop_bit.eq(1),
-            If(i_valid,
-                # Reset the bitstuff counter, drop the data.
-                NextState("D0")
-            )
-        )
-
-        # pass all of the outputs through a pipe stage
-        self.o_valid = Signal(1)
-        self.o_data = Signal(1)
-        self.o_se0 = Signal(1)
-        self.o_bitstuff_error = Signal(1)
-
-        self.sync += [
-            self.o_se0.eq(i_se0),
-            self.o_valid.eq(i_valid & ~drop_bit),
-            self.o_data.eq(i_data),
-            self.o_bitstuff_error.eq(drop_bit & i_data)
-        ]
-
-
 
 class RxPacketDetect(Module):
-    """
-    Packet Detection
+    """Packet Detection
 
     Full Speed packets begin with the following sequence:
 
@@ -476,8 +127,7 @@ class RxPacketDetect(Module):
 
 
 class RxShifter(Module):
-    """
-    Shifter
+    """RxShifter
 
     A shifter is responsible for shifting in serial bits and presenting them
     as parallel data.  The shifter knows how many bits to shift and has
@@ -494,9 +144,6 @@ class RxShifter(Module):
     -----------
     Input ports are passed in via the constructor.
 
-    i_valid : Signal(1)
-        Qualifier for serial input data. Indicates one clock of data is valid.
-
     i_data : Signal(1)
         Serial input data. Qualified by i_valid.
 
@@ -512,53 +159,39 @@ class RxShifter(Module):
     o_output : Signal(width)
         Shifted in data.  Qualified by o_valid.
 
-    o_full : Signal(1)
-        Asserted while the register is full.
-
     o_put : Signal(1)
         Asserted for one clock once the register is full.
     """
-    def __init__(self, width, i_valid, i_data, i_reset):
-        # Instead of using a counter, we will use a sentinal bit in the shift
+    def __init__(self, width, i_data, i_reset):
+
+        self.i_data = Signal()
+        self.i_reset = Signal()
+
+        self.o_data = Signal(width)
+        self.o_put = Signal()
+
+        # Instead of using a counter, we will use a sentinel bit in the shift
         # register to indicate when it is full.
         shift_reg = Signal(width + 1)
-
-        self.o_full = Signal(1)
-
-        # the register is full once the top bit is '1'
-        self.comb += [
-            self.o_full.eq(shift_reg[0])
-        ]
 
         # shift valid incoming data in while not full
         self.sync += [
             If(i_reset,
                 shift_reg.eq(1 << width),
             ).Else(
-                If(i_valid & ~self.o_full,
-                    shift_reg.eq(Cat(shift_reg[1:width + 1], i_data))
-                )
-            )
+                shift_reg.eq(Cat(shift_reg[1:width + 1], i_data))
+            ),
+            self.o_put.eq(shift_reg[0:2] == 0b10)
         ]
-
-        self.o_output = Signal(width)
 
         self.comb += [
             self.o_output.eq(shift_reg[1:width + 1])
         ]
 
-        self.o_put = Signal(1)
-
-        self.sync += [
-            self.o_put.eq((shift_reg[0:2] == 0b10) & i_valid)
-        ]
-
-
 
 
 class RxCrcChecker(Module):
-    """
-    CRC Checker
+    """CRC Checker
 
     Checks the CRC of a serial stream of data.
 
@@ -585,10 +218,6 @@ class RxCrcChecker(Module):
     ------------
     Input ports are passed in via the constructor.
 
-    i_valid : Signal(1)
-        Qualifier for input data and se0 signals. Indicates one bit of valid
-        data is present on those inputs.
-
     i_data : Signal(1)
         Decoded data bit from USB bus.
         Qualified by valid.
@@ -601,9 +230,12 @@ class RxCrcChecker(Module):
     Output ports are data members of the module. All outputs are flopped.
 
     o_crc_good : Signal()
-        Packet PID. Qualified with o_pkt_pid_good.
+        CRC value is good.
     """
-    def __init__(self, width, polynomial, initial, residual, i_valid, i_data, i_reset):
+    def __init__(self, width, polynomial, initial, residual):
+        self.i_data = Signal()
+        self.i_reset = Signal()
+
         crc = Signal(width)
         crc_good = Signal(1)
         crc_invert = Signal(1)
@@ -637,6 +269,57 @@ class RxCrcChecker(Module):
         self.sync += [
             self.o_crc_good.eq(crc_good)
         ]
+
+
+class RxPacketClocks(Module):
+    def __init__(self, usbp_raw, usbn_raw):
+
+        # 48MHz clock domain
+        self.submodules.clock_data_recovery = clock_data_recovery = ClockDomainsRenamer("usb_48")(
+            RxClockDataRecovery(usbp_raw, usbn_raw),
+        )
+
+        self.o_bit_strobe = clock_data_recovery.line_state_valid
+
+        self.raw_valid = clock_data_recovery.line_state_valid
+        self.raw_dj = clock_data_recovery.line_state_dj
+        self.raw_dk = clock_data_recovery.line_state_dk
+        self.raw_se0 = clock_data_recovery.line_state_se0
+
+        self.submodules.nrzi = nrzi = ClockDomainsRenamer("usb_48")(
+            RxNRZIDecoder(
+                i_valid = clock_data_recovery.line_state_valid,
+                i_dj = clock_data_recovery.line_state_dj,
+                i_dk = clock_data_recovery.line_state_dk,
+                i_se0 = clock_data_recovery.line_state_se0,
+            ),
+        )
+
+        bit_data = Signal()
+        self.specials += cdc.MultiReg(nrzi.o_data, bit_data, n=2)
+
+        # 12MHz clock domain
+        self.submodules.bitstuff = bitstuff = ClockDomainsRenamer("usb_12")(
+            RxBitstuffRemover(
+                i_valid = nrzi.o_valid & pkt_det.o_pkt_active,
+                i_data = bit_data,
+                i_se0 = nrzi.o_se0,
+            ),
+        )
+
+        reset = Signal()
+        self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(
+            RxShifter(
+                8,
+                i_valid = bitstuff.o_valid,
+                i_data = bitstuff.o_data,
+                i_reset = reset,
+            ),
+        )
+        self.comb += [
+            reset.eq(shifter.o_full | pkt_det.o_pkt_start),
+        ]
+        pass
 
 
 class RxPacketSimple(Module):
@@ -1058,15 +741,18 @@ class TxShifter(Module):
 
     """
     def __init__(self, width, i_put, i_shift, i_data):
-        shifter = Signal(width + 1, reset=0b1)
+        shifter = Signal(width)
+        pos = Signal(width+1, reset=0b1)
 
         empty = Signal(1)
         self.sync += [
             If(i_put,
-                shifter.eq(Cat(i_data[0:width], C(1, 1)))
+                shifter.eq(i_data),
+                pos.eq(1 << width),
             ).Elif(i_shift,
                 If(~empty,
-                    shifter.eq(shifter >> 1)
+                    pos.eq(pos >> 1),
+                    shifter.eq(shifter >> 1),
                 ),
             ),
         ]
@@ -1074,7 +760,7 @@ class TxShifter(Module):
         self.o_data = Signal(1)
 
         self.comb += [
-            empty.eq(shifter[0:width + 1] == C(1, width+1)),
+            empty.eq(pos[0]),
             self.o_data.eq(shifter[0]),
         ]
 
@@ -1252,7 +938,7 @@ class TxBitstuffer(Module):
         self.o_oe = Signal(1)
 
         self.comb += [
-            self.o_stall.eq(stuff_bit & self.o_oe)
+            self.o_stall.eq(stuff_bit)
         ]
 
         # flop outputs
@@ -1424,7 +1110,7 @@ class TxPacketSimple(Module):
         self.submodules.shifter = shifter = TxShifter(
             width = 8,
             i_put = self.i_more_data & empty,
-            i_shift = bit_strobe,
+            i_shift = bit_strobe, #i_bit_strobe & ~bitstuff_stall,
             i_data = self.i_data,
         )
         self.comb += [
@@ -1438,7 +1124,7 @@ class TxPacketSimple(Module):
 
         self.submodules.pkt = pkt = FSM()
         pkt.act("IDLE",
-            If(bit_strobe,
+            If(bit_strobe, #i_bit_strobe & ~bitstuff_stall,
                 If(have_data,
                     self.pkt_start.eq(1),
                     self.pkt_active.eq(1),
@@ -1448,7 +1134,7 @@ class TxPacketSimple(Module):
         )
         pkt.act("PKT_ACTIVE",
             self.pkt_active.eq(1),
-            If(bit_strobe,
+            If(bit_strobe, #i_bit_strobe & ~bitstuff_stall,
                 If(~have_data,
                     self.pkt_active.eq(0),
                     self.pkt_end.eq(1),
@@ -1886,7 +1572,7 @@ class UsbSimpleFifo(Module, AutoCSR):
         self.submodules.rx = rx = ClockDomainsRenamer("usb_48")(
             RxPacketSimple(iobuf.usb_p_rx, iobuf.usb_n_rx))
 
-        obuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        obuf = fifo.AsyncFIFOBuffered(width=8, depth=128)
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_48", "read": "sys"})(obuf)
 
         # USB side (writing)
@@ -1911,7 +1597,7 @@ class UsbSimpleFifo(Module, AutoCSR):
         self.submodules.tx = tx = ClockDomainsRenamer("usb_48")(
             TxPacketSimple(i_bit_strobe = rx.o_bit_strobe))
 
-        ibuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
+        ibuf = fifo.AsyncFIFOBuffered(width=8, depth=128)
         self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_48"})(ibuf)
 
         # System side (writing)
