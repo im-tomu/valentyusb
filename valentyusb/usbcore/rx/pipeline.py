@@ -21,15 +21,15 @@ class RxPipeline(Module):
         # 48MHz domain
         # Clock recovery
         self.o_bit_strobe = Signal()
-        self.submodules.clock_data_recovery = clock_data_recovery = ClockDomainsRenamer("usb_48")(
-            RxClockDataRecovery(self.i_usbp, self.i_usbn),
-        )
+        clock_data_recovery = RxClockDataRecovery(self.i_usbp, self.i_usbn)
+        self.submodules.clock_data_recovery = ClockDomainsRenamer("usb_48")(clock_data_recovery)
         self.comb += [
             self.o_bit_strobe.eq(clock_data_recovery.line_state_valid),
         ]
 
         # NRZI decoding
-        self.submodules.nrzi = nrzi = ClockDomainsRenamer("usb_48")(RxNRZIDecoder())
+        nrzi = RxNRZIDecoder()
+        self.submodules.nrzi = nrzi = ClockDomainsRenamer("usb_48")(nrzi)
         self.comb += [
             nrzi.i_valid.eq(self.o_bit_strobe),
             nrzi.i_dj.eq(clock_data_recovery.line_state_dj),
@@ -40,25 +40,29 @@ class RxPipeline(Module):
         # Cross the data from the 48MHz domain to the 12MHz domain
         bit_dat = Signal()
         bit_se0 = Signal()
-        self.specials += cdc.MultiReg(nrzi.o_data, bit_dat, odomain="usb_12", n=3)
-        self.specials += cdc.MultiReg(nrzi.o_se0,  bit_se0, odomain="usb_12", n=3)
+        cdc_dat = cdc.MultiReg(nrzi.o_data, bit_dat, odomain="usb_12", n=3)
+        cdc_se0 = cdc.MultiReg(nrzi.o_se0,  bit_se0, odomain="usb_12", n=3)
+        self.specials += [cdc_dat, cdc_se0]
 
         # The packet detector resets the reset of the pipeline.
         reset = Signal()
-        self.submodules.detect = detect = ClockDomainsRenamer("usb_12")(RxPacketDetect())
+        detect = RxPacketDetect()
+        self.submodules.detect = detect = ClockDomainsRenamer("usb_12")(detect)
         self.comb += [
             detect.i_data.eq(bit_dat),
             reset.eq(~detect.o_pkt_active),
             detect.reset.eq(bit_se0),
         ]
 
-        self.submodules.bitstuff = bitstuff = ClockDomainsRenamer("usb_12")(RxBitstuffRemover())
+        bitstuff = RxBitstuffRemover()
+        self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
         self.comb += [
             bitstuff.reset.eq(reset),
             bitstuff.i_data.eq(bit_dat),
         ]
 
-        self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(RxShifter(width=8))
+        shifter = RxShifter(width=8)
+        self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
             shifter.reset.eq(reset),
             shifter.i_data.eq(bit_dat),
