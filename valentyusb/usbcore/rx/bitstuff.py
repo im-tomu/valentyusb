@@ -32,10 +32,10 @@ class RxBitstuffRemover(Module):
     o_data : Signal(1)
         Decoded data bit from USB bus.
 
-    o_bitstuff_stall : Signal(1)
+    o_stall : Signal(1)
         Indicates the bit stuffer just removed an extra bit, so no data available.
 
-    o_bitstuff_error : Signal(1)
+    o_error : Signal(1)
         Indicates there has been a bitstuff error. A bitstuff error occurs
         when there should be a stuffed '0' after 6 consecutive 1's; but instead
         of a '0', there is an additional '1'.  This is normal during IDLE, but
@@ -73,13 +73,13 @@ class RxBitstuffRemover(Module):
 
         # pass all of the outputs through a pipe stage
         self.o_data = Signal()
-        self.o_bitstuff_error = Signal()
-        self.o_bitstuff_stall = Signal()
+        self.o_error = Signal()
+        self.o_stall = Signal()
 
         self.sync += [
             self.o_data.eq(self.i_data),
-            self.o_bitstuff_stall.eq(drop_bit),
-            self.o_bitstuff_error.eq(drop_bit & self.i_data),
+            self.o_stall.eq(drop_bit),
+            self.o_error.eq(drop_bit & self.i_data),
         ]
 
 
@@ -92,12 +92,12 @@ class TestRxBitstuffRemover(unittest.TestCase):
         def get_output(dut):
             # Read outputs
             o_data = yield dut.o_data
-            o_bitstuff_stall = yield dut.o_bitstuff_stall
-            o_bitstuff_error = yield dut.o_bitstuff_error
+            o_stall = yield dut.o_stall
+            o_error = yield dut.o_error
 
-            if o_bitstuff_error:
+            if o_error:
                 return 'e'
-            elif o_bitstuff_stall:
+            elif o_stall:
                 return's'
             else:
                 return str(o_data)
@@ -199,7 +199,7 @@ class TestRxBitstuffRemover(unittest.TestCase):
             with self.subTest(i=i, vector=vector):
                 dut = RxBitstuffRemover()
 
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_bitstuff_%d.vcd" % i)
+                run_simulation(dut, stim(**vector), vcd_name="vcd/test_%d.vcd" % i)
                 i += 1
 
 
