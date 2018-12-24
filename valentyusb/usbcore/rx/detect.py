@@ -73,7 +73,6 @@ class RxPacketDetect(Module):
             # once we get a '1', the packet is active
             If(self.i_data,
                 pkt_start.eq(1),
-                pkt_active.eq(1),
                 NextState("PKT_ACTIVE")
             )
         )
@@ -85,7 +84,7 @@ class RxPacketDetect(Module):
         # pass all of the outputs through a pipe stage
         self.o_pkt_start = Signal(1)
         self.o_pkt_active = Signal(1)
-        self.sync += [
+        self.comb += [
             self.o_pkt_start.eq(pkt_start),
             self.o_pkt_active.eq(pkt_active),
         ]

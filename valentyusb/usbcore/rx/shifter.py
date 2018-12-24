@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 from migen import *
-from migen.fhdl.decorators import ResetInserter
+from migen.fhdl.decorators import CEInserter, ResetInserter
 
 import unittest
 
-
+@CEInserter()
 @ResetInserter()
 class RxShifter(Module):
     """RX Shifter

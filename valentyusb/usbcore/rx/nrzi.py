@@ -102,9 +102,11 @@ class RxNRZIDecoder(Module):
         self.o_se0 = Signal(1)
 
         self.sync += [
-            self.o_se0.eq(self.i_se0),
             self.o_valid.eq(valid),
-            self.o_data.eq(data),
+            If(valid,
+                self.o_se0.eq(self.i_se0),
+                self.o_data.eq(data),
+            ),
         ]
 
 
