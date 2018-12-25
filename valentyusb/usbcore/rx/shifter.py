@@ -40,6 +40,7 @@ class RxShifter(Module):
     """
     def __init__(self, width):
         self.i_data = Signal()
+        self.i_data = Signal()
 
         self.o_data = Signal(width)
         self.o_put = Signal()
