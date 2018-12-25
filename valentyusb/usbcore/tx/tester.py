@@ -2,6 +2,7 @@
 
 from migen import *
 
+MIGEN_SIGNALS = ("reset", "ce")
 
 def create_tester(dut_type, **def_args):
     def run(self, **test_args):
@@ -14,7 +15,7 @@ def create_tester(dut_type, **def_args):
 
         # parse tester definition
         for key in def_args:
-            if not key.startswith("i_") and not key.startswith("o_"):
+            if not key.startswith("i_") and not key.startswith("o_") and key not in MIGEN_SIGNALS:
                 self.params.add(key)
 
         # create dut
@@ -25,7 +26,7 @@ def create_tester(dut_type, **def_args):
 
         # gather signal
         for key in def_args:
-            if key.startswith("i_"):
+            if key.startswith("i_") or key in MIGEN_SIGNALS:
                 self.inputs[key] = getattr(dut, key)
             elif key.startswith("o_"):
                 self.outputs[key] = getattr(dut, key)
