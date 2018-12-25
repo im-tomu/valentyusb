@@ -7,7 +7,7 @@ from migen import *
 from .tester import module_tester
 
 
-class TxNrziEncoder(Module):
+class TxNRZIEncoder(Module):
     """
     NRZI Encode
 
@@ -151,7 +151,7 @@ class TxNrziEncoder(Module):
 
 
 @module_tester(
-    TxNrziEncoder,
+    TxNRZIEncoder,
 
     i_valid     = (1,),
     i_oe        = (1,),
@@ -162,17 +162,17 @@ class TxNrziEncoder(Module):
     o_usbn      = (1,),
     o_oe        = (1,)
 )
-class TestTxNrziEncoder(unittest.TestCase):
+class TestTxNRZIEncoder(unittest.TestCase):
     def test_setup_token(self):
         self.do(
-            i_valid = "_--------------------------------------",
-            i_oe    = "_----------------------------------____",
-            i_data  = "_0000000110110100000000000000100000____",
-            i_se0   = "_________________________________--____",
+            i_valid = "_|--------|--------|--------|--------|------",
+            i_oe    = "_|--------|--------|--------|--------|--____",
+            i_data  = "_|00000001|10110100|00000000|00001000|00____",
+            i_se0   = "_|________|________|________|________|--____",
 
-            o_oe    = "___-----------------------------------_",
-            o_usbp  = "   _-_-_-___---__-_-_-_-_-_-_-__-_-__- ",
-            o_usbn  = "   -_-_-_---___--_-_-_-_-_-_-_--_-____ ",
+            o_oe    = "___|--------|--------|--------|--------|---_",
+            o_usbp  = "---|_-_-_-__|_---__-_|-_-_-_-_|-_-__-_-|__- ",
+            o_usbn  = "___|-_-_-_--|-___--_-|_-_-_-_-|_-_--_-_|___ ",
         )
 
 

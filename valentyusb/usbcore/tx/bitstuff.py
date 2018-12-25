@@ -4,9 +4,12 @@ import unittest
 
 from migen import *
 
+from migen.fhdl.decorators import CEInserter, ResetInserter
+
 from .tester import module_tester
 
 
+@ResetInserter()
 class TxBitstuffer(Module):
     """
     Bitstuff Insertion

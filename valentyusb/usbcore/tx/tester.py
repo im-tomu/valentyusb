@@ -68,30 +68,53 @@ def create_tester(dut_type, **def_args):
             for signal_name in self.outputs.keys():
                 actual_output[signal_name] = ""
 
+            j = 0
             for i in range(clocks):
                 for input_signal in self.inputs.keys():
-                    yield self.inputs[input_signal].eq(decode(test_args[input_signal][i]))
+                    v = test_args[input_signal][i]
+                    if v == '|':
+                        continue
+                    yield self.inputs[input_signal].eq(decode(v))
+                if v == '|':
+                    continue
 
                 yield
 
+                skip = True
+                while True:
+                    if test_args[list(self.outputs.keys())[0]][j] != '|':
+                        skip = False
+                    if not skip:
+                        break
+
+                    for output_signal in self.outputs.keys():
+                        actual_output[output_signal] += '|'
+                    j += 1
+
                 for output_signal in self.outputs.keys():
+                    assert len(actual_output[output_signal]) == j
+
                     actual_value = yield self.outputs[output_signal]
                     actual_output[output_signal] += str(actual_value)
 
+                    expected_value = test_args[output_signal][j]
+                    if expected_value == ' ':
+                        continue
+                    expected_value = decode(expected_value)
+                    actual_value = decode(actual_output[output_signal][j])
 
-                    if isinstance(test_args[output_signal], tuple):
-                        if test_args[output_signal][0][i] == '*':
-                            expected_value = decode(test_args[output_signal][1].pop(0))
+                    details = "\n"
+                    if expected_value != actual_value:
+                        details += " %s\n" % (output_signal, )
+                        details += "\n"
+                        details += "              Actual: %s\n" % (actual_output[output_signal])
+                        details += "            Expected: %s\n" % (test_args[output_signal])
+                        details += "                      " + (" " * j) + "^\n"
+                        details += to_waveform(actual_output)
+                    self.assertEqual(expected_value, actual_value, msg = ("%s:%s:%d" % (name, output_signal, j)) + details)
 
-                    elif test_args[output_signal] is not None:
-                        if test_args[output_signal][i] != ' ':
-                            expected_value = decode(test_args[output_signal][i])
-                            details = "\n"
-                            if actual_value != expected_value:
-                                details += "            Expected: %s\n" % (test_args[output_signal])
-                                details += "                      " + (" " * i) + "^\n"
-                                details += to_waveform(actual_output)
-                            self.assertEqual(actual_value, expected_value, msg = ("%s:%s:%d" % (name, output_signal, i)) + details)
+                j += 1
+
 
 
         # run simulation

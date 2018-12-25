@@ -77,24 +77,24 @@ def crc16(input_data):
 def nrzi(data, clock_width=4):
     """Converts string of 0s and 1s into NRZI encoded string.
 
-    >>> nrzi("000", 1)
-    'JKJ'
+    >>> nrzi("11 00000001", 1)
+    'JJ KJKJKJKK'
 
     It will do bit stuffing.
     >>> nrzi("1111111111", 1)
-    'KKKKKKJJJJJ'
+    'JJJJJJKKKKK'
 
     Support single ended zero
     >>> nrzi("1111111__", 1)
-    'KKKKKKJJ__'
+    'JJJJJJKK__'
 
     Support pre-encoded mixing.
     >>> nrzi("11kkj11__", 1)
-    'KKKKJJJ__'
+    'JJKKJJJ__'
 
     Supports wider clock widths
     >>> nrzi("101", 4)
-    'KKKKJJJJJJJJ'
+    'JJJJKKKKKKKK'
     """
     def toggle_state(state):
         if state == 'J':
@@ -103,7 +103,7 @@ def nrzi(data, clock_width=4):
             return 'J'
         return state
 
-    state = "K"
+    state = "J"
     output = ""
 
     stuffed = []
@@ -263,6 +263,28 @@ def sof_packet(frame):
     data = [frame >> 3, (frame & 0b111) << 5]
     data[-1] = data[-1] | crc5_sof(frame)
     return encode_pid(PID.SOF) + encode_data(data)
+
+
+def diff(value):
+    usbp = ""
+    usbn = ""
+    for i in range(len(value)):
+        v = value[i]
+        if v == ' ':
+            continue
+        elif v == '_':
+            # SE0 - both lines pulled low
+            usbp += "0"
+            usbn += "0"
+        elif v == 'J':
+            usbp += "1"
+            usbn += "0"
+        elif v == 'K':
+            usbp += "0"
+            usbn += "1"
+        else:
+            assert False, "Unknown value: %s" % v
+    return usbp, usbn
 
 
 if __name__ == "__main__":

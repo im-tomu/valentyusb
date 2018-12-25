@@ -6,7 +6,7 @@ from migen import *
 
 from migen.fhdl.decorators import CEInserter, ResetInserter
 
-from utils import b
+from utils.packet import b
 
 
 @CEInserter()
@@ -36,15 +36,17 @@ class TxShifter(Module):
     o_data : Signal(1)
         Serial data output.
 
-    o_data_strobe : Signal(1)
+    o_get : Signal(1)
         Asserted the cycle after the shifter loads in i_data.
 
     """
     def __init__(self, width):
         self.reset = Signal()
+
         self.i_data = Signal(width)
+        self.o_get = Signal(1)
+
         self.o_data = Signal(1)
-        self.o_data_strobe = Signal(1)
 
         shifter = Signal(width)
         pos = Signal(width, reset=0b1)
@@ -57,9 +59,9 @@ class TxShifter(Module):
             If(empty |self.reset,
                 shifter.eq(self.i_data),
                 pos.eq(1 << (width-1)),
-                self.o_data_strobe.eq(1),
+                self.o_get.eq(1),
             ).Else(
-                self.o_data_strobe.eq(0),
+                self.o_get.eq(0),
             )
         ]
         self.comb += [
@@ -71,82 +73,82 @@ class TestTxShifter(unittest.TestCase):
     def test_shifter(self):
         test_vectors = {
             "basic shift out 1": dict(
-                width  = 8,
-                data   = [b("00000001"), b("00000001"), b("00000001"), 0],
-                reset  = "-|________|________|________",
-                ce     = "-|--------|--------|--------",
-                output = "0|00000001|00000001|00000001",
-                strobe = "-|_______-|_______-|_______-",
+                width = 8,
+                data  = [b("00000001"), b("00000001"), b("00000001"), 0],
+                reset = "-|________|________|________",
+                ce    = "-|--------|--------|--------",
+                out   = "0|00000001|00000001|00000001",
+                get   = "-|_______-|_______-|_______-",
             ),
             "basic shift out 2": dict(
-                width  = 8,
-                data   = [b("10000000"), b("10000000"), b("10000000"), 0],
-                reset  = "-|________|________|________",
-                ce     = "-|--------|--------|--------",
-                output = "0|10000000|10000000|10000000",
-                strobe = "-|_______-|_______-|_______-",
+                width = 8,
+                data  = [b("10000000"), b("10000000"), b("10000000"), 0],
+                reset = "-|________|________|________",
+                ce    = "-|--------|--------|--------",
+                out   = "0|10000000|10000000|10000000",
+                get   = "-|_______-|_______-|_______-",
             ),
             "basic shift out 3": dict(
-                width  = 8,
-                data   = [b("01100110"), b("10000001"), b("10000000"), 0],
-                reset  = "-|________|________|________",
-                ce     = "-|--------|--------|--------",
-                output = "0|01100110|10000001|10000000",
-                strobe = "-|_______-|_______-|_______-",
+                width = 8,
+                data  = [b("01100110"), b("10000001"), b("10000000"), 0],
+                reset = "-|________|________|________",
+                ce    = "-|--------|--------|--------",
+                out   = "0|01100110|10000001|10000000",
+                get   = "-|_______-|_______-|_______-",
             ),
             "stall shift out 1": dict(
-                width  = 8,
-                data   = [b("00000001"), b("00000001"), b("00000001"), 0],
-                reset  = "-|_________|________|________",
-                ce     = "-|--_------|--------|--------",
-                output = "0|000000001|00000001|00000001",
-                strobe = "-|________-|_______-|_______-",
+                width = 8,
+                data  = [b("00000001"), b("00000001"), b("00000001"), 0],
+                reset = "-|_________|________|________",
+                ce    = "-|--_------|--------|--------",
+                out   = "0|000000001|00000001|00000001",
+                get   = "-|________-|_______-|_______-",
             ),
             "stall shift out 2": dict(
-                width  = 8,
-                data   = [b("10000000"), b("10000000"), b("10000000"), 0],
-                reset  = "-|_________|________|________",
-                ce     = "-|---_-----|--------|--------",
-                output = "0|100000000|10000000|10000000",
-                strobe = "-|________-|_______-|_______-",
+                width = 8,
+                data  = [b("10000000"), b("10000000"), b("10000000"), 0],
+                reset = "-|_________|________|________",
+                ce    = "-|---_-----|--------|--------",
+                out   = "0|100000000|10000000|10000000",
+                get   = "-|________-|_______-|_______-",
             ),
             "stall shift out 3": dict(
-                width  = 8,
-                data   = [b("01100110"), b("10000001"), b("10000000"), 0],
-                reset  = "-|_________|________|________",
-                ce     = "-|---_-----|--------|--------",
-                output = "0|011100110|10000001|10000000",
-                strobe = "-|________-|_______-|_______-",
+                width = 8,
+                data  = [b("01100110"), b("10000001"), b("10000000"), 0],
+                reset = "-|_________|________|________",
+                ce    = "-|---_-----|--------|--------",
+                out   = "0|011100110|10000001|10000000",
+                get   = "-|________-|_______-|_______-",
             ),
             "mutlistall shift out 1": dict(
-                width  = 8,
-                data   = [b("00000001"), b("00000001"), b("00000001"), 0],
-                reset  = "-|___________|_________|_________",
-                ce     = "-|--___------|--------_|----_----",
-                output = "0|00000000001|000000011|000000001",
-                strobe = "-|__________-|_______--|________-",
+                width = 8,
+                data  = [b("00000001"), b("00000001"), b("00000001"), 0],
+                reset = "-|___________|_________|_________",
+                ce    = "-|--___------|--------_|----_----",
+                out   = "0|00000000001|000000011|000000001",
+                get   = "-|__________-|_______--|________-",
             ),
             "mutlistall shift out 2": dict(
-                width  = 8,
-                data   = [b("10000000"), b("10000000"), b("10000000"), 0],
-                reset  = "-|____________|________|__________",
-                ce     = "-|---____-----|--------|-_----_---",
-                output = "0|100000000000|10000000|1100000000",
-                strobe = "-|___________-|_______-|_________-",
+                width = 8,
+                data  = [b("10000000"), b("10000000"), b("10000000"), 0],
+                reset = "-|____________|________|__________",
+                ce    = "-|---____-----|--------|-_----_---",
+                out   = "0|100000000000|10000000|1100000000",
+                get   = "-|___________-|_______-|_________-",
             ),
             "mutlistall shift out 3": dict(
-                width  = 8,
-                data   = [b("01100110"), b("10000001"), b("10000000"), 0],
-                reset  = "-|____________|___________|_________",
-                ce     = "-|---____-----|--------___|-_-------",
-                output = "0|011111100110|10000001111|110000000",
-                strobe = "-|___________-|_______----|________-",
+                width = 8,
+                data  = [b("01100110"), b("10000001"), b("10000000"), 0],
+                reset = "-|____________|___________|_________",
+                ce    = "-|---____-----|--------___|-_-------",
+                out   = "0|011111100110|10000001111|110000000",
+                get   = "-|___________-|_______----|________-",
             ),
         }
 
         def send(reset, ce, data):
-            output = ""
-            strobe = ""
+            out = ""
+            get = ""
 
             yield dut.i_data.eq(data.pop(0))
             for i in range(len(ce)+1):
@@ -161,29 +163,29 @@ class TestTxShifter(unittest.TestCase):
                 if i < 1:
                     continue
 
-                output += str((yield dut.o_data))
-                o_strobe = yield dut.o_data_strobe
-                strobe += {
+                out += str((yield dut.o_data))
+                o_get = yield dut.o_get
+                get += {
                     0: "_",
                     1: "-",
-                }[o_strobe]
+                }[o_get]
 
-                if o_strobe:
+                if o_get:
                     if data:
                         yield dut.i_data.eq(data.pop(0))
                     else:
                         yield dut.i_data.eq(0)
 
                 if ce[i-1] == "|":
-                    output += "|"
-                    strobe += "|"
+                    out += "|"
+                    get += "|"
 
-            return output, strobe
+            return out   , get
 
-        def stim(width, data, reset, ce, output, strobe):
-            actual_output, actual_strobe = yield from send(reset, ce, data)
-            self.assertSequenceEqual(output, actual_output)
-            self.assertSequenceEqual(strobe, actual_strobe)
+        def stim(width, data, reset, ce, out   , get):
+            actual_out, actual_get = yield from send(reset, ce, data)
+            self.assertSequenceEqual(out, actual_out)
+            self.assertSequenceEqual(get, actual_get)
 
         for name, vector in sorted(test_vectors.items()):
             with self.subTest(name=name, vector=vector):
