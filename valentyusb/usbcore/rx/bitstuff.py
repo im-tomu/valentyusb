@@ -199,7 +199,7 @@ class TestRxBitstuffRemover(unittest.TestCase):
             with self.subTest(i=i, vector=vector):
                 dut = RxBitstuffRemover()
 
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_%d.vcd" % i)
+                run_simulation(dut, stim(**vector), vcd_name="vcd/test_bitstuff_%d.vcd" % i)
                 i += 1
 
 
