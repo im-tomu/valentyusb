@@ -10,7 +10,7 @@ from .clock import RxClockDataRecovery
 from .detect import RxPacketDetect
 from .nrzi import RxNRZIDecoder
 from .shifter import RxShifter
-from utils import b, nrzi
+from utils.packet import b, nrzi
 
 
 class RxPipeline(Module):
