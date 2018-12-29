@@ -56,7 +56,7 @@ class TxShifter(Module):
             self.o_data.eq(shifter[0]),
             pos.eq(pos >> 1),
             shifter.eq(shifter >> 1),
-            If(empty |self.reset,
+            If(empty | self.reset,
                 shifter.eq(self.i_data),
                 pos.eq(1 << (width-1)),
                 self.o_get.eq(1),

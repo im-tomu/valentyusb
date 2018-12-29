@@ -54,7 +54,6 @@ class TxNRZIEncoder(Module):
         self.i_valid = Signal()
         self.i_oe = Signal()
         self.i_data = Signal()
-        self.i_se0 = Signal()
 
         # Simple state machine to perform NRZI encoding.
         self.submodules.nrzi = nrzi = FSM()
@@ -85,8 +84,8 @@ class TxNRZIEncoder(Module):
             oe.eq(1),
 
             If(self.i_valid,
-                If(self.i_se0,
-                    NextState("SE0")
+                If(~self.i_oe,
+                    NextState("SE0A")
                 ).Elif(self.i_data,
                     NextState("DJ")
                 ).Else(
@@ -102,8 +101,8 @@ class TxNRZIEncoder(Module):
             oe.eq(1),
 
             If(self.i_valid,
-                If(self.i_se0,
-                    NextState("SE0")
+                If(~self.i_oe,
+                    NextState("SE0A")
                 ).Elif(self.i_data,
                     NextState("DK")
                 ).Else(
@@ -112,18 +111,24 @@ class TxNRZIEncoder(Module):
             )
         )
 
-        # the output line is in SE0 state
-        nrzi.act("SE0",
+        # first bit of the SE0 state
+        nrzi.act("SE0A",
             usbp.eq(0),
             usbn.eq(0),
             oe.eq(1),
 
             If(self.i_valid,
-                If(self.i_se0,
-                    NextState("SE0")
-                ).Else(
-                    NextState("EOPJ")
-                )
+                NextState("SE0B")
+            )
+        )
+        # second bit of the SE0 state
+        nrzi.act("SE0B",
+            usbp.eq(0),
+            usbn.eq(0),
+            oe.eq(1),
+
+            If(self.i_valid,
+                NextState("EOPJ")
             )
         )
 
@@ -156,7 +161,6 @@ class TxNRZIEncoder(Module):
     i_valid     = (1,),
     i_oe        = (1,),
     i_data      = (1,),
-    i_se0       = (1,),
 
     o_usbp      = (1,),
     o_usbn      = (1,),
@@ -165,14 +169,14 @@ class TxNRZIEncoder(Module):
 class TestTxNRZIEncoder(unittest.TestCase):
     def test_setup_token(self):
         self.do(
-            i_valid = "_|--------|--------|--------|--------|------",
-            i_oe    = "_|--------|--------|--------|--------|--____",
-            i_data  = "_|00000001|10110100|00000000|00001000|00____",
-            i_se0   = "_|________|________|________|________|--____",
+            i_valid = "_|--------|--------|--------|--------|--------",
+            i_oe    = "_|--------|--------|--------|--------|--______",
+            i_data  = "_|00000001|10110100|00000000|00001000|00______",
 
-            o_oe    = "___|--------|--------|--------|--------|---_",
-            o_usbp  = "---|_-_-_-__|_---__-_|-_-_-_-_|-_-__-_-|__- ",
-            o_usbn  = "___|-_-_-_--|-___--_-|_-_-_-_-|_-_--_-_|___ ",
+            #          XXX|KJKJKJKK|KJJJKKJK|JKJKJKJK|JKJKKJKJ|KJ00JX
+            o_oe    = "___|--------|--------|--------|--------|-----_",
+            o_usbp  = "   |_-_-_-__|_---__-_|-_-_-_-_|-_-__-_-|_-__- ",
+            o_usbn  = "   |-_-_-_--|-___--_-|_-_-_-_-|_-_--_-_|-____ ",
         )
 
 
