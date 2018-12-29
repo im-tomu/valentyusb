@@ -255,7 +255,11 @@ class TestRxPipeline(unittest.TestCase):
             with self.subTest(name=name):
                 fname = name.replace(" ","_")
                 dut = RxPipeline()
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_decode_%s.vcd" % fname, clocks={"sys": 10, "usb_48": 40, "usb_12": 160})
+                run_simulation(
+                    dut, stim(**vector),
+                    vcd_name="vcd/test_decode_%s.vcd" % fname,
+                    clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
+                )
 
 
 if __name__ == "__main__":

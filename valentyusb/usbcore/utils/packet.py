@@ -30,7 +30,10 @@ def encode_data(data):
 
 
 def encode_pid(value):
-    return encode_data([value | ((0b1111 ^ value) << 4)])
+    if not isinstance(value, PID):
+        value = PID(value)
+    assert isinstance(value, PID), repr(value)
+    return encode_data([value.byte()])
 
 
 # width=5 poly=0x05 init=0x1f refin=true refout=true xorout=0x1f check=0x19 residue=0x06 name="CRC-5/USB"

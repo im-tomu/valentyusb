@@ -9,6 +9,7 @@ from migen.fhdl.decorators import CEInserter, ResetInserter
 from ..utils.packet import b
 
 
+@ResetInserter()
 @CEInserter()
 class TxShifter(Module):
     """Transmit Shifter
@@ -41,10 +42,9 @@ class TxShifter(Module):
 
     """
     def __init__(self, width):
-        self.reset = Signal()
-
         self.i_data = Signal(width)
         self.o_get = Signal(1)
+        self.o_empty = Signal(1)
 
         self.o_data = Signal(1)
 
@@ -56,16 +56,15 @@ class TxShifter(Module):
             self.o_data.eq(shifter[0]),
             pos.eq(pos >> 1),
             shifter.eq(shifter >> 1),
-            If(empty | self.reset,
+            If(empty,
                 shifter.eq(self.i_data),
                 pos.eq(1 << (width-1)),
-                self.o_get.eq(1),
-            ).Else(
-                self.o_get.eq(0),
-            )
+            ),
+            self.o_get.eq(empty),
         ]
         self.comb += [
             empty.eq(pos[0]),
+            self.o_empty.eq(empty),
         ]
 
 

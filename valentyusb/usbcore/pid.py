@@ -2,8 +2,27 @@
 
 from enum import IntEnum
 
+
 class PID(IntEnum):
     # USB Packet IDs
+    """
+    >>> bin(PID.SETUP.value)
+    '0b1101'
+    >>> PID.SETUP.encode()
+    'KKKKJJJJJJJJJJJJKKKKKKKKJJJJKKKK'
+
+    >>> for p in PID:
+    ...    print("%-10s" % p, "%x" % p.value, "%2x" % p.byte(), p.encode(1))
+    PID.SETUP  d 2d KJJJKKJK
+    PID.OUT    1 e1 KJKJKKKK
+    PID.IN     9 69 KJKKJJJK
+    PID.SOF    5 a5 KJJKJJKK
+    PID.DATA0  3 c3 KKJKJKKK
+    PID.DATA1  b 4b KKJJKJJK
+    PID.ACK    2 d2 JJKJJKKK
+    PID.NAK    a 5a JJKKKJJK
+    PID.STALL  e 1e JJJJJKJK
+    """
 
     # Token pids
     SETUP   = 0b1101
@@ -19,6 +38,15 @@ class PID(IntEnum):
     ACK     = 0b0010
     NAK     = 0b1010
     STALL   = 0b1110
+
+    def byte(self):
+        v = self.value
+        return v | ((0b1111 ^ v) << 4)
+
+    def encode(self, cycles=4):
+        # Prevent cyclic imports by importing here...
+        from .utils.packet import nrzi, sync, encode_pid
+        return nrzi(sync()+encode_pid(self.value),cycles)[cycles*len(sync()):]
 
 
 class PIDTypes(IntEnum):

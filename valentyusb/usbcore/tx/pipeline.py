@@ -24,19 +24,15 @@ class TxPipeline(Module):
         self.o_usbn = Signal()
         self.o_oe = Signal()
 
-
         reset = Signal()
         stall = Signal()
-        self.comb += [
-            reset.eq(~self.i_oe),
-        ]
 
         # 12MHz domain
         shifter = TxShifter(width=8)
         self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
             shifter.i_data.eq(self.i_data_payload),
-            self.o_data_strobe.eq(shifter.o_get),
+            self.o_data_strobe.eq(shifter.o_get & self.i_oe),
 
             shifter.reset.eq(reset),
             shifter.ce.eq(~stall),
@@ -47,11 +43,20 @@ class TxPipeline(Module):
         i_oe_n1 = Signal()  # 1 cycle delay inside bit stuffer
         i_oe_n2 = Signal()  # Where does this delay come from?
         self.sync.usb_12 += [
-            i_oe_n1.eq(self.i_oe),
+#            reset.eq(~self.i_oe),
+            If(shifter.o_empty,
+                reset.eq(~self.i_oe),
+            ),
+            If(shifter.o_get,
+                i_oe_n1.eq(self.i_oe),
+            ),
             If(~stall,
                 reset_n1.eq(reset),
                 i_oe_n2.eq(i_oe_n1),
             ),
+        ]
+
+        self.comb += [
         ]
 
         bitstuff = TxBitstuffer()

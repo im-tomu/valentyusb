@@ -13,6 +13,7 @@ from ..io import FakeIoBuf
 from ..rx.pipeline import RxPipeline
 from ..tx.pipeline import TxPipeline
 
+from ..utils.packet import *
 from ..test.common import CommonUsbTestCase
 
 
@@ -37,6 +38,8 @@ class UsbUniFifo(Module, AutoCSR):
         self.comb += [
             self.obuf.din.eq(self.rx.o_data_payload),
             self.obuf.we.eq(self.rx.o_data_strobe),
+        ]
+        self.sync.usb_12 += [
             self.ev.rx.trigger.eq(self.rx.o_pkt_end),
         ]
 
@@ -69,9 +72,18 @@ class UsbUniFifo(Module, AutoCSR):
 
         # USB side (reading)
         self.comb += [
-            tx.i_oe.eq(self.ibuf.readable & self.arm.storage),
             tx.i_data_payload.eq(self.ibuf.dout),
             self.ibuf.re.eq(tx.o_data_strobe & self.arm.storage),
+        ]
+        self.sync.usb_12 += [
+            tx.i_oe.eq(self.ibuf.readable & self.arm.storage),
+        ]
+
+        # ----------------------
+        # USB 48MHz bit strobe
+        # ----------------------
+        self.comb += [
+            tx.i_bit_strobe.eq(rx.o_bit_strobe),
         ]
 
         # ----------------------
@@ -79,6 +91,8 @@ class UsbUniFifo(Module, AutoCSR):
         # ----------------------
         self.submodules.iobuf = iobuf
         self.comb += [
+            rx.i_usbp.eq(iobuf.usb_p_rx),
+            rx.i_usbn.eq(iobuf.usb_n_rx),
             iobuf.usb_tx_en.eq(tx.o_oe),
             iobuf.usb_p_tx.eq(tx.o_usbp),
             iobuf.usb_n_tx.eq(tx.o_usbn),
@@ -166,7 +180,12 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
 
         print()
         print("-"*10)
-        run_simulation(self.dut, padfront(), vcd_name="vcd/%s.vcd" % self.id(), clocks={"usb_48": 4, "sys": 4})
+        run_simulation(
+            self.dut, padfront(),
+            vcd_name="vcd/%s.vcd" % self.id(),
+            clocks={"sys": 4, "usb_48": 4, "usb_12": 16},
+        )
+        #    clocks={"usb_48": 4, "sys": 4})
         print("-"*10)
 
     def recv_packet(self):
@@ -216,6 +235,10 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
             yield
             yield
             yield
+
+        yield
+        yield
+        yield
 
         empty = yield from self.dut.ibuf_empty.read()
         self.assertFalse(empty)
@@ -295,6 +318,7 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
             if not pkt_data:
                 return
 
+            print("RECV_DATA:", [hex(b) for b in pkt_data])
             pid = decode_pid(pkt_data)
             print("RECV_DATA pid:", pid, "data:", pkt_data)
 

@@ -1,10 +1,35 @@
 #!/usr/bin/env python3
 
-from . import *
+from .packet import *
+from ..pid import *
 
 
 def pp_packet(p):
     """
+    >>> print(pp_packet(wrap_packet(handshake_packet(PID.ACK))))
+    ----
+    KKKK 1 Sync
+    JJJJ 2 Sync
+    KKKK 3 Sync
+    JJJJ 4 Sync
+    KKKK 5 Sync
+    JJJJ 6 Sync
+    KKKK 7 Sync
+    KKKK 8 Sync
+    ----
+    JJJJ 1 PID (PID.ACK)
+    JJJJ 2 PID
+    KKKK 3 PID
+    JJJJ 4 PID
+    JJJJ 5 PID
+    KKKK 6 PID
+    KKKK 7 PID
+    KKKK 8 PID
+    ----
+    ____ SE0
+    ____ SE0
+    JJJJ END
+
     >>> print(pp_packet(wrap_packet(token_packet(PID.SETUP, 0, 0))))
     ----
     KKKK 1 Sync
@@ -283,6 +308,10 @@ def pp_packet(p):
             self.pid_chunks = []
             self.type = None
 
+            self.encoded_pids = {}
+            for p in PID:
+                self.encoded_pids[p.encode()] = p
+
         def __call__(self, chunk):
             if self.done:
                 return False
@@ -292,13 +321,7 @@ def pp_packet(p):
                 return True
 
             self.done = True
-            pid_encoded = "".join(self.pid_chunks)
-            for p in PID:
-                if nrzi(encode_pid(p.value)) == pid_encoded:
-                    self.type = p
-
-            if self.type is None:
-                self.type = 'ERROR'
+            self.type = self.encoded_pids.get("".join(self.pid_chunks), 'ERROR')
 
             for i, chunk in enumerate(self.pid_chunks):
                 if i == 0:

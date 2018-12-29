@@ -3,9 +3,22 @@
 import unittest
 import tempfile
 import subprocess
+from itertools import zip_longest
 
-from ..pid import *
 from ..endpoint import *
+from ..pid import *
+from ..utils.packet import *
+from ..utils.pprint import pp_packet
+
+
+def grouper(n, iterable, pad=None):
+    """Group iterable into multiples of n (with optional padding).
+
+    >>> list(grouper(3, 'abcdefg', 'x'))
+    [('a', 'b', 'c'), ('d', 'e', 'f'), ('g', 'x', 'x')]
+
+    """
+    return zip_longest(*[iter(iterable)]*n, fillvalue=pad)
 
 
 class CommonUsbTestCase(unittest.TestCase):
@@ -57,7 +70,8 @@ class CommonUsbTestCase(unittest.TestCase):
             yield from self.dut.iobuf.recv(v)
             yield
         yield from self._update_internal_signals()
-        yield
+        for i in range(0, 100):
+            yield
 
     def send_token_packet(self, pid, addr, epaddr):
         epnum = EndpointType.epnum(epaddr)
