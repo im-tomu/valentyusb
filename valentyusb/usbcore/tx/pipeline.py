@@ -42,15 +42,16 @@ class TxPipeline(Module):
             shifter.ce.eq(~stall),
         ]
 
-        i_oe_n1 = Signal()
-        i_oe_n2 = Signal()
-        reset_n1 = Signal()
+        # FIXME: This is a horrible hack
+        reset_n1 = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
+        i_oe_n1 = Signal()  # 1 cycle delay inside bit stuffer
+        i_oe_n2 = Signal()  # Where does this delay come from?
         self.sync.usb_12 += [
-            #If(shifter.o_get,
-                i_oe_n2.eq(i_oe_n1),
-                i_oe_n1.eq(self.i_oe),
+            i_oe_n1.eq(self.i_oe),
+            If(~stall,
                 reset_n1.eq(reset),
-            #),
+                i_oe_n2.eq(i_oe_n1),
+            ),
         ]
 
         bitstuff = TxBitstuffer()
