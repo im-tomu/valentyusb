@@ -6,7 +6,7 @@ from migen import *
 
 from migen.fhdl.decorators import CEInserter, ResetInserter
 
-from utils.packet import b
+from ..utils.packet import b
 
 
 @CEInserter()

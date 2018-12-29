@@ -10,17 +10,24 @@ from .clock import RxClockDataRecovery
 from .detect import RxPacketDetect
 from .nrzi import RxNRZIDecoder
 from .shifter import RxShifter
-from utils.packet import b, nrzi
+from ..utils.packet import b, nrzi
 
 
 class RxPipeline(Module):
     def __init__(self):
+        # 12MHz USB alignment pulse in 48MHz clock domain
+        self.o_bit_strobe = Signal()
+
         self.i_usbp = Signal()
         self.i_usbn = Signal()
 
+        self.o_data_strobe = Signal()
+        self.o_data_payload = Signal(8)
+
+        self.o_pkt_end = Signal()
+
         # 48MHz domain
         # Clock recovery
-        self.o_bit_strobe = Signal()
         clock_data_recovery = RxClockDataRecovery(self.i_usbp, self.i_usbn)
         self.submodules.clock_data_recovery = ClockDomainsRenamer("usb_48")(clock_data_recovery)
         self.comb += [
@@ -61,6 +68,7 @@ class RxPipeline(Module):
             bitstuff.i_data.eq(bit_dat),
         ]
 
+        # 1bit->8bit (1byte) serial to parallel conversion
         shifter = RxShifter(width=8)
         self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
@@ -68,12 +76,14 @@ class RxPipeline(Module):
             shifter.i_data.eq(bit_dat),
             shifter.ce.eq(~bitstuff.o_stall),
         ]
-
-        self.o_data_strobe = Signal()
-        self.o_data_payload = Signal(8)
         self.comb += [
             self.o_data_strobe.eq(shifter.o_put),
             self.o_data_payload.eq(shifter.o_data[::-1]),
+        ]
+
+        # Packet ended signal
+        self.sync.usb_12 += [
+            self.o_pkt_end.eq(bit_se0),
         ]
 
 

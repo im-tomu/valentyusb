@@ -8,7 +8,7 @@ import unittest
 from .bitstuff import TxBitstuffer
 from .nrzi import TxNRZIEncoder
 from .shifter import TxShifter
-from utils.packet import b, nrzi, diff
+from ..utils.packet import b, nrzi, diff
 
 
 class TxPipeline(Module):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-from pid import PID
-from utils import CrcMoose3 as crc
+from ..pid import PID
+from . import CrcMoose3 as crc
 
 
 def b(s):
