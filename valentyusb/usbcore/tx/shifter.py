@@ -66,10 +66,6 @@ class TxShifter(Module):
             empty.eq(pos[0]),
             self.o_empty.eq(empty),
         ]
-        cnt = Signal(max=256)
-        self.sync += [
-            cnt.eq(cnt+1),
-        ]
 
 
 class TestTxShifter(unittest.TestCase):
