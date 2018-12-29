@@ -100,7 +100,7 @@ class UsbUniFifo(Module, AutoCSR):
         self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
 
 
-class TestUsbDeviceSimple(CommonUsbTestCase):
+class TestUsbUniFifo(CommonUsbTestCase):
 
     maxDiff=None
 
@@ -162,6 +162,8 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
             EndpointType.epaddr(2, EndpointType.OUT): Endpoint(),
             EndpointType.epaddr(2, EndpointType.IN):  Endpoint(),
         }
+        for epaddr in self.endpoints:
+            self.endpoints[epaddr].addr = epaddr
 
     def run_sim(self, stim):
         def padfront():
@@ -318,9 +320,9 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
             if not pkt_data:
                 return
 
-            print("RECV_DATA:", [hex(b) for b in pkt_data])
+            self.ep_print(self.ep.addr, "RECV_DATA: %r", [hex(b) for b in pkt_data])
             pid = decode_pid(pkt_data)
-            print("RECV_DATA pid:", pid, "data:", pkt_data)
+            self.ep_print(self.ep.addr, "RECV_DATA pid:%s data:%r", pid, pkt_data)
 
             if self.handshake == EndpointResponse.ACK:
                 self.assertIsNone(self.ep.data)
@@ -338,7 +340,7 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
                 EndpointResponse.NAK:   PID.NAK,
                 EndpointResponse.ACK:   PID.ACK,
             }[self.handshake]
-            print("SEND_HAND pid:", pid)
+            self.ep_print(self.ep.addr, "SEND_HAND pid:%s", pid)
             yield from self.send_packet(pid)
             if self.handshake == EndpointResponse.ACK:
                 self.ep.trigger = True
@@ -349,7 +351,7 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
             self.assertIsNotNone(self.ep)
             self.assertIsNotNone(self.ep.data)
             pid = [PID.DATA0, PID.DATA1][self.ep.dtb]
-            print("SEND_DATA pid:", pid, "data:", self.ep.data)
+            self.ep_print(self.ep.addr, "SEND_DATA pid:%s data:%r", pid, self.ep.data)
             yield from self.send_packet(pid, self.ep.data)
             self.ep.data = None
             yield from self.next_state("RECV_HAND")
@@ -361,7 +363,7 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
                 return
 
             pid = decode_pid(pkt_data)
-            print("RECV_HAND pid:", pid)
+            self.ep_print(self.ep.addr, "RECV_HAND pid:%s", pid)
             if pid != PID.ACK:
                 raise SystemError(pkt_data)
 
@@ -381,7 +383,7 @@ class TestUsbDeviceSimple(CommonUsbTestCase):
 
     def pending(self, epaddr):
         yield from self._update_internal_signals()
-        return self.endpoints[epaddr].pending
+        return self.endpoints[epaddr].pending or self.endpoints[epaddr].trigger
 
     def clear_pending(self, epaddr):
         # Can't clear pending while trigger is active.

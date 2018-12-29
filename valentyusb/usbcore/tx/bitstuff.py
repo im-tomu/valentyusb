@@ -77,7 +77,11 @@ class TxBitstuffer(Module):
 
         # flop outputs
         self.sync += [
-            self.o_data.eq(self.i_data & ~stuff_bit),
+            If(stuff_bit,
+                self.o_data.eq(0),
+            ).Else(
+                self.o_data.eq(self.i_data),
+            ),
         ]
 
 

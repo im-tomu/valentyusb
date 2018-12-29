@@ -32,25 +32,29 @@ class TxPipeline(Module):
         self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
             shifter.i_data.eq(self.i_data_payload),
-            self.o_data_strobe.eq(shifter.o_get & self.i_oe),
+            self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
 
             shifter.reset.eq(reset),
             shifter.ce.eq(~stall),
         ]
 
         # FIXME: This is a horrible hack
+        stalled_reset = Signal()
         reset_n1 = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
         i_oe_n1 = Signal()  # 1 cycle delay inside bit stuffer
         i_oe_n2 = Signal()  # Where does this delay come from?
         self.sync.usb_12 += [
 #            reset.eq(~self.i_oe),
             If(shifter.o_empty,
-                reset.eq(~self.i_oe),
-            ),
-            If(shifter.o_get,
-                i_oe_n1.eq(self.i_oe),
+                stalled_reset.eq(~self.i_oe),
             ),
             If(~stall,
+                reset.eq(stalled_reset),
+            ),
+            If(~stall,
+                If(shifter.o_get,
+                    i_oe_n1.eq(self.i_oe),
+                ),
                 reset_n1.eq(reset),
                 i_oe_n2.eq(i_oe_n1),
             ),
