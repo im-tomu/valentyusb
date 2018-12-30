@@ -76,9 +76,9 @@ class PIDTypes(IntEnum):
     (False, False, True)
     """
 
-    TOKEN     = 0b01
-    DATA      = 0b11
-    HANDSHAKE = 0b10
+    TOKEN     = 0b0001
+    DATA      = 0b0011
+    HANDSHAKE = 0b0010
 
     TYPE_MASK = 0b0011
 
