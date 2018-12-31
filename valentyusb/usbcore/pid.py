@@ -19,9 +19,16 @@ class PID(IntEnum):
     PID.SOF    5 a5 KJJKJJKK
     PID.DATA0  3 c3 KKJKJKKK
     PID.DATA1  b 4b KKJJKJJK
+    PID.DATA2  7 87 KKKJKJKK
+    PID.MDATA  f  f KKKKJKJK
     PID.ACK    2 d2 JJKJJKKK
     PID.NAK    a 5a JJKKKJJK
     PID.STALL  e 1e JJJJJKJK
+    PID.NYET   6 96 JJJKKJKK
+    PID.PRE    c 3c JKKKKKJK
+    PID.SPLIT  8 78 JKJJJJJK
+    PID.PING   4 b4 JKKJJJKK
+    PID.RESERVED 0 f0 JKJKKKKK
     """
 
     # Token pids
@@ -33,11 +40,23 @@ class PID(IntEnum):
     # Data pid
     DATA0   = 0b0011
     DATA1   = 0b1011
+    # USB2.0 only
+    DATA2   = 0b0111
+    MDATA   = 0b1111
 
     # Handshake pids
     ACK     = 0b0010
     NAK     = 0b1010
     STALL   = 0b1110
+    # USB2.0 only
+    NYET    = 0b0110
+
+    # USB2.0 only
+    PRE      = 0b1100
+    ERR      = 0b1100
+    SPLIT    = 0b1000
+    PING     = 0b0100
+    RESERVED = 0b0000
 
     def byte(self):
         v = self.value
@@ -64,7 +83,12 @@ class PIDTypes(IntEnum):
     >>> # Data PIDs
     >>> PIDTypes.token(PID.DATA0), PIDTypes.data(PID.DATA0), PIDTypes.handshake(PID.DATA0)
     (False, True, False)
-    >>> PIDTypes.token(PID.DATA0), PIDTypes.data(PID.DATA0), PIDTypes.handshake(PID.DATA0)
+    >>> PIDTypes.token(PID.DATA1), PIDTypes.data(PID.DATA1), PIDTypes.handshake(PID.DATA1)
+    (False, True, False)
+    >>> # USB2.0 Data PIDs
+    >>> PIDTypes.token(PID.DATA2), PIDTypes.data(PID.DATA2), PIDTypes.handshake(PID.DATA2)
+    (False, True, False)
+    >>> PIDTypes.token(PID.MDATA), PIDTypes.data(PID.MDATA), PIDTypes.handshake(PID.MDATA)
     (False, True, False)
 
     >>> # Handshake PIDs
@@ -74,11 +98,19 @@ class PIDTypes(IntEnum):
     (False, False, True)
     >>> PIDTypes.token(PID.STALL), PIDTypes.data(PID.STALL), PIDTypes.handshake(PID.STALL)
     (False, False, True)
+    >>> # USB2.0 Handshake PIDs
+    >>> PIDTypes.token(PID.NYET), PIDTypes.data(PID.NYET), PIDTypes.handshake(PID.NYET)
+    (False, False, True)
+
+    >>> # Special PIDs
+    >>> PIDTypes.token(PID.PRE), PIDTypes.data(PID.PRE), PIDTypes.handshake(PID.PRE)
+    (False, False, False)
     """
 
     TOKEN     = 0b0001
     DATA      = 0b0011
     HANDSHAKE = 0b0010
+    SPECIAL   = 0b0000
 
     TYPE_MASK = 0b0011
 
@@ -96,6 +128,11 @@ class PIDTypes(IntEnum):
     def handshake(p):
         assert isinstance(p, PID), repr(p)
         return (p & PIDTypes.TYPE_MASK) == PIDTypes.HANDSHAKE
+
+    @staticmethod
+    def special(p):
+        assert isinstance(p, PID), repr(p)
+        return (p & PIDTypes.TYPE_MASK) == PIDTypes.SPECIAL
 
 
 if __name__ == "__main__":
