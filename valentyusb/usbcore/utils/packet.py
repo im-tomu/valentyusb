@@ -71,13 +71,13 @@ def crc16(input_data):
     # CRC appended low byte first.
     reg = crc.CrcRegister(crc.CRC16_USB)
     for d in input_data:
-        assert d < 256, input_data
+        assert d <= 0xff, input_data
         reg.takeWord(d, 8)
     crc16 = reg.getFinalValue()
     return [crc16 & 0xff, (crc16 >> 8) & 0xff]
 
 
-def nrzi(data, clock_width=4):
+def nrzi(data, cycles=4, init="J"):
     """Converts string of 0s and 1s into NRZI encoded string.
 
     >>> nrzi("11 00000001", 1)
@@ -106,7 +106,7 @@ def nrzi(data, clock_width=4):
             return 'J'
         return state
 
-    state = "J"
+    state = init
     output = ""
 
     stuffed = []
@@ -136,7 +136,7 @@ def nrzi(data, clock_width=4):
         else:
             assert False, "Unknown bit %s in %r" % (bit, data)
 
-        output += (state * clock_width)
+        output += (state * cycles)
 
     return output
 
@@ -149,20 +149,20 @@ def eop():
     return "__j"
 
 
-def wrap_packet(data):
+def wrap_packet(data, cycles=4):
     """Add the sync + eop sections and do nrzi encoding.
 
-    >>> wrap_packet(handshake_packet(PID.ACK))
-    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKJJJJJJJJKKKKJJJJJJJJKKKKKKKKKKKK________JJJJ'
-    >>> wrap_packet(token_packet(PID.SETUP, 0, 0))
-    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKKKKKJJJJJJJJJJJJKKKKKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKJJJJKKKKJJJJ________JJJJ'
-    >>> wrap_packet(data_packet(PID.DATA0, [5, 6]))
-    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJJJJJKKKKJJJJKKKKJJJJKKKKJJJJJJJJJJJJKKKKJJJJKKKKJJJJKKKKKKKKJJJJJJJJJJJJJJJJJJJJJJJJKKKKKKKKJJJJJJJJJJJJJJJJKKKKJJJJKKKK________JJJJ'
-    >>> wrap_packet(data_packet(PID.DATA0, [0x1]))
-    'KKKKJJJJKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJKKKKJJJJKKKKKKKKKKKKKKKKJJJJKKKKJJJJKKKKJJJJKKKKJJJJJJJJKKKKJJJJKKKKJJJJKKKKJJJJJJJJJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKJJJJ________JJJJ'
+    >>> wrap_packet(handshake_packet(PID.ACK), cycles=1)
+    'KJKJKJKKJJKJJKKK__J'
+    >>> wrap_packet(token_packet(PID.SETUP, 0, 0), cycles=1)
+    'KJKJKJKKKJJJKKJKJKJKJKJKJKJKKJKJ__J'
+    >>> wrap_packet(data_packet(PID.DATA0, [5, 6]), cycles=1)
+    'KJKJKJKKKKJKJKKKKJJKJKJKJJJKJKJKKJJJJJJKKJJJJKJK__J'
+    >>> wrap_packet(data_packet(PID.DATA0, [0x1]), cycles=1)
+    'KJKJKJKKKKJKJKKKKJKJKJKJJKJKJKJJJJJJJKKKJ__J'
 
     """
-    return nrzi(sync() + data + eop())
+    return nrzi(sync() + data + eop(), cycles)
 
 
 def token_packet(pid, addr, endp):
@@ -269,6 +269,18 @@ def sof_packet(frame):
 
 
 def diff(value):
+    """Convert J/K encoding into bits for P/N diff pair.
+
+    >>> diff('KJ_')
+    ('010', '100')
+
+    >>> # Convert ACK handshake packet
+    >>> p,n = diff('KJKJKJKKJJKJJKKK__J')
+    >>> p
+    '0101010011011000001'
+    >>> n
+    '1010101100100111000'
+    """
     usbp = ""
     usbn = ""
     for i in range(len(value)):
@@ -288,6 +300,101 @@ def diff(value):
         else:
             assert False, "Unknown value: %s" % v
     return usbp, usbn
+
+
+def undiff(usbp, usbn):
+    """Convert P/N diff pair bits into J/K encoding.
+
+    >>> from usbcore.utils.pprint import pp_packet
+    >>> undiff(
+    ...   #EJK_
+    ...   '1100', # p
+    ...   '1010', # n
+    ... )
+    'EJK_'
+    >>> print(pp_packet(undiff(
+    ...   #KJKJKJKKJJKJJKKK__J - ACK handshake packet
+    ...   '0101010011011000001', # p
+    ...   '1010101100100111000', # n
+    ... ), cycles=1))
+    -
+    K 1 Sync
+    J 2 Sync
+    K 3 Sync
+    J 4 Sync
+    K 5 Sync
+    J 6 Sync
+    K 7 Sync
+    K 8 Sync
+    -
+    J 1 PID (PID.ACK)
+    J 2 PID
+    K 3 PID
+    J 4 PID
+    J 5 PID
+    K 6 PID
+    K 7 PID
+    K 8 PID
+    -
+    _ SE0
+    _ SE0
+    J END
+    >>> print(pp_packet(undiff(*diff(wrap_packet(sof_packet(0))))))
+    ----
+    KKKK 1 Sync
+    JJJJ 2 Sync
+    KKKK 3 Sync
+    JJJJ 4 Sync
+    KKKK 5 Sync
+    JJJJ 6 Sync
+    KKKK 7 Sync
+    KKKK 8 Sync
+    ----
+    KKKK 1 PID (PID.SOF)
+    JJJJ 2 PID
+    JJJJ 3 PID
+    KKKK 4 PID
+    JJJJ 5 PID
+    JJJJ 6 PID
+    KKKK 7 PID
+    KKKK 8 PID
+    ----
+    JJJJ  1 Frame #
+    KKKK  2 Frame #
+    JJJJ  3 Frame #
+    KKKK  4 Frame #
+    JJJJ  5 Frame #
+    KKKK  6 Frame #
+    JJJJ  7 Frame #
+    KKKK  8 Frame #
+    ----
+    JJJJ  9 Frame #
+    JJJJ 10 Frame #
+    KKKK 11 Frame #
+    JJJJ 1 CRC5
+    KKKK 2 CRC5
+    JJJJ 3 CRC5
+    KKKK 4 CRC5
+    JJJJ 5 CRC5
+    ----
+    ____ SE0
+    ____ SE0
+    JJJJ END
+    """
+    assert len(usbp) == len(usbn), "Sequence different lengths!\n%s\n%s\n" % (
+        usbp, usbn)
+    value = []
+    for i in range(0, len(usbp)):
+        p = usbp[i]
+        n = usbn[i]
+        value.append({
+            #pn
+            '00': '_',
+            '11': 'E',
+            '10': 'J',
+            '01': 'K',
+        }[p+n])
+    return "".join(value)
 
 
 if __name__ == "__main__":

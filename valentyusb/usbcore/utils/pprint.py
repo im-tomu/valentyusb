@@ -4,8 +4,31 @@ from .packet import *
 from ..pid import *
 
 
-def pp_packet(p):
+def pp_packet(p, cycles=4):
     """
+    >>> print(pp_packet(wrap_packet(handshake_packet(PID.ACK), cycles=1), cycles=1))
+    -
+    K 1 Sync
+    J 2 Sync
+    K 3 Sync
+    J 4 Sync
+    K 5 Sync
+    J 6 Sync
+    K 7 Sync
+    K 8 Sync
+    -
+    J 1 PID (PID.ACK)
+    J 2 PID
+    K 3 PID
+    J 4 PID
+    J 5 PID
+    K 6 PID
+    K 7 PID
+    K 8 PID
+    -
+    _ SE0
+    _ SE0
+    J END
     >>> print(pp_packet(wrap_packet(handshake_packet(PID.ACK))))
     ----
     KKKK 1 Sync
@@ -29,6 +52,29 @@ def pp_packet(p):
     ____ SE0
     ____ SE0
     JJJJ END
+    >>> print(pp_packet(wrap_packet(handshake_packet(PID.ACK), cycles=10), cycles=10))
+    ----------
+    KKKKKKKKKK 1 Sync
+    JJJJJJJJJJ 2 Sync
+    KKKKKKKKKK 3 Sync
+    JJJJJJJJJJ 4 Sync
+    KKKKKKKKKK 5 Sync
+    JJJJJJJJJJ 6 Sync
+    KKKKKKKKKK 7 Sync
+    KKKKKKKKKK 8 Sync
+    ----------
+    JJJJJJJJJJ 1 PID (PID.ACK)
+    JJJJJJJJJJ 2 PID
+    KKKKKKKKKK 3 PID
+    JJJJJJJJJJ 4 PID
+    JJJJJJJJJJ 5 PID
+    KKKKKKKKKK 6 PID
+    KKKKKKKKKK 7 PID
+    KKKKKKKKKK 8 PID
+    ----------
+    __________ SE0
+    __________ SE0
+    JJJJJJJJJJ END
 
     >>> print(pp_packet(wrap_packet(token_packet(PID.SETUP, 0, 0))))
     ----
@@ -258,7 +304,7 @@ def pp_packet(p):
     """
 
     output = []
-    chunks = [p[i:i+4] for i in range(0, len(p), 4)]
+    chunks = [p[i:i+cycles] for i in range(0, len(p), cycles)]
 
     class BitStuff:
         def __init__(self):
@@ -267,13 +313,13 @@ def pp_packet(p):
         def __call__(self, chunk):
             if self.i == 7:
                 self.i = 0
-                if chunk == 'KKKK':
+                if chunk[0] == 'K':
                     output.extend([chunk, '    Bitstuff\n'])
                 else:
                     output.extend([chunk, '    Bitstuff ERROR!\n'])
                 return True
 
-            if chunk == 'JJJJ':
+            if chunk[0] == 'J':
                 self.i += 1
             else:
                 self.i = 0
@@ -285,7 +331,7 @@ def pp_packet(p):
 
         def __call__(self, chunk):
             if self.i % 8 == 0:
-                output.append('----\n')
+                output.append('-'*cycles+'\n')
             self.i += 1
             return False
 
@@ -310,7 +356,7 @@ def pp_packet(p):
 
             self.encoded_pids = {}
             for p in PID:
-                self.encoded_pids[p.encode()] = p
+                self.encoded_pids[p.encode(cycles)] = p
 
         def __call__(self, chunk):
             if self.done:
@@ -437,7 +483,7 @@ def pp_packet(p):
             pass
 
         def __call__(self, chunk):
-            if chunk == '____':
+            if chunk == '_' * cycles:
                 output.extend([chunk, ' SE0\n'])
                 return True
             if len(chunks) == 0:
