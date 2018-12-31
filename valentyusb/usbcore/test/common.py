@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
 import unittest
-import tempfile
-import subprocess
+
 from itertools import zip_longest
 
 from ..endpoint import *
 from ..pid import *
+from ..utils.asserts import assertMultiLineEqualSideBySide
 from ..utils.packet import *
 from ..utils.pprint import pp_packet
 
@@ -25,23 +25,7 @@ class CommonUsbTestCase(unittest.TestCase):
     maxDiff=None
 
     def assertMultiLineEqualSideBySide(self, data1, data2, msg):
-        if data1 == data2:
-            return
-        f1 = tempfile.NamedTemporaryFile()
-        f1.write(data1.encode('utf-8'))
-        f1.flush()
-
-        f2 = tempfile.NamedTemporaryFile()
-        f2.write(data2.encode('utf-8'))
-        f2.flush()
-
-        p = subprocess.Popen(["sdiff", f1.name, f2.name], stdout=subprocess.PIPE)
-        stdout, stderr = p.communicate()
-        diff = stdout.decode('utf-8')
-
-        f1.close()
-        f2.close()
-        assert False, msg+'\n'+diff
+        return assertMultiLineEqualSideBySide(data1, data2, msg)
 
     def ep_print(self, epaddr, msg, *args):
         print("ep(%i, %s): %s" % (

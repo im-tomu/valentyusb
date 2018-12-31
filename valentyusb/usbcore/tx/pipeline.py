@@ -44,7 +44,6 @@ class TxPipeline(Module):
         i_oe_n1 = Signal()  # 1 cycle delay inside bit stuffer
         i_oe_n2 = Signal()  # Where does this delay come from?
         self.sync.usb_12 += [
-#            reset.eq(~self.i_oe),
             If(shifter.o_empty,
                 stalled_reset.eq(~self.i_oe),
             ),

@@ -6,10 +6,10 @@ from migen import *
 
 from litex.soc.cores.gpio import GPIOOut
 
-from .pid import PIDTypes
-from .rx.pipeline import RxPipeline
-from .tx.pipeline import TxPipeline
-from .utils.packet import *
+from ..pid import PIDTypes
+from ..rx.pipeline import RxPipeline
+from ..tx.pipeline import TxPipeline
+from ..utils.packet import *
 
 
 class TokenPacketDecode(Module):

@@ -6,7 +6,8 @@ from migen import *
 
 from migen.fhdl.decorators import CEInserter, ResetInserter
 
-
+from ..utils.packet import crc16, encode_data
+from .shifter import TxShifter
 from .tester import module_tester
 
 
@@ -38,7 +39,6 @@ class TxCrcGenerator(Module):
     ------------
     i_data : Signal(1)
         Serial data to generate CRC for.
-        Qualified by i_shift.
 
     Output Ports
     ------------
@@ -152,6 +152,105 @@ class TestTxCrcGenerator(unittest.TestCase):
             i_data     = " 00000001 01100000 00000000 10000000 00000000 00000000 00000010 00000000 ",
             o_crc      =("                                                                        *", [0x94dd])
         )
+
+
+class TxCrcPipeline(Module):
+    def __init__(self):
+        self.i_data_payload = Signal(8)
+        self.o_data_ack = Signal()
+        self.o_crc16 = Signal(16)
+
+        self.reset = reset = Signal()
+        reset_n1 = Signal()
+        reset_n2 = Signal()
+        self.ce = ce = Signal()
+
+        self.sync += [
+            reset_n2.eq(reset_n1),
+            reset_n1.eq(reset),
+        ]
+
+        self.submodules.shifter = shifter = TxShifter(width=8)
+        self.comb += [
+            shifter.i_data.eq(self.i_data_payload),
+            shifter.reset.eq(reset),
+            shifter.ce.eq(ce),
+            self.o_data_ack.eq(shifter.o_get),
+        ]
+
+        self.submodules.crc = crc_calc = TxCrcGenerator(
+            width      = 16,
+            polynomial = 0b1000000000000101,
+            initial    = 0b1111111111111111,
+        )
+        self.comb += [
+            crc_calc.i_data.eq(shifter.o_data),
+            crc_calc.reset.eq(reset_n2),
+            crc_calc.ce.eq(ce),
+            self.o_crc16.eq(crc_calc.o_crc),
+        ]
+
+
+class TestCrcPipeline(unittest.TestCase):
+    maxDiff=None
+
+    def sim(self, data):
+        expected_crc = crc16(data)
+
+        dut = TxCrcPipeline()
+        dut.expected_crc = Signal(16)
+        def stim():
+            MAX = 1000
+            yield dut.expected_crc[:8].eq(expected_crc[0])
+            yield dut.expected_crc[8:].eq(expected_crc[1])
+            yield dut.reset.eq(1)
+            yield dut.ce.eq(1)
+            for i in range(MAX+1):
+                if i > 10:
+                    yield dut.reset.eq(0)
+
+                ack = yield dut.o_data_ack
+                if ack:
+                    if len(data) == 0:
+                        yield dut.ce.eq(0)
+                        for i in range(5):
+                            yield
+                        crc16_value = yield dut.o_crc16
+
+                        encoded_expected_crc = encode_data(expected_crc)
+                        encoded_actual_crc = encode_data([crc16_value & 0xff, crc16_value >> 8])
+                        self.assertSequenceEqual(encoded_expected_crc, encoded_actual_crc)
+                        return
+                    data.pop(0)
+                if len(data) > 0:
+                    yield dut.i_data_payload.eq(data[0])
+                else:
+                    yield dut.i_data_payload.eq(0xff)
+                yield
+            self.assertLess(i, MAX)
+
+        run_simulation(dut, stim(), vcd_name="vcd/test_crc_pipeline_%s.vcd" % self.id())
+
+    def test_00000001_byte(self):
+        self.sim([0b00000001])
+
+    def test_10000000_byte(self):
+        self.sim([0b10000000])
+
+    def test_00000000_byte(self):
+        self.sim([0])
+
+    def test_11111111_byte(self):
+        self.sim([0xff])
+
+    def test_10101010_byte(self):
+        self.sim([0b10101010])
+
+    def test_zero_bytes(self):
+        self.sim([0, 0, 0])
+
+    def test_sequential_bytes(self):
+        self.sim([0, 1, 2])
 
 
 if __name__ == "__main__":
