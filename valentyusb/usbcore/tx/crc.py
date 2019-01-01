@@ -252,6 +252,12 @@ class TestCrcPipeline(unittest.TestCase):
     def test_sequential_bytes(self):
         self.sim([0, 1, 2])
 
+    def test_sequential_bytes2(self):
+        self.sim([0, 1])
+
+    def test_sequential_bytes3(self):
+        self.sim([1, 0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -171,7 +171,7 @@ class CommonTxPacketSendTestCase(unittest.TestCase):
                         ndata.pop(0)
                     last_ack[0] = ack
                 else:
-                    yield dut.i_data_payload.eq(0xff)
+                    yield dut.i_data_payload.eq(0)
                 yield dut.i_data_ready.eq(len(ndata) > 0)
 
         actual_usb_p, actual_usb_n = yield from self.wait_for_packet(dut, tick_data)
@@ -267,6 +267,18 @@ class CommonTxPacketSendTestCase(unittest.TestCase):
 
     def test_data0_one_zero(self):
         self.sim(PID.DATA0, [0])
+
+    def test_data0_one_one(self):
+        self.sim(PID.DATA0, [1])
+
+    def test_data0_one_one(self):
+        self.sim(PID.DATA0, [0b10000001])
+
+    def test_data0_two_ones(self):
+        self.sim(PID.DATA0, [1, 1])
+
+    def test_data0_two_ones(self):
+        self.sim(PID.DATA0, [0, 1])
 
     def test_data0_edges(self):
         self.sim(PID.DATA0, data=[0b00000001, 0, 0, 0b10000000])
