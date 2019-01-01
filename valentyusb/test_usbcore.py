@@ -564,14 +564,7 @@ import tempfile
 import subprocess
 
 
-def grouper(n, iterable, pad=None):
-    """Group iterable into multiples of n (with optional padding).
 
-    >>> list(grouper(3, 'abcdefg', 'x'))
-    [('a', 'b', 'c'), ('d', 'e', 'f'), ('g', 'x', 'x')]
-
-    """
-    return zip_longest(*[iter(iterable)]*n, fillvalue=pad)
 
 
 class TestUsbDevice(CommonUsbTestCase):

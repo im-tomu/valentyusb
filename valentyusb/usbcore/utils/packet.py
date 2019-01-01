@@ -37,6 +37,18 @@ def encode_pid(value):
 
 
 # width=5 poly=0x05 init=0x1f refin=true refout=true xorout=0x1f check=0x19 residue=0x06 name="CRC-5/USB"
+def crc5(nibbles):
+    """
+    >>> hex(crc5([0, 0]))
+    '0x1'
+    >>> hex(crc5([3, 0]))
+    '0x13'
+    """
+    reg = crc.CrcRegister(crc.CRC5_USB)
+    for n in nibbles:
+        reg.takeWord(n, 4)
+    return [reg.getFinalValue() & 0x1f]
+
 def crc5_token(addr, ep):
     """
     >>> hex(crc5_token(0, 0))
