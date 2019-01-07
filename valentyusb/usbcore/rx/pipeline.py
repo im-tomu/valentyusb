@@ -18,8 +18,9 @@ class RxPipeline(Module):
         # 12MHz USB alignment pulse in 48MHz clock domain
         self.o_bit_strobe = Signal()
 
-        self.i_usbp = Signal()
-        self.i_usbn = Signal()
+        # Reset state is J
+        self.i_usbp = Signal(reset=1)
+        self.i_usbn = Signal(reset=0)
 
         self.o_data_strobe = Signal()
         self.o_data_payload = Signal(8)

@@ -60,10 +60,10 @@ class RxClockDataRecovery(Module):
         # care of this for us.  Without MultiReg we would have metastability
         # issues.
         #
-        usbp = Signal()
+        usbp = Signal(reset=1)
         usbn = Signal()
 
-        self.specials += cdc.MultiReg(usbp_raw, usbp, n=3)
+        self.specials += cdc.MultiReg(usbp_raw, usbp, n=3, reset=1)
         self.specials += cdc.MultiReg(usbn_raw, usbn, n=3)
 
 
