@@ -8,25 +8,6 @@ import re
 
 
 COLORS = [
-	"alice blue",
-	"antique white",
-	"aquamarine",
-	"azure",
-	"beige",
-	"bisque",
-	"black",
-	"blanched almond",
-	"blue",
-	"blue violet",
-	"brown",
-	"burlywood",
-	"cadet blue",
-	"chartreuse",
-	"chocolate",
-	"coral",
-	"cornflower blue",
-	"cornsilk",
-	"cyan",
 	"dark blue",
 	"dark cyan",
 	"dark goldenrod",
@@ -46,22 +27,10 @@ COLORS = [
 	"deep sky blue",
 	"dodger blue",
 	"firebrick",
-	"floral white",
-	"forest green",
 	"gainsboro",
-	"ghost white",
 	"gold",
 	"goldenrod",
-	"green",
-	"green yellow",
-	"honeydew",
-	"hot pink",
 	"indian red",
-	"ivory",
-	"khaki",
-	"lavender",
-	"lavender blush",
-	"lawn green",
 	"lemon chiffon",
 	"light blue",
 	"light coral",
@@ -140,8 +109,8 @@ COLORS = [
 ]
 
 def pick_color():
-	return COLORS[random.randrange(0, len(COLORS)-1)]
-	
+	return COLORS.pop(0)
+
 
 def get_decoders_infos(args):
 	# Return value
@@ -170,7 +139,7 @@ def get_decoders_infos(args):
 			for cn in m.group(3).split(','):
 				cur[0][cn.strip()] = (m.group(1), pick_color())
 			cur[1][m.group(1)] = m.group(2)
-	
+
 	return rv
 
 
