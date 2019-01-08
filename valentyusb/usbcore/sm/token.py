@@ -58,7 +58,7 @@ class TestTokenPacketDecode(unittest.TestCase):
         run_simulation(
             dut, stim(dut),
             vcd_name="vcd/test_token_decode_%s.vcd" % self.id(),
-            clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
+            clocks={"sys": 12, "usb_48": 48, "usb_12": 192},
         )
 
     def recv_packet(self, dut, bits, tick):
@@ -99,6 +99,8 @@ class TestTokenPacketDecode(unittest.TestCase):
 
     def check_token(self, expected_pid, expected_addr, expected_endp):
         def stim(dut):
+            for i in range(100):
+                yield
 
             def tick(dut):
                 return not (yield dut.o_decoded)
