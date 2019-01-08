@@ -8,7 +8,7 @@ from litex.soc.cores.gpio import GPIOOut
 
 from ..pid import PIDTypes
 from ..tx.pipeline import TxPipeline
-from ..tx.crc import TxCrcPipeline
+from ..tx.crc import TxParallelCrcGenerator
 from ..utils.asserts import assertMultiLineEqualSideBySide
 from ..utils.packet import *
 from ..utils.pprint import pp_packet
@@ -58,78 +58,53 @@ class TxPacketSend(Module):
             ),
         )
 
-        if not auto_crc:
-            fsm.act('QUEUE_DATA',
-                If(~self.i_data_ready,
-                    NextState('WAIT_TRANSMIT'),
-                ).Else(
-                    NextState('QUEUE_DATA0'),
-                ),
-            )
+        nextstate = 'WAIT_TRANSMIT'
+        if auto_crc:
+            nextstate = 'QUEUE_CRC0'
 
-            # Keep transmitting data bytes until the i_data_ready signal is not
-            # high on a o_data_strobe event.
-            fsm.act('QUEUE_DATA0',
-                tx.i_data_payload.eq(self.i_data_payload),
-                self.o_data_ack.eq(tx.o_data_strobe),
-                If(tx.o_data_strobe & ~self.i_data_ready,
-                    NextState('WAIT_TRANSMIT'),
-                ),
+        fsm.act('QUEUE_DATA',
+            If(~self.i_data_ready,
+                NextState(nextstate),
+            ).Else(
+                NextState('QUEUE_DATA0'),
+            ),
+        )
+
+        # Keep transmitting data bytes until the i_data_ready signal is not
+        # high on a o_data_strobe event.
+        fsm.act('QUEUE_DATA0',
+            tx.i_data_payload.eq(self.i_data_payload),
+            self.o_data_ack.eq(tx.o_data_strobe),
+            If(tx.o_data_strobe & ~self.i_data_ready,
+                NextState(nextstate),
+            ),
+        )
+
+        if auto_crc:
+            crc = TxParallelCrcGenerator(
+                crc_width  = 16,
+                data_width = 8,
+                polynomial = 0b1000000000000101, # polynomial = (16, 15, 2, 0)
+                initial    = 0b1111111111111111, # seed = 0xFFFF
             )
-        else:
-            crc = TxCrcPipeline()
             self.submodules.crc = crc = ClockDomainsRenamer("usb_12")(crc)
-
-            last_data_payload = Signal(8)
-            last_data_ready = Signal()
 
             self.comb += [
                 crc.i_data_payload.eq(self.i_data_payload),
-            ]
-            self.sync += [
-                If(fsm.ongoing('QUEUE_SYNC'),
-                    crc.ce.eq(1),
-                    crc.reset.eq(1),
-                ),
-                If(fsm.ongoing('QUEUE_PID'),
-                    last_data_payload.eq(self.i_data_payload),
-                    last_data_ready.eq(self.i_data_ready),
-                    If(self.i_data_ready,
-                        crc.reset.eq(0),
-                    ),
+                crc.reset.eq(fsm.ongoing('QUEUE_PID')),
+                If(fsm.ongoing('QUEUE_DATA0'),
+                    crc.i_data_strobe.eq(tx.o_data_strobe),
                 ),
             ]
 
-            fsm.act('QUEUE_DATA',
-                If(~self.i_data_ready,
-                    NextState('QUEUE_CRC0'),
-                ).Else(
-                    NextState('QUEUE_DATA0'),
-                ),
-            )
-            fsm.act('QUEUE_DATA0',
-                If(crc.o_data_ack,
-                    NextValue(last_data_payload, self.i_data_payload),
-                    NextValue(last_data_ready, self.i_data_ready),
-                    If(self.i_data_ready,
-                        self.o_data_ack.eq(1),
-                    ).Else(
-                        NextValue(crc.ce, 0),
-                    )
-                ),
-                tx.i_data_payload.eq(last_data_payload),
-                If(tx.o_data_strobe & ~last_data_ready,
-                    NextState('QUEUE_CRC0'),
-                ),
-            )
             fsm.act('QUEUE_CRC0',
-                tx.i_data_payload.eq(crc.o_crc16[:8]),
+                tx.i_data_payload.eq(crc.o_crc[:8]),
                 If(tx.o_data_strobe,
                     NextState('QUEUE_CRC1'),
                 ),
             )
             fsm.act('QUEUE_CRC1',
-                tx.i_data_payload.eq(crc.o_crc16[8:]),
+                tx.i_data_payload.eq(crc.o_crc[8:]),
                 If(tx.o_data_strobe,
                     NextState('WAIT_TRANSMIT'),
                 ),

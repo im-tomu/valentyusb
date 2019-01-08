@@ -388,7 +388,7 @@ class TxParallelCrcGenerator(Module):
         crc_next = Signal(crc_width)
 
         self.comb += [
-                crc_dat.eq(self.i_data_payload[::-1]),
+            crc_dat.eq(self.i_data_payload[::-1]),
             self.o_crc.eq(crc_cur[::-1] ^ initial),
         ]
 
