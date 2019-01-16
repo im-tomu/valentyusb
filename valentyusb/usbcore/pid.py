@@ -12,7 +12,7 @@ class PID(IntEnum):
     'KKKKJJJJJJJJJJJJKKKKKKKKJJJJKKKK'
 
     >>> for p in PID:
-    ...    print("%-10s" % p, "%x" % p.value, "%2x" % p.byte(), p.encode(1))
+    ...    print("%-10s" % p, "%x" % p.value, "%02x" % p.byte(), p.encode(1))
     PID.SETUP  d 2d KJJJKKJK
     PID.OUT    1 e1 KJKJKKKK
     PID.IN     9 69 KJKKJJJK
@@ -20,7 +20,7 @@ class PID(IntEnum):
     PID.DATA0  3 c3 KKJKJKKK
     PID.DATA1  b 4b KKJJKJJK
     PID.DATA2  7 87 KKKJKJKK
-    PID.MDATA  f  f KKKKJKJK
+    PID.MDATA  f 0f KKKKJKJK
     PID.ACK    2 d2 JJKJJKKK
     PID.NAK    a 5a JJKKKJJK
     PID.STALL  e 1e JJJJJKJK

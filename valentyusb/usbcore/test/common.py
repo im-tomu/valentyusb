@@ -864,10 +864,9 @@ class CommonUsbTestCase(unittest.TestCase):
             d = [0x41, 0x01]
 
             yield from self.clear_pending(epaddr)
-            yield from self.set_response(epaddr, EndpointResponse.NAK)
+            yield from self.set_response(epaddr, EndpointResponse.ACK)
             yield
 
-            yield from self.set_response(epaddr, EndpointResponse.ACK)
             yield from self.send_token_packet(PID.OUT, addr, epaddr)
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_ack()
