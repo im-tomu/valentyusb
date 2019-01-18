@@ -215,9 +215,12 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
 
                 dut = RxClockDataRecovery(usbp_raw, usbn_raw)
 
-                run_simulation(dut, stim(),
+                run_simulation(
+                    dut,
+                    stim(),
                     vcd_name=self.make_vcd_name(
-                        testsuffix="clock.basic_recovery_%s" % seq))
+                        testsuffix="clock.basic_recovery_%s" % seq),
+                )
 
 
         long_test_sequences = [
@@ -233,10 +236,13 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
 
                     dut = RxClockDataRecovery(usbp_raw, usbn_raw)
 
-                    run_simulation(dut, stim(glitch),
+                    run_simulation(
+                        dut,
+                        stim(glitch),
                         vcd_name=self.make_vcd_name(
-                            testsuffix="basic_recovery_" +
-                                     "%s_%d" % (seq, glitch)))
+                            testsuffix="basic_recovery_%s_%d" % (
+                            seq, glitch)),
+                    )
 
 
 if __name__ == "__main__":

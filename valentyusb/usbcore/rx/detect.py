@@ -178,8 +178,11 @@ class TestRxPacketDetect(BaseUsbTestCase):
             with self.subTest(i=i, vector=vector):
                 dut = RxPacketDetect()
 
-                run_simulation(dut, stim(**vector),
-                    vcd_name=self.make_vcd_name(testsuffix=str(i)))
+                run_simulation(
+                    dut,
+                    stim(**vector),
+                    vcd_name=self.make_vcd_name(testsuffix=str(i)),
+                )
                 i += 1
 
 

@@ -6,6 +6,7 @@ from migen import *
 
 MIGEN_SIGNALS = ("reset", "ce")
 
+
 def get_ultimate_caller_modulename():
     """
     Helper to find the ultimate caller's module name (extra level further up
@@ -14,6 +15,7 @@ def get_ultimate_caller_modulename():
     caller = inspect.stack()[2]
     module = inspect.getmodule(caller[0])
     return module.__spec__.name
+
 
 def create_tester(dut_type, **def_args):
     def run(self, **test_args):
