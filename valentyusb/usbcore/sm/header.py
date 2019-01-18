@@ -10,6 +10,7 @@ from ..pid import PIDTypes
 from ..rx.pipeline import RxPipeline
 from ..tx.pipeline import TxPipeline
 from ..utils.packet import *
+from ..test.common import BaseUsbTestCase
 
 
 class PacketHeaderDecode(Module):
@@ -61,7 +62,7 @@ class PacketHeaderDecode(Module):
         )
 
 
-class TestPacketHeaderDecode(unittest.TestCase):
+class TestPacketHeaderDecode(BaseUsbTestCase):
 
     def sim(self, stim):
         rx = RxPipeline()
@@ -69,7 +70,7 @@ class TestPacketHeaderDecode(unittest.TestCase):
 
         run_simulation(
             dut, stim(dut),
-            vcd_name="vcd/test_token_decode_%s.vcd" % self.id(),
+            vcd_name=self.make_vcd_name(),
             clocks={"sys": 12, "usb_48": 48, "usb_12": 192},
         )
 

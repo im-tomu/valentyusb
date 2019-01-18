@@ -351,7 +351,7 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         print("-"*10)
         run_simulation(
             self.dut, padfront(),
-            vcd_name="vcd/%s.vcd" % self.id(),
+            vcd_name=self.make_vcd_name(),
             clocks={"sys": 12, "usb_48": 48, "usb_12": 192},
         )
         print("-"*10)

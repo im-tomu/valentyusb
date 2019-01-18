@@ -12,6 +12,7 @@ from ..tx.crc import TxParallelCrcGenerator
 from ..utils.asserts import assertMultiLineEqualSideBySide
 from ..utils.packet import *
 from ..utils.pprint import pp_packet
+from ..test.common import BaseUsbTestCase
 
 
 class TxPacketSend(Module):
@@ -125,7 +126,7 @@ class TxPacketSend(Module):
         fsm.act('ERROR')
 
 
-class CommonTxPacketSendTestCase:
+class CommonTxPacketSendTestCase(BaseUsbTestCase):
     maxDiff=None
 
     def assert_packet_sent(self, dut, pid, data=None, ndata=None):
@@ -293,7 +294,7 @@ class TestTxPacketSendNoCrc(CommonTxPacketSendTestCase, unittest.TestCase):
 
         run_simulation(
             dut, stim(dut),
-            vcd_name="vcd/test_token_decode_%s.vcd" % self.id(),
+            vcd_name=self.make_vcd_name(),
             clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
         )
 
@@ -315,7 +316,7 @@ class TestTxPacketSendAutoCrc(CommonTxPacketSendTestCase, unittest.TestCase):
 
         run_simulation(
             dut, stim(dut),
-            vcd_name="vcd/test_token_decode_%s.vcd" % self.id(),
+            vcd_name=self.make_vcd_name(),
             clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
         )
 
