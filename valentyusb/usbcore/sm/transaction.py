@@ -103,7 +103,7 @@ class UsbTransfer(Module):
         # >Ack
         # ---------------------------
         transfer = FSM(reset_state="WAIT_TOKEN")
-        self.submodules.transfer = ClockDomainsRenamer("usb_12")(transfer)
+        self.submodules.transfer = transfer = ClockDomainsRenamer("usb_12")(transfer)
         transfer.act("ERROR",
             If(self.reset, NextState("WAIT_TOKEN")),
         )
@@ -157,7 +157,7 @@ class UsbTransfer(Module):
 
                 # In transfer
                 ).Elif(self.tok == PID.IN,
-                    If(~self.arm,
+                    If(~self.arm | self.sta,
                         NextState("SEND_HAND"),
                     ).Else(
                         NextState("SEND_DATA"),
@@ -214,13 +214,15 @@ class UsbTransfer(Module):
             ),
         )
         transfer.act("SEND_HAND",
-            self.setup.eq(self.tok == (PID.SETUP >> 2)),
-            If(response_pid == PID.ACK,
-                self.commit.eq(1),
-            ).Else(
-                self.abort.eq(1),
+            If(txstate.o_pkt_end,
+                self.setup.eq(self.tok == PID.SETUP),
+                If(response_pid == PID.ACK,
+                    self.commit.eq(1),
+                ).Else(
+                    self.abort.eq(1),
+                ),
+                NextState("WAIT_TOKEN"),
             ),
-            If(txstate.o_pkt_end, NextState("WAIT_TOKEN")),
         )
 
         # Code to reset header decoder when entering the WAIT_XXX states.
@@ -425,9 +427,9 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
             yield dut.data_send_payload.eq(0xff)
 
         if not iep.pending and iep.data:
-            yield dut.data_send_have.eq(len(iep.data) > 1)
             if data_send_get:
                 iep.data.pop(0)
+            yield dut.data_send_have.eq(len(iep.data) > 0)
         else:
             yield dut.data_send_have.eq(0)
             self.assertFalse(data_send_get)
@@ -454,11 +456,11 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
 
         # Special setup stuff...
         if setup:
-            iep.response = EndpointResponse.NAK
-            iep.dtb = 0
-
             oep.response = EndpointResponse.NAK
-            oep.dtb = 0
+            oep.dtb = True
+
+            iep.response = EndpointResponse.NAK
+            iep.dtb = True
 
     def _update_internal_signals(self):
         for ep in self.endpoints.values():
@@ -519,9 +521,12 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
     # Get/set endpoint data ----------------
     def set_data(self, epaddr, data):
         """Set an endpoints buffer to given data to be sent."""
-        assert isinstance(data, (list, tuple))
         if False:
             yield
+
+        assert isinstance(data, (list, tuple))
+        if not isinstance(data, list):
+            data = list(data)
 
         self.ep_print(epaddr, "set_data: %r", data)
         self.endpoints[epaddr].data = data
@@ -529,7 +534,12 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
     def expect_data(self, epaddr, data):
         """Expect that an endpoints buffer has given contents."""
         # Make sure there is something pending
-        self.assertTrue((yield from self.pending(epaddr)))
+        for i in range(10):
+            pending = yield from self.pending(epaddr)
+            if pending:
+                break
+            yield from self.tick_usb()
+        self.assertTrue(pending)
 
         self.ep_print(epaddr, "expect_data: %s", data)
         actual_data = self.endpoints[epaddr].data
@@ -537,7 +547,7 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         self.endpoints[epaddr].data = None
 
         # Strip the last two bytes which contain the CRC16
-        assert len(actual_data) > 2, actual_data
+        assert len(actual_data) >= 2, actual_data
         actual_data, actual_crc = actual_data[:-2], actual_data[-2:]
 
         self.ep_print(epaddr, "Got: %r (expected: %r)", actual_data, data)

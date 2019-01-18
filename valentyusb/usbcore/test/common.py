@@ -150,6 +150,10 @@ class CommonUsbTestCase(BaseUsbTestCase):
         self.assertFalse(tx, "Packet didn't finish, "+msg)
         yield self.packet_d2h.eq(0)
 
+        # FIXME: Get the tx_en back into the USB12 clock domain...
+        for i in range(0, 3):
+            yield from self.tick_usb()
+
         # Check the packet received matches
         expected = pp_packet(wrap_packet(packet))
         actual = pp_packet(result)

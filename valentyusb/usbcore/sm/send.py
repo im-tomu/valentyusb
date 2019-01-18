@@ -3,6 +3,7 @@
 import unittest
 
 from migen import *
+from migen.genlib import cdc
 
 from litex.soc.cores.gpio import GPIOOut
 
@@ -26,6 +27,9 @@ class TxPacketSend(Module):
         self.i_data_payload = Signal(8)
         self.i_data_ready = Signal()
         self.o_data_ack = Signal()
+
+        o_oe12 = Signal()
+        self.specials += cdc.MultiReg(tx.o_oe, o_oe12, odomain="usb_12", n=3)
 
         pid = Signal(4)
 
@@ -117,7 +121,7 @@ class TxPacketSend(Module):
 
         fsm.act('WAIT_TRANSMIT',
             NextValue(tx.i_oe, 0),
-            If(~tx.o_oe,
+            If(~o_oe12,
                 self.o_pkt_end.eq(1),
                 NextState('IDLE'),
             ),

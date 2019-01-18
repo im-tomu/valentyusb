@@ -25,6 +25,8 @@ class TxPipeline(Module):
         self.o_usbn = Signal()
         self.o_oe = Signal()
 
+        self.o_pkt_end = Signal()
+
         reset = Signal()
         stall = Signal()
 
@@ -91,8 +93,6 @@ class TxPipeline(Module):
             self.o_usbn.eq(nrzi.o_usbn),
             self.o_oe.eq(nrzi.o_oe),
         ]
-
-
 
 
 class TestTxPipeline(BaseUsbTestCase):
