@@ -33,6 +33,12 @@ class CommonUsbTestCase(unittest.TestCase):
             EndpointType.epdir(epaddr).name,
             msg) % args)
 
+    def tick_usb(self):
+        yield
+        yield
+        yield
+        yield
+
     ######################################################################
     # Helper methods
     # FIXME: Should these be marked as internal only?
@@ -41,21 +47,19 @@ class CommonUsbTestCase(unittest.TestCase):
         yield self.packet_idle.eq(1)
         yield from self.dut.iobuf.recv('I')
         for i in range(0, cycles):
-            yield
+            yield from self.tick_usb()
         yield self.packet_idle.eq(0)
 
     # Host->Device
     def _send_packet(self, packet):
         """Send a USB packet."""
-        #print("_send_packet(", packet, ")")
+        print("_send_packet(", packet, ")")
         packet = wrap_packet(packet)
         for v in packet:
             yield from self._update_internal_signals()
             yield from self.dut.iobuf.recv(v)
-            yield
+            yield from self.tick_usb()
         yield from self._update_internal_signals()
-        for i in range(0, 100):
-            yield
 
     def send_token_packet(self, pid, addr, epaddr):
         epnum = EndpointType.epnum(epaddr)
@@ -82,26 +86,27 @@ class CommonUsbTestCase(unittest.TestCase):
     # Device->Host
     def expect_packet(self, packet, msg=None):
         """Except to receive the following USB packet."""
+        print("expect_packet", msg)
         yield self.packet_d2h.eq(1)
 
-        # Wait for transmission to happen
+        # Wait for transmission to start
         yield from self.dut.iobuf.recv('I')
         tx = 0
-        for i in range(0, 100):
+        for i in range(0, 2048):
             yield from self._update_internal_signals()
             tx = yield self.dut.iobuf.usb_tx_en
             if tx:
                 break
-            yield
+            yield from self.tick_usb()
         self.assertTrue(tx, "No packet started, "+msg)
 
-        # Read in the packet data
+        # Read in the transmission data
         result = ""
         for i in range(0, 2048):
             yield from self._update_internal_signals()
 
             result += yield from self.iobuf.current()
-            yield
+            yield from self.tick_usb()
             tx = yield self.dut.iobuf.usb_tx_en
             if not tx:
                 break
@@ -365,7 +370,7 @@ class CommonUsbTestCase(unittest.TestCase):
 
             yield from self.clear_pending(epaddr_out)
             yield from self.set_response(epaddr_out, EndpointResponse.ACK)
-            yield
+            yield from self.tick_usb()
 
             yield from self.send_token_packet(PID.OUT, addr, epaddr_out)
             yield from self.send_data_packet(PID.DATA0, d[:4])
@@ -382,10 +387,10 @@ class CommonUsbTestCase(unittest.TestCase):
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_ack()
 
-            yield
+            yield from self.tick_usb()
             respond = yield from self.response(epaddr_out)
             self.assertEqual(respond, EndpointResponse.NAK)
-            yield
+            yield from self.tick_usb()
 
             yield from self.send_token_packet(PID.OUT, addr, epaddr_out)
             yield from self.send_data_packet(PID.DATA0, d[:4])
@@ -397,7 +402,7 @@ class CommonUsbTestCase(unittest.TestCase):
         def stim():
             yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
             yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
-            yield
+            yield from self.tick_usb()
 
             yield from self.control_transfer_in(
                 20,
@@ -480,7 +485,7 @@ class CommonUsbTestCase(unittest.TestCase):
         def stim():
             yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
             yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
-            yield
+            yield from self.tick_usb()
 
             yield from self.control_transfer_out(
                 20,
@@ -545,7 +550,7 @@ class CommonUsbTestCase(unittest.TestCase):
             epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
             yield from self.clear_pending(epaddr_out)
             yield from self.clear_pending(epaddr_in)
-            yield
+            yield from self.tick_usb()
 
             # Setup stage
             # -----------
@@ -585,7 +590,7 @@ class CommonUsbTestCase(unittest.TestCase):
 
             yield from self.clear_pending(epaddr)
             yield from self.set_response(epaddr, EndpointResponse.NAK)
-            yield
+            yield from self.tick_usb()
 
             yield from self.set_data(epaddr, d[:4])
             yield from self.set_response(epaddr, EndpointResponse.ACK)
@@ -668,7 +673,7 @@ class CommonUsbTestCase(unittest.TestCase):
             ep0out = EndpointType.epaddr(0, EndpointType.OUT)
             yield from self.clear_pending(ep0out)
             yield from self.set_response(ep0out, EndpointResponse.NAK)
-            yield
+            yield from self.tick_usb()
 
             # Setup stage
             yield from self.transaction_setup(28, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
@@ -740,7 +745,7 @@ class CommonUsbTestCase(unittest.TestCase):
             ep2 = EndpointType.epaddr(2, EndpointType.IN)
             yield from self.clear_pending(ep2)
             yield from self.set_response(ep2, EndpointResponse.NAK)
-            yield
+            yield from self.tick_usb()
 
             d1 = [0x1]
             yield from self.set_data(ep1, d1)
@@ -783,7 +788,7 @@ class CommonUsbTestCase(unittest.TestCase):
 
             yield from self.clear_pending(epaddr)
             yield from self.set_response(epaddr, EndpointResponse.NAK)
-            yield
+            yield from self.tick_usb()
 
             # Device NAK the PID.IN token packet
             yield from self.send_token_packet(PID.IN, addr, epaddr)
@@ -865,7 +870,7 @@ class CommonUsbTestCase(unittest.TestCase):
 
             yield from self.clear_pending(epaddr)
             yield from self.set_response(epaddr, EndpointResponse.ACK)
-            yield
+            yield from self.tick_usb()
 
             yield from self.send_token_packet(PID.OUT, addr, epaddr)
             yield from self.send_data_packet(PID.DATA1, d)
@@ -904,7 +909,7 @@ class CommonUsbTestCase(unittest.TestCase):
 
             yield from self.clear_pending(epaddr)
             yield from self.set_response(epaddr, EndpointResponse.NAK)
-            yield
+            yield from self.tick_usb()
 
             # First nak
             yield from self.send_token_packet(PID.OUT, addr, epaddr)

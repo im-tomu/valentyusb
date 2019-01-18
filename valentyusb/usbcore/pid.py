@@ -45,9 +45,9 @@ class PID(IntEnum):
     MDATA   = 0b1111
 
     # Handshake pids
-    ACK     = 0b0010
-    NAK     = 0b1010
-    STALL   = 0b1110
+    ACK     = 0b0010 # 0x2
+    NAK     = 0b1010 # 0xa
+    STALL   = 0b1110 # 0xe
     # USB2.0 only
     NYET    = 0b0110
 

@@ -26,11 +26,14 @@ class TxPacketSend(Module):
         self.i_data_ready = Signal()
         self.o_data_ack = Signal()
 
+        pid = Signal(4)
+
         self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(FSM())
         fsm.act('IDLE',
             #NextValue(tx.i_oe, self.i_pkt_start),
             NextValue(tx.i_oe, 0),
             If(self.i_pkt_start,
+                NextValue(pid, self.i_pid),
                 NextState('QUEUE_SYNC'),
             ),
         )
@@ -46,11 +49,11 @@ class TxPacketSend(Module):
 
         # Send the PID byte
         fsm.act('QUEUE_PID',
-            tx.i_data_payload.eq(Cat(self.i_pid, self.i_pid ^ 0b1111)),
+            tx.i_data_payload.eq(Cat(pid, pid ^ 0b1111)),
             If(tx.o_data_strobe,
-                If(self.i_pid & PIDTypes.TYPE_MASK == PIDTypes.HANDSHAKE,
+                If(pid & PIDTypes.TYPE_MASK == PIDTypes.HANDSHAKE,
                     NextState('WAIT_TRANSMIT'),
-                ).Elif(self.i_pid & PIDTypes.TYPE_MASK == PIDTypes.DATA,
+                ).Elif(pid & PIDTypes.TYPE_MASK == PIDTypes.DATA,
                     NextState('QUEUE_DATA'),
                 ).Else(
                     NextState('ERROR'),

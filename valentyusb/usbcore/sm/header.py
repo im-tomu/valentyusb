@@ -12,7 +12,7 @@ from ..tx.pipeline import TxPipeline
 from ..utils.packet import *
 
 
-class TokenPacketDecode(Module):
+class PacketHeaderDecode(Module):
     def __init__(self, rx):
         self.submodules.rx = rx
 
@@ -24,20 +24,26 @@ class TokenPacketDecode(Module):
         self.o_decoded = Signal()
 
         self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(FSM())
+
+        pid = rx.o_data_payload[0:4]
         fsm.act('PID',
             If(rx.o_data_strobe,
-                NextValue(self.o_pid[0:4], rx.o_data_payload[0:4]),
-                NextState('ADDR'),
+                NextValue(self.o_pid, pid),
+                Case(pid & PIDTypes.TYPE_MASK, {
+                    PIDTypes.TOKEN:     NextState("BYTE0"),
+                    PIDTypes.DATA:      NextState("END"),
+                    PIDTypes.HANDSHAKE: NextState("END"),
+                }),
             ),
         )
-        fsm.act('ADDR',
+        fsm.act('BYTE0',
             If(rx.o_data_strobe,
                 NextValue(self.o_addr[0:7], rx.o_data_payload[0:7]),
                 NextValue(endp4, rx.o_data_payload[7]),
-                NextState('ENDP'),
+                NextState('BYTE1'),
             ),
         )
-        fsm.act('ENDP',
+        fsm.act('BYTE1',
             If(rx.o_data_strobe,
                 NextValue(self.o_endp, Cat(endp4, rx.o_data_payload[0:3])),
                 NextValue(crc5, rx.o_data_payload[4:]),
@@ -49,11 +55,11 @@ class TokenPacketDecode(Module):
         )
 
 
-class TestTokenPacketDecode(unittest.TestCase):
+class TestPacketHeaderDecode(unittest.TestCase):
 
     def sim(self, stim):
         rx = RxPipeline()
-        dut = TokenPacketDecode(rx)
+        dut = PacketHeaderDecode(rx)
 
         run_simulation(
             dut, stim(dut),
@@ -97,7 +103,7 @@ class TestTokenPacketDecode(unittest.TestCase):
         self.assertFalse(continue_sim)
         self.assertLess(i, MAX_ITER-1)
 
-    def check_token(self, expected_pid, expected_addr, expected_endp):
+    def check_packet(self, expected_pid, expected_addr, expected_endp, packet):
         def stim(dut):
             for i in range(100):
                 yield
@@ -107,7 +113,7 @@ class TestTokenPacketDecode(unittest.TestCase):
 
             yield from self.recv_packet(
                 dut,
-                wrap_packet(token_packet(expected_pid, expected_addr, expected_endp)),
+                packet,
                 tick,
             )
 
@@ -127,6 +133,31 @@ class TestTokenPacketDecode(unittest.TestCase):
             self.assertEqual(expected_endp, actual_endp)
         self.sim(stim)
 
+    def check_token(self, expected_pid, expected_addr, expected_endp):
+        self.check_packet(
+            expected_pid, expected_addr, expected_endp,
+            wrap_packet(token_packet(expected_pid, expected_addr, expected_endp)),
+        )
+
+    def check_data(self, expected_pid, data):
+        self.check_packet(
+            expected_pid, 0, 0,
+            wrap_packet(data_packet(expected_pid, data)),
+        )
+
+    def check_status(self, expected_pid):
+        # Status packet is a data_packet with no data.
+        self.check_packet(
+            expected_pid, 0, 0,
+            wrap_packet(data_packet(expected_pid, [])),
+        )
+
+    def check_handshake(self, expected_pid):
+        self.check_packet(
+            expected_pid, 0, 0,
+            wrap_packet(handshake_packet(expected_pid)),
+        )
+
     def test_decode_setup_zero(self):
         self.check_token(PID.SETUP, 0x0, 0x0)
 
@@ -135,6 +166,19 @@ class TestTokenPacketDecode(unittest.TestCase):
 
     def test_decode_out_ep8(self):
         self.check_token(PID.OUT, 12, 0xf)
+
+    def test_decode_data0(self):
+        self.check_status(PID.DATA0)
+
+    def test_decode_data1(self):
+        self.check_status(PID.DATA1)
+
+    def test_decode_ack(self):
+        self.check_handshake(PID.ACK)
+
+    def test_decode_nak(self):
+        self.check_handshake(PID.NAK)
+
 
 
 if __name__ == "__main__":

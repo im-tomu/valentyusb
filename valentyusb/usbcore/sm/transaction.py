@@ -11,8 +11,8 @@ from ..io import FakeIoBuf
 from ..pid import PIDTypes
 from ..rx.pipeline import RxPipeline
 from ..tx.pipeline import TxPipeline
+from .header import PacketHeaderDecode
 from .send import TxPacketSend
-from .token import TokenPacketDecode
 
 from ..utils.packet import *
 from ..test.common import CommonUsbTestCase
@@ -26,7 +26,7 @@ class UsbTransfer(Module):
         self.submodules.txstate = txstate = TxPacketSend(tx, auto_crc=auto_crc)
 
         self.submodules.rx = rx = RxPipeline()
-        self.submodules.rxstate = rxstate = TokenPacketDecode(rx)
+        self.submodules.rxstate = rxstate = PacketHeaderDecode(rx)
 
         # ----------------------
         # USB 48MHz bit strobe
@@ -69,10 +69,6 @@ class UsbTransfer(Module):
             self.end.eq(self.commit | self.abort),
         ]
 
-        self.dtb = Signal()
-        self.arm = Signal()
-        self.sta = Signal()
-
         # Host->Device data path (Out + Setup data path)
         #
         # Token
@@ -113,42 +109,54 @@ class UsbTransfer(Module):
         )
 
         transfer.act("WAIT_TOKEN",
-            If(rx.o_data_strobe, # FIXME: Is this needed?
-                self.start.eq(1),
+            If(rx.o_data_strobe,
                 NextState("RECV_TOKEN"),
             ),
         )
 
-        response_pid = Signal(4)
-
         transfer.act("RECV_TOKEN",
-            NextValue(self.tok, rxstate.o_pid),
-            NextValue(self.addr, rxstate.o_addr),
-            NextValue(self.endp, rxstate.o_endp),
-
             If(rxstate.o_decoded,
-                If(rxstate.o_pid == PID.SETUP,
+                #If((rxstate.o_pid & PIDTypes.TYPE_MASK) != PIDTypes.TOKEN,
+                #    NextState('ERROR'),
+                #),
+                NextValue(self.tok,  rxstate.o_pid),
+                NextValue(self.addr, rxstate.o_addr),
+                NextValue(self.endp, rxstate.o_endp),
+                self.start.eq(1),
+                NextState("POLL_RESPONSE"),
+            ),
+        )
+
+        # The value of these signals are generally dependent on endp, so we
+        # need to wait for the rdy signal to use them.
+        self.rdy = Signal(reset=1)
+        self.dtb = Signal()
+        self.arm = Signal()
+        self.sta = Signal()
+        response_pid = Signal(4)
+        transfer.act("POLL_RESPONSE",
+            If(self.rdy,
+                # Work out the response
+                If(self.tok == PID.SETUP,
+                    NextValue(response_pid, PID.ACK),
+                ).Elif(self.sta,
+                    NextValue(response_pid, PID.STALL),
+                ).Elif(self.arm,
                     NextValue(response_pid, PID.ACK),
                 ).Else(
-                    If(self.sta,
-                        NextValue(response_pid, PID.STALL),
-                    ).Elif(self.arm,
-                        NextValue(response_pid, PID.ACK),
-                    ).Else(
-                        NextValue(response_pid, PID.NAK),
-                    ),
+                    NextValue(response_pid, PID.NAK),
                 ),
 
                 # Setup transfer
-                If(rxstate.o_pid == PID.SETUP,
+                If(self.tok == PID.SETUP,
                     NextState("RECV_DATA"),
 
                 # Out transfer
-                ).Elif(rxstate.o_pid == PID.OUT,
+                ).Elif(self.tok == PID.OUT,
                     NextState("RECV_DATA"),
 
                 # In transfer
-                ).Elif(rxstate.o_pid == PID.IN,
+                ).Elif(self.tok == PID.IN,
                     If(~self.arm,
                         NextState("SEND_HAND"),
                     ).Else(
@@ -162,6 +170,11 @@ class UsbTransfer(Module):
 
         # Out + Setup pathway
         transfer.act("RECV_DATA",
+            #If(rxstate.o_decoded,
+            #    If((rxstate.o_pid & PIDTypes.TYPE_MASK) != PIDTypes.DATA,
+            #        NextState('ERROR'),
+            #    ),
+            #),
             If(response_pid == PID.ACK,
                 self.data_recv_put.eq(rx.o_data_strobe),
             ),
@@ -215,11 +228,41 @@ class UsbTransfer(Module):
         ]
 
 
-class TestUsbTransaction(CommonUsbTestCase):
+class CommonTestMultiClockDomain:
+    def setUp(self, clock_names=("usb_12", "usb_48")):
+        self.signals = {}
+        self.cycle_count = {}
+        self.last_value = {}
+        for n in clock_names:
+            self.signals[n] = ClockSignal(n)
+            self.cycle_count[n] = 0
+            self.last_value[n] = 0
+
+    def _update_clocks(self):
+        for n in self.signals:
+            current_value = yield self.signals[n]
+            # Run the callback
+            if current_value and not self.last_value[n]:
+                yield from getattr(self, "on_%s_edge" % n)()
+                self.cycle_count[n] += 1
+            self.last_value[n] = current_value
+
+    def on_usb_12_edge(self):
+        if False:
+            yield
+
+    def on_usb_48_edge(self):
+        if False:
+            yield
+
+
+class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
 
     maxDiff=None
 
     def setUp(self):
+        CommonTestMultiClockDomain.setUp(self)
+
         self.iobuf = FakeIoBuf()
         self.dut = UsbTransfer(self.iobuf)
 
@@ -270,11 +313,6 @@ class TestUsbTransaction(CommonUsbTestCase):
             self.endpoints[epaddr].addr = epaddr
 
     def run_sim(self, stim):
-        self.clk12 = ClockSignal("usb_12")
-        self.last_clk12 = 0
-        self.clk48 = ClockSignal("usb_48")
-        self.last_clk48 = 0
-
         def padfront():
             yield
             yield
@@ -292,27 +330,24 @@ class TestUsbTransaction(CommonUsbTestCase):
         run_simulation(
             self.dut, padfront(),
             vcd_name="vcd/%s.vcd" % self.id(),
-            clocks={"sys": 4, "usb_48": 4, "usb_12": 16},
+            clocks={"sys": 12, "usb_48": 48, "usb_12": 192},
         )
-        #    clocks={"usb_48": 4, "sys": 4})
         print("-"*10)
 
-    def tick(self):
-        current_clk12 = yield self.clk12
-        if current_clk12 and not self.last_clk12:
-            yield from self.tick_clk12()
-        self.last_clk12 = current_clk12
+    def tick_usb(self):
+        count_last = self.cycle_count["usb_48"]
+        while True:
+            yield from self._update_internal_signals()
+            count_next = self.cycle_count["usb_48"]
+            if count_last != count_next:
+                break
+            yield
 
-        current_clk48 = yield self.clk48
-        if current_clk48 and not self.last_clk48:
-            yield from self.tick_clk48()
-        self.last_clk48 = current_clk48
-
-    def tick_clk48(self):
+    def on_usb_48_edge(self):
         if False:
             yield
 
-    def tick_clk12(self):
+    def on_usb_12_edge(self):
         dut = self.dut
 
         # These should only change on usb12 edge
@@ -326,7 +361,7 @@ class TestUsbTransaction(CommonUsbTestCase):
         addr = yield dut.addr
         endp = yield dut.endp
 
-        print("tick_clk12", tok, addr, endp)
+        print("clk12", tok, addr, endp)
         if endp > 2:
             return
 
@@ -408,7 +443,7 @@ class TestUsbTransaction(CommonUsbTestCase):
                 ep.trigger = False
         del ep
 
-        yield from self.tick()
+        yield from self._update_clocks()
 
     ######################################################################
     ## Helpers
@@ -425,11 +460,12 @@ class TestUsbTransaction(CommonUsbTestCase):
 
     def clear_pending(self, epaddr):
         # Can't clear pending while trigger is active.
-        for i in range(0, 100):
-            trigger = (yield from self.trigger(epaddr))
-            if not trigger:
-                break
-            yield
+        trigger = (yield from self.trigger(epaddr))
+        #for i in range(0, 100):
+        #    trigger = (yield from self.trigger(epaddr))
+        #    if not trigger:
+        #        break
+        #    yield
         self.assertFalse(trigger)
 
         # Check the pending flag is raised
