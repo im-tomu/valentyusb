@@ -4,7 +4,6 @@ import unittest
 import inspect
 
 from itertools import zip_longest
-from migen import run_simulation as run_migen_simulation
 
 from ..endpoint import *
 from ..pid import *
@@ -22,11 +21,15 @@ def grouper(n, iterable, pad=None):
     """
     return zip_longest(*[iter(iterable)]*n, fillvalue=pad)
 
-# Test case helpers common to all test cases, simple and complex
-#
 class BaseUsbTestCase(unittest.TestCase):
-    # Create a name for the vcd file based on the test case module/class/method
+    """
+    Test case helpers common to all test cases, simple and complex
+    """
     def make_vcd_name(self, basename=None, modulename=None):
+        """
+        Create a name for the vcd file based on the test case
+        module/class/method
+        """
         if not basename:
             basename = self.id()
 
