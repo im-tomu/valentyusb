@@ -7,6 +7,7 @@ from migen import *
 from migen.fhdl.decorators import CEInserter, ResetInserter
 
 from ..utils.packet import b
+from ..test.common import BaseUsbTestCase
 
 
 @ResetInserter()
@@ -68,7 +69,7 @@ class TxShifter(Module):
         ]
 
 
-class TestTxShifter(unittest.TestCase):
+class TestTxShifter(BaseUsbTestCase):
     def test_shifter(self):
         test_vectors = {
             "basic shift out 1": dict(
@@ -191,7 +192,9 @@ class TestTxShifter(unittest.TestCase):
                 fname = name.replace(' ', '_')
                 dut = TxShifter(vector["width"])
 
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_tx_shifter_%s.vcd" % fname)
+                run_simulation(dut, stim(**vector),
+                    vcd_name=self.make_vcd_name(
+                        basename="usbcore.tx.shifter." + fname))
 
 
 if __name__ == "__main__":

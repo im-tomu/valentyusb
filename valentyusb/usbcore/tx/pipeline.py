@@ -9,6 +9,7 @@ from .bitstuff import TxBitstuffer
 from .nrzi import TxNRZIEncoder
 from .shifter import TxShifter
 from ..utils.packet import b, nrzi, diff
+from ..test.common import BaseUsbTestCase
 
 
 class TxPipeline(Module):
@@ -94,7 +95,7 @@ class TxPipeline(Module):
 
 
 
-class TestTxPipeline(unittest.TestCase):
+class TestTxPipeline(BaseUsbTestCase):
     maxDiff=None
 
     def test_pkt_decode(self):
@@ -293,7 +294,10 @@ class TestTxPipeline(unittest.TestCase):
             with self.subTest(name=name):
                 fname = name.replace(" ","_")
                 dut = TxPipeline()
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_pipeline_%s.vcd" % fname, clocks={"sys": 10, "usb_48": 40, "usb_12": 160})
+                run_simulation(dut, stim(**vector),
+                    vcd_name=self.make_vcd_name(
+                        basename="usbcore.tx.pipeline." + fname),
+                    clocks={"sys": 10, "usb_48": 40, "usb_12": 160})
 
 
 if __name__ == "__main__":

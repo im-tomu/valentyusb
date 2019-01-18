@@ -12,6 +12,7 @@ from ..utils.CrcMoose3 import CrcAlgorithm
 from ..utils.packet import crc5, crc16, encode_data, b
 from .shifter import TxShifter
 from .tester import module_tester
+from ..test.common import BaseUsbTestCase
 
 
 @CEInserter()
@@ -95,7 +96,7 @@ class TxSerialCrcGenerator(Module):
 
     o_crc       = ("width",)
 )
-class TestTxSerialCrcGenerator(unittest.TestCase):
+class TestTxSerialCrcGenerator(BaseUsbTestCase):
     def test_token_crc5_zeroes(self):
         self.do(
             width      = 5,
@@ -432,7 +433,7 @@ def o(d):
     return v
 
 
-class TestTxParallelCrcGenerator(unittest.TestCase):
+class TestTxParallelCrcGenerator(BaseUsbTestCase):
     def sim(self, name, dut, in_data, expected_crc):
         def stim():
             yield dut.i_data_strobe.eq(1)
@@ -446,7 +447,7 @@ class TestTxParallelCrcGenerator(unittest.TestCase):
             print("{0} {1:04x} {1:016b} {2:04x} {2:016b}".format(name, expected_crc, o_crc))
             self.assertEqual(hex(expected_crc), hex(o_crc))
 
-        run_simulation(dut, stim(), vcd_name="vcd/test_crc_parallel_%s.vcd" % self.id())
+        run_simulation(dut, stim(), vcd_name=self.make_vcd_name())
 
     def sim_crc16(self, in_data):
         expected_crc = o(crc16(in_data))
@@ -528,7 +529,7 @@ class TxCrcPipeline(Module):
         ]
 
 
-class TestCrcPipeline(unittest.TestCase):
+class TestCrcPipeline(BaseUsbTestCase):
     maxDiff=None
 
     def sim(self, data):
@@ -566,7 +567,7 @@ class TestCrcPipeline(unittest.TestCase):
                 yield
             self.assertLess(i, MAX)
 
-        run_simulation(dut, stim(), vcd_name="vcd/test_crc_pipeline_%s.vcd" % self.id())
+        run_simulation(dut, stim(), vcd_name=self.make_vcd_name())
 
     def test_00000001_byte(self):
         self.sim([0b00000001])
