@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import unittest
+import inspect
 
 from itertools import zip_longest
+from migen import run_simulation as run_migen_simulation
 
 from ..endpoint import *
 from ..pid import *
@@ -20,8 +22,29 @@ def grouper(n, iterable, pad=None):
     """
     return zip_longest(*[iter(iterable)]*n, fillvalue=pad)
 
+# Test case helpers common to all test cases, simple and complex
+#
+class BaseUsbTestCase(unittest.TestCase):
+    # Create a name for the vcd file based on the test case module/class/method
+    def make_vcd_name(self, basename=None, modulename=None):
+        if not basename:
+            basename = self.id()
 
-class CommonUsbTestCase(unittest.TestCase):
+            # Automagically guess caller's module if not defined and
+            # unittest.TestCase is finding __main__ as top level
+            if basename.startswith('__main__') and not modulename:
+                caller = inspect.stack()[1]
+                module = inspect.getmodule(caller[0])
+                modulename = module.__spec__.name
+
+            if modulename:
+                basename = basename.replace('__main__', modulename)
+
+        return ("vcd/%s.vcd" % basename)
+
+# Test case helper class for more complex test cases
+#
+class CommonUsbTestCase(BaseUsbTestCase):
     maxDiff=None
 
     def assertMultiLineEqualSideBySide(self, data1, data2, msg):
