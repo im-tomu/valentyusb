@@ -6,10 +6,11 @@ from migen import *
 
 MIGEN_SIGNALS = ("reset", "ce")
 
-# Helper to find the ultimate caller's module name (extra level further up
-# stack than case where test directly inherits from BaseUsbTestCase).
-#
 def get_ultimate_caller_modulename():
+    """
+    Helper to find the ultimate caller's module name (extra level further up
+    stack than case where test directly inherits from BaseUsbTestCase).
+    """
     caller = inspect.stack()[2]
     module = inspect.getmodule(caller[0])
     return module.__spec__.name
