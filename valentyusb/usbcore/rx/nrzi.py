@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from migen import *
+from ..test.common import BaseUsbTestCase
 
 import unittest
 
@@ -110,7 +111,7 @@ class RxNRZIDecoder(Module):
         ]
 
 
-class TestRxNRZIDecoder(unittest.TestCase):
+class TestRxNRZIDecoder(BaseUsbTestCase):
     def test_nrzi(self):
 
         def send(valid, value):
@@ -207,7 +208,9 @@ class TestRxNRZIDecoder(unittest.TestCase):
             with self.subTest(i=i, vector=vector):
                 dut = RxNRZIDecoder()
 
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_nrzi_%d.vcd" % i)
+                run_simulation(dut, stim(**vector),
+                    vcd_name=self.make_vcd_name(
+                        basename="usbcore.rx.nrzi.%d" % i))
                 i += 1
 
 

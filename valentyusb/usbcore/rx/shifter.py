@@ -2,6 +2,7 @@
 
 from migen import *
 from migen.fhdl.decorators import CEInserter, ResetInserter
+from ..test.common import BaseUsbTestCase
 
 import unittest
 
@@ -60,7 +61,7 @@ class RxShifter(Module):
         ]
 
 
-class TestRxShifter(unittest.TestCase):
+class TestRxShifter(BaseUsbTestCase):
     def test_shifter(self):
         test_vectors = [
             # 0
@@ -174,7 +175,8 @@ class TestRxShifter(unittest.TestCase):
                 dut = RxShifter(8)
 
                 actual_output.clear()
-                run_simulation(dut, send(**vector), vcd_name="vcd/test_shifter_%d.vcd" % i)
+                run_simulation(dut, send(**vector),
+                    vcd_name=self.make_vcd_name("usbcore.rx.shifter.%d" % i))
                 self.assertListEqual(vector['output'], actual_output)
 
 

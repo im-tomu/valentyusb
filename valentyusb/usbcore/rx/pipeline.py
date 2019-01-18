@@ -11,6 +11,7 @@ from .detect import RxPacketDetect
 from .nrzi import RxNRZIDecoder
 from .shifter import RxShifter
 from ..utils.packet import b, nrzi
+from ..test.common import BaseUsbTestCase
 
 
 class RxPipeline(Module):
@@ -93,7 +94,7 @@ class RxPipeline(Module):
 
 
 
-class TestRxPipeline(unittest.TestCase):
+class TestRxPipeline(BaseUsbTestCase):
     def test_pkt_decode(self):
 
         test_vectors = {
@@ -262,7 +263,8 @@ class TestRxPipeline(unittest.TestCase):
                 dut = RxPipeline()
                 run_simulation(
                     dut, stim(**vector),
-                    vcd_name="vcd/test_decode_%s.vcd" % fname,
+                    vcd_name=self.make_vcd_name(
+                        basename="usbcore.rx.pipeline." + fname),
                     clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
                 )
 

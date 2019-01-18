@@ -5,6 +5,7 @@ from migen.genlib import cdc
 
 from migen.fhdl.decorators import ResetInserter
 
+from ..test.common import BaseUsbTestCase
 import unittest
 
 
@@ -90,7 +91,7 @@ class RxPacketDetect(Module):
         ]
 
 
-class TestRxPacketDetect(unittest.TestCase):
+class TestRxPacketDetect(BaseUsbTestCase):
     def test_packet_detect(self):
 
         test_vectors = [
@@ -177,7 +178,9 @@ class TestRxPacketDetect(unittest.TestCase):
             with self.subTest(i=i, vector=vector):
                 dut = RxPacketDetect()
 
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_packet_det_%d.vcd" % i)
+                run_simulation(dut, stim(**vector),
+                    vcd_name=self.make_vcd_name(
+                        basename="usbcore.rx.detect.%d" % i))
                 i += 1
 
 

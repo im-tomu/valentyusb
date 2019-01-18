@@ -3,6 +3,7 @@
 from migen import *
 from migen.fhdl.decorators import ResetInserter
 
+from ..test.common import BaseUsbTestCase
 import unittest
 
 
@@ -84,7 +85,7 @@ class RxCrcChecker(Module):
         ]
 
 
-class TestRxCrcChecker(unittest.TestCase):
+class TestRxCrcChecker(BaseUsbTestCase):
     def test_shifter(self):
         def send(reset, valid, value):
             crc_good = ""
@@ -222,7 +223,9 @@ class TestRxCrcChecker(unittest.TestCase):
                     i_data,
                     i_reset)
 
-                run_simulation(dut, stim(**vector), vcd_name="vcd/test_crc_%d.vcd" % i)
+                run_simulation(dut, stim(**vector),
+                    vcd_name=self.make_vcd_name(
+                        basename="usbcore.rx.crc.%d" % i))
 
 
 if __name__ == "__main__":

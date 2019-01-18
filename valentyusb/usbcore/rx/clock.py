@@ -3,6 +3,7 @@
 from migen import *
 from migen.genlib import cdc
 
+from ..test.common import BaseUsbTestCase
 import unittest
 
 
@@ -156,7 +157,7 @@ class RxClockDataRecovery(Module):
 
 
 
-class TestRxClockDataRecovery(unittest.TestCase):
+class TestRxClockDataRecovery(BaseUsbTestCase):
     def test_basic_recovery(self):
         """
         This test covers basic clock and data recovery.
@@ -214,7 +215,9 @@ class TestRxClockDataRecovery(unittest.TestCase):
 
                 dut = RxClockDataRecovery(usbp_raw, usbn_raw)
 
-                run_simulation(dut, stim(), vcd_name="vcd/test_basic_recovery_%s.vcd" % seq)
+                run_simulation(dut, stim(),
+                    vcd_name=self.make_vcd_name(
+                        basename="usbcore.rx.clock.basic_recovery_%s" % seq))
 
 
         long_test_sequences = [
@@ -230,7 +233,10 @@ class TestRxClockDataRecovery(unittest.TestCase):
 
                     dut = RxClockDataRecovery(usbp_raw, usbn_raw)
 
-                    run_simulation(dut, stim(glitch), vcd_name="vcd/test_basic_recovery_%s_%d.vcd" % (seq, glitch))
+                    run_simulation(dut, stim(glitch),
+                        vcd_name=self.make_vcd_name(
+                            basename="usbcore.rx.clock.basic_recovery_" +
+                                     "%s_%d" % (seq, glitch)))
 
 
 if __name__ == "__main__":
