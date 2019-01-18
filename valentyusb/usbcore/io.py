@@ -106,6 +106,9 @@ class FakeIoBuf(Module):
         ]
 
     def recv(self, v):
+        tx_en = yield self.usb_tx_en
+        assert not tx_en, "Currently transmitting!"
+
         if v == '0' or v == '_':
             # SE0 - both lines pulled low
             yield self.usb_p_rx_io.eq(0)

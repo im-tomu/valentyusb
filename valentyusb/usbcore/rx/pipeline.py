@@ -15,6 +15,8 @@ from ..utils.packet import b, nrzi
 
 class RxPipeline(Module):
     def __init__(self):
+        self.reset = Signal()
+
         # 12MHz USB alignment pulse in 48MHz clock domain
         self.o_bit_strobe = Signal()
 
@@ -25,6 +27,7 @@ class RxPipeline(Module):
         self.o_data_strobe = Signal()
         self.o_data_payload = Signal(8)
 
+        self.o_pkt_start = Signal()
         self.o_pkt_end = Signal()
 
         # 48MHz domain
@@ -57,9 +60,10 @@ class RxPipeline(Module):
         detect = RxPacketDetect()
         self.submodules.detect = detect = ClockDomainsRenamer("usb_12")(detect)
         self.comb += [
+            self.o_pkt_start.eq(detect.o_pkt_start),
             detect.i_data.eq(bit_dat),
             reset.eq(~detect.o_pkt_active),
-            detect.reset.eq(bit_se0),
+            detect.reset.eq(bit_se0 | self.reset),
         ]
 
         bitstuff = RxBitstuffRemover()

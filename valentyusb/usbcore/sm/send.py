@@ -28,7 +28,8 @@ class TxPacketSend(Module):
 
         pid = Signal(4)
 
-        self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(FSM())
+        fsm = FSM()
+        self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(fsm)
         fsm.act('IDLE',
             #NextValue(tx.i_oe, self.i_pkt_start),
             NextValue(tx.i_oe, 0),
@@ -54,7 +55,7 @@ class TxPacketSend(Module):
                 If(pid & PIDTypes.TYPE_MASK == PIDTypes.HANDSHAKE,
                     NextState('WAIT_TRANSMIT'),
                 ).Elif(pid & PIDTypes.TYPE_MASK == PIDTypes.DATA,
-                    NextState('QUEUE_DATA'),
+                    NextState('QUEUE_DATA0'),
                 ).Else(
                     NextState('ERROR'),
                 ),
@@ -65,17 +66,17 @@ class TxPacketSend(Module):
         if auto_crc:
             nextstate = 'QUEUE_CRC0'
 
-        fsm.act('QUEUE_DATA',
+        fsm.act('QUEUE_DATA0',
             If(~self.i_data_ready,
                 NextState(nextstate),
             ).Else(
-                NextState('QUEUE_DATA0'),
+                NextState('QUEUE_DATAn'),
             ),
         )
 
         # Keep transmitting data bytes until the i_data_ready signal is not
         # high on a o_data_strobe event.
-        fsm.act('QUEUE_DATA0',
+        fsm.act('QUEUE_DATAn',
             tx.i_data_payload.eq(self.i_data_payload),
             self.o_data_ack.eq(tx.o_data_strobe),
             If(tx.o_data_strobe & ~self.i_data_ready,
@@ -95,7 +96,7 @@ class TxPacketSend(Module):
             self.comb += [
                 crc.i_data_payload.eq(self.i_data_payload),
                 crc.reset.eq(fsm.ongoing('QUEUE_PID')),
-                If(fsm.ongoing('QUEUE_DATA0'),
+                If(fsm.ongoing('QUEUE_DATAn'),
                     crc.i_data_strobe.eq(tx.o_data_strobe),
                 ),
             ]
@@ -124,7 +125,7 @@ class TxPacketSend(Module):
         fsm.act('ERROR')
 
 
-class CommonTxPacketSendTestCase(unittest.TestCase):
+class CommonTxPacketSendTestCase:
     maxDiff=None
 
     def assert_packet_sent(self, dut, pid, data=None, ndata=None):
@@ -227,7 +228,6 @@ class CommonTxPacketSendTestCase(unittest.TestCase):
         print("-----", len(self.id())*"-", "-----", sep="")
         return usb_p, usb_n
 
-
     def test_ack(self):
         self.sim(PID.ACK)
 
@@ -264,6 +264,9 @@ class CommonTxPacketSendTestCase(unittest.TestCase):
     def test_data0_all_zero(self):
         self.sim(PID.DATA0, data=[0, 0, 0, 0])
 
+    def test_data0_dat1234(self):
+        self.sim(PID.DATA0, data=[1, 2, 3, 4])
+
     def test_data1_all_zero(self):
         self.sim(PID.DATA1, data=[0, 0, 0, 0])
 
@@ -273,7 +276,7 @@ class CommonTxPacketSendTestCase(unittest.TestCase):
         ])
 
 
-class TestTxPacketSendNoCrc(CommonTxPacketSendTestCase):
+class TestTxPacketSendNoCrc(CommonTxPacketSendTestCase, unittest.TestCase):
     maxDiff=None
 
     def sim(self, pid, data=None):
@@ -295,7 +298,7 @@ class TestTxPacketSendNoCrc(CommonTxPacketSendTestCase):
         )
 
 
-class TestTxPacketSendAutoCrc(CommonTxPacketSendTestCase):
+class TestTxPacketSendAutoCrc(CommonTxPacketSendTestCase, unittest.TestCase):
     maxDiff=None
 
     def sim(self, pid, data=None):

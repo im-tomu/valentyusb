@@ -53,46 +53,54 @@ class CommonUsbTestCase(unittest.TestCase):
     # Host->Device
     def _send_packet(self, packet):
         """Send a USB packet."""
-        print("_send_packet(", packet, ")")
         packet = wrap_packet(packet)
+        self.assertEqual('J', packet[-1], "Packet didn't end in J: "+packet)
+
+        # FIXME: Horrible hack...
+        # Wait for 4 idle clock cycles before sending the packet..
+        yield from self.idle(4)
+
+        yield self.packet_h2d.eq(1)
         for v in packet:
             yield from self._update_internal_signals()
             yield from self.dut.iobuf.recv(v)
+            yield from self._update_internal_signals()
             yield from self.tick_usb()
         yield from self._update_internal_signals()
+        yield self.packet_h2d.eq(0)
+        eop = yield from self.dut.iobuf.current()
+        self.assertEqual('J', eop, "Packet didn't end in J")
 
     def send_token_packet(self, pid, addr, epaddr):
         epnum = EndpointType.epnum(epaddr)
-        yield self.packet_h2d.eq(1)
         yield from self._send_packet(token_packet(pid, addr, epnum))
-        yield self.packet_h2d.eq(0)
 
     def send_data_packet(self, pid, data):
         assert pid in (PID.DATA0, PID.DATA1), pid
-        yield self.packet_h2d.eq(1)
         yield from self._send_packet(data_packet(pid, data))
-        yield self.packet_h2d.eq(0)
+
+    def send_handshake(self, pid):
+        assert pid in (PID.ACK, PID.NAK, PID.STALL), pid
+        yield from self._send_packet(handshake_packet(pid))
+        # FIXME: Horrible hack...
+        # Wait for 16 idle cycles after sending handshake..
+        yield from self.idle(16)
 
     def send_ack(self):
-        yield self.packet_h2d.eq(1)
-        yield from self._send_packet(handshake_packet(PID.ACK))
-        yield self.packet_h2d.eq(0)
+        yield from self.send_handshake(PID.ACK)
 
     def send_nak(self):
-        yield self.packet_h2d.eq(1)
-        yield from self._send_packet(handshake_packet(PID.NAK))
-        yield self.packet_h2d.eq(0)
+        yield from self.send_handshake(PID.NAK)
 
     # Device->Host
     def expect_packet(self, packet, msg=None):
         """Except to receive the following USB packet."""
-        print("expect_packet", msg)
         yield self.packet_d2h.eq(1)
 
         # Wait for transmission to start
         yield from self.dut.iobuf.recv('I')
         tx = 0
-        for i in range(0, 2048):
+        for i in range(0, 100):
             yield from self._update_internal_signals()
             tx = yield self.dut.iobuf.usb_tx_en
             if tx:

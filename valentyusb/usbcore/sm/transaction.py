@@ -109,7 +109,7 @@ class UsbTransfer(Module):
         )
 
         transfer.act("WAIT_TOKEN",
-            If(rx.o_data_strobe,
+            If(rx.o_pkt_start,
                 NextState("RECV_TOKEN"),
             ),
         )
@@ -149,11 +149,11 @@ class UsbTransfer(Module):
 
                 # Setup transfer
                 If(self.tok == PID.SETUP,
-                    NextState("RECV_DATA"),
+                    NextState("WAIT_DATA"),
 
                 # Out transfer
                 ).Elif(self.tok == PID.OUT,
-                    NextState("RECV_DATA"),
+                    NextState("WAIT_DATA"),
 
                 # In transfer
                 ).Elif(self.tok == PID.IN,
@@ -169,16 +169,23 @@ class UsbTransfer(Module):
         )
 
         # Out + Setup pathway
+        transfer.act("WAIT_DATA",
+            If(rxstate.o_decoded,
+                If((rxstate.o_pid & PIDTypes.TYPE_MASK) == PIDTypes.DATA,
+                    NextState('RECV_DATA'),
+                ).Else(
+                    NextState('ERROR'),
+                )
+            ),
+        )
+
         transfer.act("RECV_DATA",
-            #If(rxstate.o_decoded,
-            #    If((rxstate.o_pid & PIDTypes.TYPE_MASK) != PIDTypes.DATA,
-            #        NextState('ERROR'),
-            #    ),
-            #),
             If(response_pid == PID.ACK,
                 self.data_recv_put.eq(rx.o_data_strobe),
             ),
-            If(rx.o_pkt_end, NextState("SEND_HAND")),
+            If(rx.o_pkt_end,
+                NextState("SEND_HAND"),
+            ),
         )
         self.comb += [
             self.data_recv_payload.eq(rx.o_data_payload),
@@ -187,7 +194,7 @@ class UsbTransfer(Module):
         # In pathway
         transfer.act("SEND_DATA",
             self.data_send_get.eq(txstate.o_data_ack),
-            If(txstate.o_pkt_end, NextState("RECV_HAND")),
+            If(txstate.o_pkt_end, NextState("WAIT_HAND")),
         )
         self.comb += [
             txstate.i_data_payload.eq(self.data_send_payload),
@@ -195,10 +202,16 @@ class UsbTransfer(Module):
         ]
 
         # Handshake
-        transfer.act("RECV_HAND",
-            # Host can't reject?
-            self.commit.eq(1),
-            If(rx.o_pkt_end, NextState("WAIT_TOKEN")),
+        transfer.act("WAIT_HAND",
+            If(rxstate.o_decoded,
+                self.commit.eq(1),
+                # Host can't reject?
+                If((rxstate.o_pid & PIDTypes.TYPE_MASK) == PIDTypes.HANDSHAKE,
+                    NextState('WAIT_TOKEN'),
+                ).Else(
+                    NextState('ERROR'),
+                )
+            ),
         )
         transfer.act("SEND_HAND",
             self.setup.eq(self.tok == (PID.SETUP >> 2)),
@@ -210,6 +223,12 @@ class UsbTransfer(Module):
             If(txstate.o_pkt_end, NextState("WAIT_TOKEN")),
         )
 
+        # Code to reset header decoder when entering the WAIT_XXX states.
+        self.comb += [
+            If(tx.o_oe,
+                rx.reset.eq(1),
+            ),
+        ]
         # Code to initiate the sending of packets when entering the SEND_XXX
         # states.
         self.comb += [
@@ -314,6 +333,9 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
 
     def run_sim(self, stim):
         def padfront():
+            yield self.packet_h2d.eq(0)
+            yield self.packet_d2h.eq(0)
+            yield self.packet_idle.eq(0)
             yield
             yield
             yield
@@ -361,7 +383,6 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         addr = yield dut.addr
         endp = yield dut.endp
 
-        print("clk12", tok, addr, endp)
         if endp > 2:
             return
 
@@ -389,6 +410,7 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
                 yield dut.arm.eq(1)
 
             if commit:
+                oep.dtb = not oep.dtb
                 oep.trigger = True
 
         # -----
@@ -396,17 +418,18 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         # Device->Host pathway
         iep = self.endpoints[EndpointType.epaddr(endp, EndpointType.IN)]
         data_send_get = yield dut.data_send_get
-        self.ep_print(EndpointType.epaddr(endp, EndpointType.IN), "%s", iep)
-        if not iep.pending:
-            assert iep.data is not None
-            if len(iep.data) > 0:
-                yield dut.data_send_have.eq(1)
-                yield dut.data_send_payload.eq(iep.data[0])
-                if data_send_get:
-                    iep.data.pop(0)
+
+        if iep.data:
+            yield dut.data_send_payload.eq(iep.data[0])
+        else:
+            yield dut.data_send_payload.eq(0xff)
+
+        if not iep.pending and iep.data:
+            yield dut.data_send_have.eq(len(iep.data) > 1)
+            if data_send_get:
+                iep.data.pop(0)
         else:
             yield dut.data_send_have.eq(0)
-            yield dut.data_send_payload.eq(0xff)
             self.assertFalse(data_send_get)
 
         # Device->Host State flags
@@ -424,6 +447,7 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
             yield dut.dtb.eq(iep.dtb)
 
             if commit:
+                iep.dtb = not iep.dtb
                 iep.trigger = True
 
         # -----
@@ -499,7 +523,7 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         if False:
             yield
 
-        self.ep_print(epaddr, "Set: %r", data)
+        self.ep_print(epaddr, "set_data: %r", data)
         self.endpoints[epaddr].data = data
 
     def expect_data(self, epaddr, data):
@@ -512,8 +536,14 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         assert actual_data is not None
         self.endpoints[epaddr].data = None
 
+        # Strip the last two bytes which contain the CRC16
+        assert len(actual_data) > 2, actual_data
+        actual_data, actual_crc = actual_data[:2], actual_data[-2:]
+
         self.ep_print(epaddr, "Got: %r (expected: %r)", actual_data, data)
         self.assertSequenceEqual(data, actual_data)
+
+        self.assertSequenceEqual(crc16(data), actual_crc)
 
     def dtb(self, epaddr):
         if False:
