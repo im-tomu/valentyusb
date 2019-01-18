@@ -193,8 +193,7 @@ class TestTxShifter(BaseUsbTestCase):
                 dut = TxShifter(vector["width"])
 
                 run_simulation(dut, stim(**vector),
-                    vcd_name=self.make_vcd_name(
-                        basename="usbcore.tx.shifter." + fname))
+                    vcd_name=self.make_vcd_name(testsuffix=fname))
 
 
 if __name__ == "__main__":

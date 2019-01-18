@@ -179,8 +179,7 @@ class TestRxPacketDetect(BaseUsbTestCase):
                 dut = RxPacketDetect()
 
                 run_simulation(dut, stim(**vector),
-                    vcd_name=self.make_vcd_name(
-                        basename="usbcore.rx.detect.%d" % i))
+                    vcd_name=self.make_vcd_name(testsuffix=str(i)))
                 i += 1
 
 

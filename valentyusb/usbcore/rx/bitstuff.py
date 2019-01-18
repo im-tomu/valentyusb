@@ -201,8 +201,7 @@ class TestRxBitstuffRemover(BaseUsbTestCase):
                 dut = RxBitstuffRemover()
 
                 run_simulation(dut, stim(**vector),
-                    vcd_name=self.make_vcd_name(
-                        basename="usbcore.rx.bitstuff.%d" % i))
+                    vcd_name=self.make_vcd_name(testsuffix=str(i)))
                 i += 1
 
 

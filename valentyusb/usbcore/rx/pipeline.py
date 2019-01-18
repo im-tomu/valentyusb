@@ -263,8 +263,7 @@ class TestRxPipeline(BaseUsbTestCase):
                 dut = RxPipeline()
                 run_simulation(
                     dut, stim(**vector),
-                    vcd_name=self.make_vcd_name(
-                        basename="usbcore.rx.pipeline." + fname),
+                    vcd_name=self.make_vcd_name(testsuffix=fname),
                     clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
                 )
 

@@ -209,8 +209,7 @@ class TestRxNRZIDecoder(BaseUsbTestCase):
                 dut = RxNRZIDecoder()
 
                 run_simulation(dut, stim(**vector),
-                    vcd_name=self.make_vcd_name(
-                        basename="usbcore.rx.nrzi.%d" % i))
+                    vcd_name=self.make_vcd_name(testsuffix=str(i)))
                 i += 1
 
 

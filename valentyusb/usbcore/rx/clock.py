@@ -217,7 +217,7 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
 
                 run_simulation(dut, stim(),
                     vcd_name=self.make_vcd_name(
-                        basename="usbcore.rx.clock.basic_recovery_%s" % seq))
+                        testsuffix="clock.basic_recovery_%s" % seq))
 
 
         long_test_sequences = [
@@ -235,7 +235,7 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
 
                     run_simulation(dut, stim(glitch),
                         vcd_name=self.make_vcd_name(
-                            basename="usbcore.rx.clock.basic_recovery_" +
+                            testsuffix="basic_recovery_" +
                                      "%s_%d" % (seq, glitch)))
 
 

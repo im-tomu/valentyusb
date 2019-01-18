@@ -224,8 +224,7 @@ class TestRxCrcChecker(BaseUsbTestCase):
                     i_reset)
 
                 run_simulation(dut, stim(**vector),
-                    vcd_name=self.make_vcd_name(
-                        basename="usbcore.rx.crc.%d" % i))
+                    vcd_name=self.make_vcd_name(testsuffix=str(i)))
 
 
 if __name__ == "__main__":

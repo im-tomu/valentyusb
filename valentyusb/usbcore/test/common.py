@@ -25,10 +25,10 @@ class BaseUsbTestCase(unittest.TestCase):
     """
     Test case helpers common to all test cases, simple and complex
     """
-    def make_vcd_name(self, basename=None, modulename=None):
+    def make_vcd_name(self, basename=None, modulename=None, testsuffix=None):
         """
         Create a name for the vcd file based on the test case
-        module/class/method
+        module/class/method, with optional testsuffix (eg, foo.N)
         """
         if not basename:
             basename = self.id()
@@ -43,7 +43,10 @@ class BaseUsbTestCase(unittest.TestCase):
             if modulename:
                 basename = basename.replace('__main__', modulename)
 
-        return ("vcd/%s.vcd" % basename)
+        if testsuffix:
+            return ("vcd/%s.%s.vcd" % (basename, testsuffix))
+        else:
+            return ("vcd/%s.vcd" % basename)
 
 # Test case helper class for more complex test cases
 #
