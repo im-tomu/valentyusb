@@ -184,7 +184,7 @@ class TestUsbUniFifo(CommonUsbTestCase):
         print("-"*10)
         run_simulation(
             self.dut, padfront(),
-            vcd_name="vcd/%s.vcd" % self.id(),
+            vcd_name=self.make_vcd_name(),
             clocks={"sys": 4, "usb_48": 4, "usb_12": 16},
         )
         #    clocks={"usb_48": 4, "sys": 4})
