@@ -538,7 +538,7 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
 
         # Strip the last two bytes which contain the CRC16
         assert len(actual_data) > 2, actual_data
-        actual_data, actual_crc = actual_data[:2], actual_data[-2:]
+        actual_data, actual_crc = actual_data[:-2], actual_data[-2:]
 
         self.ep_print(epaddr, "Got: %r (expected: %r)", actual_data, data)
         self.assertSequenceEqual(data, actual_data)
