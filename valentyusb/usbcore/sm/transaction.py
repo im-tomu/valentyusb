@@ -16,6 +16,7 @@ from .send import TxPacketSend
 
 from ..utils.packet import *
 from ..test.common import CommonUsbTestCase
+from ..test.clock import CommonTestMultiClockDomain
 
 
 class UsbTransfer(Module):
@@ -257,40 +258,12 @@ class UsbTransfer(Module):
         ]
 
 
-class CommonTestMultiClockDomain:
-    def setUp(self, clock_names=("usb_12", "usb_48")):
-        self.signals = {}
-        self.cycle_count = {}
-        self.last_value = {}
-        for n in clock_names:
-            self.signals[n] = ClockSignal(n)
-            self.cycle_count[n] = 0
-            self.last_value[n] = 0
-
-    def _update_clocks(self):
-        for n in self.signals:
-            current_value = yield self.signals[n]
-            # Run the callback
-            if current_value and not self.last_value[n]:
-                yield from getattr(self, "on_%s_edge" % n)()
-                self.cycle_count[n] += 1
-            self.last_value[n] = current_value
-
-    def on_usb_12_edge(self):
-        if False:
-            yield
-
-    def on_usb_48_edge(self):
-        if False:
-            yield
-
-
 class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
 
     maxDiff=None
 
     def setUp(self):
-        CommonTestMultiClockDomain.setUp(self)
+        CommonTestMultiClockDomain.setUp(self, ("usb_12", "usb_48"))
 
         self.iobuf = FakeIoBuf()
         self.dut = UsbTransfer(self.iobuf)
@@ -360,20 +333,15 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         print()
         print("-"*10)
         run_simulation(
-            self.dut, padfront(),
+            self.dut,
+            padfront(),
             vcd_name=self.make_vcd_name(),
             clocks={"sys": 12, "usb_48": 48, "usb_12": 192},
         )
         print("-"*10)
 
     def tick_usb(self):
-        count_last = self.cycle_count["usb_48"]
-        while True:
-            yield from self._update_internal_signals()
-            count_next = self.cycle_count["usb_48"]
-            if count_last != count_next:
-                break
-            yield
+        yield from self.wait_for_edge("usb_48")
 
     def on_usb_48_edge(self):
         if False:
@@ -470,14 +438,14 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
             iep.response = EndpointResponse.NAK
             iep.dtb = True
 
-    def _update_internal_signals(self):
+    def update_internal_signals(self):
         for ep in self.endpoints.values():
             if ep.trigger:
                 ep.pending = True
                 ep.trigger = False
         del ep
 
-        yield from self._update_clocks()
+        yield from self.update_clocks()
 
     ######################################################################
     ## Helpers
@@ -485,11 +453,11 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
 
     # IRQ / packet pending -----------------
     def trigger(self, epaddr):
-        yield from self._update_internal_signals()
+        yield from self.update_internal_signals()
         return self.endpoints[epaddr].trigger
 
     def pending(self, epaddr):
-        yield from self._update_internal_signals()
+        yield from self.update_internal_signals()
         return self.endpoints[epaddr].pending or self.endpoints[epaddr].trigger
 
     def clear_pending(self, epaddr):
@@ -560,7 +528,6 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
 
         self.ep_print(epaddr, "Got: %r (expected: %r)", actual_data, data)
         self.assertSequenceEqual(data, actual_data)
-
         self.assertSequenceEqual(crc16(data), actual_crc)
 
     def dtb(self, epaddr):

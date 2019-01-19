@@ -64,12 +64,6 @@ class CommonUsbTestCase(BaseUsbTestCase):
             EndpointType.epdir(epaddr).name,
             msg) % args)
 
-    def tick_usb(self):
-        yield
-        yield
-        yield
-        yield
-
     ######################################################################
     # Helper methods
     # FIXME: Should these be marked as internal only?
@@ -93,11 +87,11 @@ class CommonUsbTestCase(BaseUsbTestCase):
 
         yield self.packet_h2d.eq(1)
         for v in packet:
-            yield from self._update_internal_signals()
+            yield from self.update_internal_signals()
             yield from self.dut.iobuf.recv(v)
-            yield from self._update_internal_signals()
+            yield from self.update_internal_signals()
             yield from self.tick_usb()
-        yield from self._update_internal_signals()
+        yield from self.update_internal_signals()
         yield self.packet_h2d.eq(0)
         eop = yield from self.dut.iobuf.current()
         self.assertEqual('J', eop, "Packet didn't end in J")
@@ -132,7 +126,7 @@ class CommonUsbTestCase(BaseUsbTestCase):
         yield from self.dut.iobuf.recv('I')
         tx = 0
         for i in range(0, 100):
-            yield from self._update_internal_signals()
+            yield from self.update_internal_signals()
             tx = yield self.dut.iobuf.usb_tx_en
             if tx:
                 break
@@ -142,7 +136,7 @@ class CommonUsbTestCase(BaseUsbTestCase):
         # Read in the transmission data
         result = ""
         for i in range(0, 2048):
-            yield from self._update_internal_signals()
+            yield from self.update_internal_signals()
 
             result += yield from self.iobuf.current()
             yield from self.tick_usb()
@@ -184,10 +178,6 @@ class CommonUsbTestCase(BaseUsbTestCase):
         yield self.packet_d2h.eq(1)
         yield from self.expect_packet(handshake_packet(PID.STALL), "Expected STALL packet.")
         yield self.packet_d2h.eq(0)
-
-    def expect_last_tok(self, epaddr, value):
-        if False:
-            yield
 
     def check_pending(self, epaddr):
         # Check no pending packets
@@ -370,14 +360,20 @@ class CommonUsbTestCase(BaseUsbTestCase):
     def run_sim(self, stim):
         raise NotImplementedError
 
+    def tick_usb(self):
+        raise NotImplementedError
+
+    def update_internal_signals(self):
+        raise NotImplementedError
+
     # IRQ / packet pending -----------------
     def trigger(self, epaddr):
         raise NotImplementedError
 
-    def clear_pending(self, epaddr):
+    def pending(self, epaddr):
         raise NotImplementedError
 
-    def pending(self, epaddr):
+    def clear_pending(self, epaddr):
         raise NotImplementedError
 
     # Endpoint state -----------------------
@@ -387,11 +383,18 @@ class CommonUsbTestCase(BaseUsbTestCase):
     def set_response(self, epaddr, v):
         raise NotImplementedError
 
+    def expect_last_tok(self, epaddr, value):
+        if False:
+            yield
+
     # Get/set endpoint data ----------------
     def set_data(self, epaddr, data):
         raise NotImplementedError
 
     def expect_data(self, epaddr, data):
+        raise NotImplementedError
+
+    def dtb(self, epaddr):
         raise NotImplementedError
 
     ######################################################################

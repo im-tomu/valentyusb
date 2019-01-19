@@ -13,6 +13,8 @@ from litex.soc.interconnect.csr import *
 
 from litex.soc.cores.gpio import GPIOOut
 
+from ..pid import PID, PIDTypes
+from ..endpoint import EndpointType, EndpointResponse
 from ..sm.transaction import UsbTransfer
 
 
@@ -231,7 +233,7 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         ]
 
         self.sync += [
-            If(transfer_commit,
+            If(usb_core.commit,
                 eps[eps_idx].last_tok.status.eq(usb_core.tok),
             ),
         ]

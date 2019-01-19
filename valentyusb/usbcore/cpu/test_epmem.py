@@ -3,6 +3,9 @@
 import unittest
 from unittest import TestCase
 
+from migen import *
+
+from .epmem import MemInterface
 
 class TestMemInterface(CommonUsbTestCase):
 
@@ -10,12 +13,12 @@ class TestMemInterface(CommonUsbTestCase):
 
     def setUp(self):
         self.iobuf = TestIoBuf()
-        self.dut = UsbDeviceCpuMemInterface(self.iobuf, 3)
+        self.dut = ClockDomainsRenamer("cpu_12")(
+            UsbDeviceCpuMemInterface(self.iobuf, num_endpoints=3))
 
         self.packet_h2d = Signal(1)
         self.packet_d2h = Signal(1)
         self.packet_idle = Signal(1)
-
 
     def run_sim(self, stim):
         def padfront():
@@ -31,7 +34,20 @@ class TestMemInterface(CommonUsbTestCase):
             yield from self.idle()
             yield from stim()
 
-        run_simulation(self.dut, padfront(), vcd_name="vcd/%s.vcd" % self.id(), clocks={"usb_48": 4, "sys": 4})
+        print()
+        print("-"*10)
+        run_simulation(
+            self.dut,
+            padfront(),
+            vcd_name=self.make_vcd_name(),
+            clocks={
+                "sys": 12,
+                "usb_48": 48,
+                "usb_12": 192,
+                "cpu_12": 192,
+            },
+        )
+        print("-"*10)
 
     def _update_internal_signals(self):
         if False:

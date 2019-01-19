@@ -14,7 +14,7 @@ from litex.soc.interconnect.csr import *
 from litex.soc.cores.gpio import GPIOOut
 
 
-class UsbDeviceCpuMemInterface(Module, AutoCSR):
+class MemInterface(Module, AutoCSR):
     """
     Interfaces the USB state machine core to the soft CPU.
 
@@ -52,7 +52,7 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
 
         self.iobuf = iobuf
         self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
-        self.submodules.usb = ClockDomainsRenamer("usb_48")(UsbCore(iobuf))
+        self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
 
         #self.submodules.packet = ev.EventManager()
         #self.packet.setup = ev.EventSourcePulse()
@@ -76,6 +76,11 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
 
         self.packet.finalize()
 
+        self.eps_idx = eps_idx = Signal(5)
+        self.comb += [
+            self.eps_idx.eq(Cat(usb_core.endp, usb_core.tok == PID.IN)),
+        ]
+
         l = num_endpoints * 2
 
         self.submodules.sta = CSRStorage(l)                         # Stall endpoint
@@ -83,20 +88,20 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
         self.submodules.arm = CSRStorage(l)                         # Endpoint is ready
 
         self.comb += [
-            self.usb.sta.eq(self.csr_bits(self.sta)[self.usb.fast_ep_addr]),
-            self.usb.dtb.eq(self.csr_bits(self.dtb)[self.usb.fast_ep_addr]),
-            self.usb.arm.eq(self.csr_bits(self.arm)[self.usb.fast_ep_addr]), # & Array(self.packet.pending.r)[self.usb.fast_ep_addr]),
+            usb_core.sta.eq(self.csr_bits(self.sta)[eps_idx]),
+            usb_core.dtb.eq(self.csr_bits(self.dtb)[eps_idx]),
+            usb_core.arm.eq(self.csr_bits(self.arm)[eps_idx]), # & Array(self.packet.pending.r)[eps_idx]),
             If(~iobuf.usb_pullup,
                 *all_trig,
             ).Else(
-                Array(trig)[self.usb.ep_addr].eq(self.usb.transfer_commit),
+                Array(trig)[usb_core.ep_addr].eq(usb_core.commit),
             ),
         ]
 
         # Output pathway
         # -----------------------
         self.specials.obuf = Memory(8, depth)
-        self.specials.oport_wr = self.obuf.get_port(write_capable=True, clock_domain="usb_48")
+        self.specials.oport_wr = self.obuf.get_port(write_capable=True, clock_domain="usb_12")
         self.specials.oport_rd = self.obuf.get_port(clock_domain="sys")
 
         optrs = []
@@ -107,26 +112,26 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
         self.obuf_ptr = Signal(ptr_width)
         self.comb += [
             self.oport_wr.adr.eq(self.obuf_ptr),
-            self.oport_wr.dat_w.eq(self.usb.data_recv_payload),
-            self.oport_wr.we.eq(self.usb.data_recv_put),
+            self.oport_wr.dat_w.eq(usb_core.data_recv_payload),
+            self.oport_wr.we.eq(usb_core.data_recv_put),
         ]
         # On a commit, copy the current obuf_ptr to the CSR register.
         self.sync += [
-            If(self.usb.transfer_commit,
-                If((self.usb.transfer_tok == PID.OUT) | (self.usb.transfer_tok == PID.SETUP),
-                    Array(optrs)[self.usb.ep_num].eq(self.obuf_ptr),
+            If(usb_core.commit,
+                If((usb_core.tok == PID.OUT) | (usb_core.tok == PID.SETUP),
+                    Array(optrs)[usb_core.endp].eq(self.obuf_ptr),
                 ),
             ),
         ]
-        self.sync.usb_48 += [
-            If(self.usb.data_recv_put, self.obuf_ptr.eq(self.obuf_ptr + 1)),
+        self.sync.usb_12 += [
+            If(usb_core.data_recv_put, self.obuf_ptr.eq(self.obuf_ptr + 1)),
         ]
 
         # Input pathway
         # -----------------------
         self.specials.ibuf = Memory(8, depth)
         self.specials.iport_wr = self.ibuf.get_port(write_capable=True, clock_domain="sys")
-        self.specials.iport_rd = self.ibuf.get_port(clock_domain="usb_48")
+        self.specials.iport_rd = self.ibuf.get_port(clock_domain="usb_12")
 
         #for i in range(0, num_endpoints):
         #    exec("self.submodules.iptr_ep{0} = CSRStorage(ptr_width, name='iptr_ep{0}')".format(i))
@@ -147,18 +152,18 @@ class UsbDeviceCpuMemInterface(Module, AutoCSR):
         self.ibuf_ptr = Signal(ptr_width)
         self.comb += [
             self.iport_rd.adr.eq(self.ibuf_ptr),
-            self.usb.data_send_payload.eq(self.iport_rd.dat_r),
+            usb_core.data_send_payload.eq(self.iport_rd.dat_r),
             #self.iport_rd.re.eq(),
         ]
         # On a transfer start, copy the CSR register into ibuf_ptr
         self.sync += [
-            If(self.usb.transfer_start,
-                self.ibuf_ptr.eq(Array(iptrs)[self.usb.fast_ep_num]),
+            If(usb_core.start,
+                self.ibuf_ptr.eq(Array(iptrs)[usb_core.endp]),
             ),
         ]
-        self.sync.usb_48 += [
-            If(self.usb.data_send_get, self.ibuf_ptr.eq(self.ibuf_ptr + 1)),
+        self.sync.usb_12 += [
+            If(usb_core.data_send_get, self.ibuf_ptr.eq(self.ibuf_ptr + 1)),
         ]
         self.comb += [
-            self.usb.data_send_have.eq(self.ibuf_ptr != Array(ilens)[self.usb.ep_num]),
+            usb_core.data_send_have.eq(self.ibuf_ptr != Array(ilens)[usb_core.endp]),
         ]
