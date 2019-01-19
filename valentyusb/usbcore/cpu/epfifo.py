@@ -13,8 +13,8 @@ from litex.soc.interconnect.csr import *
 
 from litex.soc.cores.gpio import GPIOOut
 
-from ..pid import PID, PIDTypes
 from ..endpoint import EndpointType, EndpointResponse
+from ..pid import PID, PIDTypes
 from ..sm.transaction import UsbTransfer
 
 
@@ -31,6 +31,9 @@ class FakeFifo(Module):
 
 class Endpoint(Module, AutoCSR):
     def __init__(self):
+        Module.__init__(self)
+        AutoCSR.__init__(self)
+
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.error = ev.EventSourcePulse()
         self.ev.submodules.packet = ev.EventSourcePulse()
@@ -80,6 +83,7 @@ class Endpoint(Module, AutoCSR):
             ),
         ]
 
+
 class EndpointNone(Module):
     def __init__(self):
         self.ibuf = FakeFifo()
@@ -95,7 +99,7 @@ class EndpointNone(Module):
         self.dtb.storage = Signal()
 
 
-class EndpointIn(Module, AutoCSR):
+class EndpointIn(Endpoint):
     """Endpoint for Device->Host data.
 
     Reads from the buffer memory.
@@ -118,7 +122,7 @@ class EndpointIn(Module, AutoCSR):
         self.obuf = FakeFifo()
 
 
-class EndpointOut(Module, AutoCSR):
+class EndpointOut(Endpoint):
     """Endpoint for Host->Device data.
 
     Raises packet IRQ when new packet has arrived.
@@ -160,12 +164,11 @@ class PerEndpointFifoInterface(Module, AutoCSR):
     def __init__(self, iobuf, endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]):
         size = 9
 
-        self.iobuf = iobuf
-
-        self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
-
         # USB Core
         self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
+
+        self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
+        self.iobuf = usb_core.iobuf
 
         # Endpoint controls
         ems = []
@@ -192,12 +195,41 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             trigger_all.append(iep.trigger.eq(1)),
             eps.append(iep)
 
+        #self.submodules.ep_0_out = EndpointOut()
+        #ems.append(self.ep_0_out.ev)
+        #eps.append(self.ep_0_out)
+        #trigger_all.append(self.ep_0_out.trigger.eq(1))
+        #
+        #self.submodules.ep_0_in = EndpointIn()
+        #ems.append(self.ep_0_in.ev)
+        #eps.append(self.ep_0_in)
+        #trigger_all.append(self.ep_0_in.trigger.eq(1))
+        #
+        #self.submodules.ep_1_out = EndpointOut()
+        #ems.append(self.ep_1_out.ev)
+        #eps.append(self.ep_1_out)
+        #trigger_all.append(self.ep_1_out.trigger.eq(1))
+        #
+        #self.submodules.ep_1_in = EndpointIn()
+        #ems.append(self.ep_1_in.ev)
+        #eps.append(self.ep_1_in)
+        #trigger_all.append(self.ep_1_in.trigger.eq(1))
+        #
+        #self.submodules.ep_2_out = EndpointOut()
+        #ems.append(self.ep_2_out.ev)
+        #eps.append(self.ep_2_out)
+        #trigger_all.append(self.ep_2_out.trigger.eq(1))
+        #
+        #self.submodules.ep_2_in = EndpointNone()
+        #eps.append(self.ep_2_in)
+        #trigger_all.append(self.ep_2_in.trigger.eq(1))
+
         self.submodules.ev = ev.SharedIRQ(*ems)
 
         self.eps = eps = Array(eps)
         self.eps_idx = eps_idx = Signal(5)
         self.comb += [
-            self.eps_idx.eq(Cat(usb_core.endp, usb_core.tok == PID.IN)),
+            self.eps_idx.eq(Cat(usb_core.tok == PID.IN, usb_core.endp)),
         ]
 
         ep0out_addr = EndpointType.epaddr(0, EndpointType.OUT)
@@ -234,6 +266,6 @@ class PerEndpointFifoInterface(Module, AutoCSR):
 
         self.sync += [
             If(usb_core.commit,
-                eps[eps_idx].last_tok.status.eq(usb_core.tok),
+                eps[eps_idx].last_tok.status.eq(usb_core.tok[2:]),
             ),
         ]

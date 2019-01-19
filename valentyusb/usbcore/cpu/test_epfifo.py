@@ -8,10 +8,12 @@ from migen import *
 from ..endpoint import EndpointType, EndpointResponse
 from ..io import FakeIoBuf
 from ..pid import PIDTypes
-from .epfifo import PerEndpointFifoInterface
+from ..utils.packet import crc16
 
 from ..test.common import CommonUsbTestCase
 from ..test.clock import CommonTestMultiClockDomain
+
+from .epfifo import PerEndpointFifoInterface
 
 
 class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain):
@@ -39,15 +41,13 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
     def setUp(self):
         CommonTestMultiClockDomain.setUp(self, ("usb_12", "usb_48"))
 
-        self.endpoints = [EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]
-
         self.iobuf = FakeIoBuf()
+        self.endpoints = [EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]
         self.dut = PerEndpointFifoInterface(self.iobuf, self.endpoints)
 
         self.packet_h2d = Signal(1)
         self.packet_d2h = Signal(1)
         self.packet_idle = Signal(1)
-
 
     def run_sim(self, stim):
         def padfront():
@@ -58,18 +58,24 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
             yield
             yield
             # Make sure that the endpoints are currently blocked
-            #ostatus = yield self.dut.ep_0_out.ev.packet.pending
-            #self.assertTrue(ostatus)
-            #istatus = yield self.dut.ep_0_in.ev.packet.pending
-            #self.assertTrue(istatus)
+            opending = yield self.dut.ep_0_out.ev.packet.pending
+            self.assertTrue(opending)
+            ipending = yield self.dut.ep_0_in.ev.packet.pending
+            self.assertTrue(ipending)
             yield
             yield from self.dut.pullup._out.write(1)
             yield
-            # Make sure that the endpoints are currently blocked
-            ostatus = yield self.dut.ep_0_out.ev.packet.pending
-            self.assertTrue(ostatus)
-            istatus = yield self.dut.ep_0_in.ev.packet.pending
-            self.assertTrue(istatus)
+            # Make sure that the endpoints are currently blocked but not being
+            # triggered.
+            opending = yield self.dut.ep_0_out.ev.packet.pending
+            self.assertTrue(opending)
+            ipending = yield self.dut.ep_0_in.ev.packet.pending
+            self.assertTrue(ipending)
+
+            otrigger = yield self.dut.ep_0_out.ev.packet.trigger
+            self.assertFalse(otrigger)
+            itrigger = yield self.dut.ep_0_in.ev.packet.trigger
+            self.assertFalse(itrigger)
 
             yield
             yield from self.idle()
@@ -81,13 +87,22 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
             self.dut,
             padfront(),
             vcd_name=self.make_vcd_name(),
+            #clocks={
+            #    "sys": 12,
+            #    "usb_48": 48,
+            #    "usb_12": 192,
+            #},
             clocks={
-                "sys": 12,
-                "usb_48": 48,
-                "usb_12": 192,
+                "sys": 2,
+                "usb_48": 8,
+                "usb_12": 32,
             },
         )
         print("-"*10)
+
+    def tick(self):
+        yield from self.update_internal_signals()
+        yield
 
     def tick_usb(self):
         yield from self.wait_for_edge("usb_48")
@@ -108,17 +123,18 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
 
     def clear_pending(self, epaddr):
         # Can't clear pending while trigger is active.
-        while True:
+        for i in range(0, 100):
             trigger = (yield from self.trigger(epaddr))
             if not trigger:
                 break
-            yield
+            yield from self.tick()
+        self.assertFalse(trigger)
         # Check the pending flag is raised
         self.assertTrue((yield from self.pending(epaddr)))
         # Clear pending flag
         endpoint = self.get_endpoint(epaddr)
         yield from endpoint.ev.pending.write(0xf)
-        yield
+        yield from self.tick()
         # Check the pending flag has been cleared
         self.assertFalse((yield from self.trigger(epaddr)))
         self.assertFalse((yield from self.pending(epaddr)))
@@ -139,7 +155,6 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
         last_tok = yield from endpoint.last_tok.read()
         self.assertEqual(last_tok, value)
 
-
     # Get/set endpoint data ----------------
     def set_data(self, epaddr, data):
         """Set an endpoints buffer to given data to be sent."""
@@ -150,7 +165,8 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
 
         # Make sure the endpoint is empty
         empty = yield from endpoint.ibuf_empty.read()
-        self.assertTrue(empty)
+        self.assertTrue(
+            empty, "Device->Host buffer not empty when setting data!")
 
         # If we are writing multiple bytes of data, need to make sure we are
         # not going to ACK the packet until the data is ready.
@@ -160,17 +176,18 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
 
         for v in data:
             yield from endpoint.ibuf_head.write(v)
-            yield
+            yield from self.tick_usb()
 
-        yield
-        yield
-        yield
+        for i in range(4):
+            yield from self.tick_usb()
+
+        empty = yield from endpoint.ibuf_empty.read()
         if len(data) > 0:
-            empty = yield from endpoint.ibuf_empty.read()
-            self.assertFalse(bool(empty))
+            self.assertFalse(
+                bool(empty), "Buffer not empty after setting zero data!")
         else:
-            empty = yield from endpoint.ibuf_empty.read()
-            self.assertTrue(bool(empty))
+            self.assertTrue(
+                bool(empty), "Buffer empty after setting data!")
 
     def expect_data(self, epaddr, data):
         """Expect that an endpoints buffer has given contents."""
@@ -195,7 +212,7 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
 
         self.ep_print(epaddr, "Got: %r (expected: %r)", actual_data, data)
         self.assertSequenceEqual(data, actual_data)
-        self.assertSequenceEqual(crc16(data), actual_crc)
+        self.assertSequenceEqual(crc16(data), actual_crc16)
 
     def dtb(self, epaddr):
         endpoint = self.get_endpoint(epaddr)

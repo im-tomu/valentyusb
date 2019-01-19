@@ -50,9 +50,10 @@ class MemInterface(Module, AutoCSR):
 
         ptr_width = 9 # Signal(max=depth).size
 
-        self.iobuf = iobuf
-        self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
         self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
+
+        self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
+        self.iobuf = usb_core.iobuf
 
         #self.submodules.packet = ev.EventManager()
         #self.packet.setup = ev.EventSourcePulse()
