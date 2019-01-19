@@ -36,12 +36,26 @@ class UsbTransfer(Module):
         ]
 
         self.reset = Signal()
+
+        # ----------------------
+        # Data paths
+        # ----------------------
         self.data_recv_put = Signal()
         self.data_recv_payload = Signal(8)
 
         self.data_send_get = Signal()
         self.data_send_have = Signal()
         self.data_send_payload = Signal(8)
+
+        # ----------------------
+        # State signally
+        # ----------------------
+        # The value of these signals are generally dependent on endp, so we
+        # need to wait for the rdy signal to use them.
+        self.rdy = Signal(reset=1)
+        self.dtb = Signal()
+        self.arm = Signal()
+        self.sta = Signal()
 
         # ----------------------
         # Tristate
@@ -127,12 +141,6 @@ class UsbTransfer(Module):
             ),
         )
 
-        # The value of these signals are generally dependent on endp, so we
-        # need to wait for the rdy signal to use them.
-        self.rdy = Signal(reset=1)
-        self.dtb = Signal()
-        self.arm = Signal()
-        self.sta = Signal()
         response_pid = Signal(4)
         transfer.act("POLL_RESPONSE",
             If(self.rdy,
