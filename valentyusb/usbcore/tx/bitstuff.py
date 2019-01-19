@@ -7,6 +7,7 @@ from migen import *
 from migen.fhdl.decorators import CEInserter, ResetInserter
 
 from .tester import module_tester
+from ..test.common import BaseUsbTestCase
 
 
 @ResetInserter()
@@ -93,7 +94,7 @@ class TxBitstuffer(Module):
     o_stall     = (1,),
     o_data      = (1,),
 )
-class TestTxBitstuffer(unittest.TestCase):
+class TestTxBitstuffer(BaseUsbTestCase):
     def test_passthrough(self):
         self.do(
             i_data  = "--___---__",

@@ -5,6 +5,7 @@ import unittest
 from migen import *
 
 from .tester import module_tester
+from ..test.common import BaseUsbTestCase
 
 
 class TxNRZIEncoder(Module):
@@ -166,7 +167,7 @@ class TxNRZIEncoder(Module):
     o_usbn      = (1,),
     o_oe        = (1,)
 )
-class TestTxNRZIEncoder(unittest.TestCase):
+class TestTxNRZIEncoder(BaseUsbTestCase):
     def test_setup_token(self):
         self.do(
             i_valid = "_|--------|--------|--------|--------|--------",
