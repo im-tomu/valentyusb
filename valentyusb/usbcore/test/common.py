@@ -21,6 +21,7 @@ def grouper(n, iterable, pad=None):
     """
     return zip_longest(*[iter(iterable)]*n, fillvalue=pad)
 
+
 class BaseUsbTestCase(unittest.TestCase):
     """
     Test case helpers common to all test cases, simple and complex
@@ -47,6 +48,7 @@ class BaseUsbTestCase(unittest.TestCase):
             return ("vcd/%s.%s.vcd" % (basename, testsuffix))
         else:
             return ("vcd/%s.vcd" % basename)
+
 
 # Test case helper class for more complex test cases
 #
@@ -151,7 +153,8 @@ class CommonUsbTestCase(BaseUsbTestCase):
         yield self.packet_d2h.eq(0)
 
         # FIXME: Get the tx_en back into the USB12 clock domain...
-        for i in range(0, 3):
+        # 4 * 12MHz == Number of 48MHz ticks
+        for i in range(0, 4*4):
             yield from self.tick_usb()
 
         # Check the packet received matches
@@ -428,9 +431,8 @@ class CommonUsbTestCase(BaseUsbTestCase):
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_ack()
 
-            yield from self.tick_usb()
             respond = yield from self.response(epaddr_out)
-            self.assertEqual(respond, EndpointResponse.NAK)
+            self.assertEqual(EndpointResponse.NAK, respond)
             yield from self.tick_usb()
 
             yield from self.send_token_packet(PID.OUT, addr, epaddr_out)
