@@ -84,7 +84,7 @@ class TxPacketSend(Module):
         fsm.act('QUEUE_DATAn',
             tx.i_data_payload.eq(self.i_data_payload),
             self.o_data_ack.eq(tx.o_data_strobe),
-            If(tx.o_data_strobe & ~self.i_data_ready,
+            If(~self.i_data_ready,
                 NextState(nextstate),
             ),
         )

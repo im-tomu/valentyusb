@@ -21,19 +21,16 @@ from ..sm.transaction import UsbTransfer
 class FakeFifo(Module):
     def __init__(self):
         self.din = Signal(8)
-        self.writable = Signal(1, reset=1)
-        self.we = Signal(1, reset=1)
+        self.writable = Signal(1)
+        self.we = Signal(1)
 
         self.dout = Signal(8)
-        self.readable = Signal(1, reset=1)
-        self.re = Signal(1, reset=1)
+        self.readable = Signal(1)
+        self.re = Signal(1)
 
 
 class Endpoint(Module, AutoCSR):
     def __init__(self):
-        Module.__init__(self)
-        AutoCSR.__init__(self)
-
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.error = ev.EventSourcePulse()
         self.ev.submodules.packet = ev.EventSourcePulse()
@@ -42,7 +39,7 @@ class Endpoint(Module, AutoCSR):
         self.trigger = self.ev.packet.trigger
 
         # Last PID?
-        self.last_tok = CSRStatus(2)
+        self.submodules.last_tok = CSRStatus(2)
 
         # How to respond to requests;
         #  - 10 - No response
@@ -83,6 +80,10 @@ class Endpoint(Module, AutoCSR):
             ),
         ]
 
+        self.submodules.fake = FakeFifo()
+        self.ibuf = None
+        self.obuf = None
+
 
 class EndpointNone(Module):
     def __init__(self):
@@ -99,29 +100,6 @@ class EndpointNone(Module):
         self.dtb.storage = Signal()
 
 
-class EndpointIn(Endpoint):
-    """Endpoint for Device->Host data.
-
-    Reads from the buffer memory.
-    Raises packet IRQ when packet has been sent.
-    CPU writes to the head CSRT to push data onto the FIFO.
-    """
-    def __init__(self):
-        Endpoint.__init__(self)
-
-        ibuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
-        self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_12"})(ibuf)
-
-        self.ibuf_head = CSR(8)
-        self.ibuf_empty = CSRStatus(1)
-        self.comb += [
-            self.ibuf.din.eq(self.ibuf_head.r),
-            self.ibuf.we.eq(self.ibuf_head.re),
-            self.ibuf_empty.status.eq(~self.ibuf.readable),
-        ]
-        self.obuf = FakeFifo()
-
-
 class EndpointOut(Endpoint):
     """Endpoint for Host->Device data.
 
@@ -132,17 +110,43 @@ class EndpointOut(Endpoint):
     def __init__(self):
         Endpoint.__init__(self)
 
-        outbuf = fifo.AsyncFIFOBuffered(width=8, depth=512)
-        self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(outbuf)
+        self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
+            fifo.AsyncFIFOBuffered(width=8, depth=512))
 
-        self.obuf_head = CSR(8)
-        self.obuf_empty = CSRStatus(1)
+        self.submodules.outbuf_head = CSR(8)
+        self.submodules.outbuf_empty = CSRStatus(2)
         self.comb += [
-            self.obuf_head.w.eq(self.obuf.dout),
-            self.obuf.re.eq(self.obuf_head.re),
-            self.obuf_empty.status.eq(~self.obuf.readable),
+            self.outbuf_head.w.eq(self.obuf.dout),
+            self.obuf.re.eq(self.outbuf_head.re),
+            self.outbuf_empty.status[0].eq(~self.obuf.readable),
         ]
-        self.ibuf = FakeFifo()
+        self.ibuf = self.fake
+
+
+class EndpointIn(Endpoint):
+    """Endpoint for Device->Host data.
+
+    Reads from the buffer memory.
+    Raises packet IRQ when packet has been sent.
+    CPU writes to the head CSR to push data onto the FIFO.
+    """
+    def __init__(self):
+        Endpoint.__init__(self)
+
+        self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_12"})(
+            fifo.AsyncFIFOBuffered(width=8, depth=512))
+
+        xxxx_readable = Signal()
+        self.specials.crc_readable = cdc.MultiReg(self.ibuf.readable, xxxx_readable)
+
+        self.submodules.inbuf_head = CSR(8)
+        self.submodules.inbuf_empty = CSRStatus(2)
+        self.comb += [
+            self.ibuf.din.eq(self.inbuf_head.r),
+            self.ibuf.we.eq(self.inbuf_head.re),
+            self.inbuf_empty.status[0].eq(~xxxx_readable),
+        ]
+        self.obuf = self.fake
 
 
 class PerEndpointFifoInterface(Module, AutoCSR):
@@ -194,35 +198,6 @@ class PerEndpointFifoInterface(Module, AutoCSR):
 
             trigger_all.append(iep.trigger.eq(1)),
             eps.append(iep)
-
-        #self.submodules.ep_0_out = EndpointOut()
-        #ems.append(self.ep_0_out.ev)
-        #eps.append(self.ep_0_out)
-        #trigger_all.append(self.ep_0_out.trigger.eq(1))
-        #
-        #self.submodules.ep_0_in = EndpointIn()
-        #ems.append(self.ep_0_in.ev)
-        #eps.append(self.ep_0_in)
-        #trigger_all.append(self.ep_0_in.trigger.eq(1))
-        #
-        #self.submodules.ep_1_out = EndpointOut()
-        #ems.append(self.ep_1_out.ev)
-        #eps.append(self.ep_1_out)
-        #trigger_all.append(self.ep_1_out.trigger.eq(1))
-        #
-        #self.submodules.ep_1_in = EndpointIn()
-        #ems.append(self.ep_1_in.ev)
-        #eps.append(self.ep_1_in)
-        #trigger_all.append(self.ep_1_in.trigger.eq(1))
-        #
-        #self.submodules.ep_2_out = EndpointOut()
-        #ems.append(self.ep_2_out.ev)
-        #eps.append(self.ep_2_out)
-        #trigger_all.append(self.ep_2_out.trigger.eq(1))
-        #
-        #self.submodules.ep_2_in = EndpointNone()
-        #eps.append(self.ep_2_in)
-        #trigger_all.append(self.ep_2_in.trigger.eq(1))
 
         self.submodules.ev = ev.SharedIRQ(*ems)
 

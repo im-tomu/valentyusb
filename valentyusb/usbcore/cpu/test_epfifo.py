@@ -100,12 +100,16 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
         )
         print("-"*10)
 
-    def tick(self):
+    def tick_sys(self):
         yield from self.update_internal_signals()
         yield
 
-    def tick_usb(self):
+    def tick_usb48(self):
         yield from self.wait_for_edge("usb_48")
+
+    def tick_usb12(self):
+        for i in range(0, 4):
+            yield from self.tick_usb48()
 
     def update_internal_signals(self):
         yield from self.update_clocks()
@@ -127,14 +131,14 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
             trigger = (yield from self.trigger(epaddr))
             if not trigger:
                 break
-            yield from self.tick()
+            yield from self.tick_sys()
         self.assertFalse(trigger)
         # Check the pending flag is raised
         self.assertTrue((yield from self.pending(epaddr)))
         # Clear pending flag
         endpoint = self.get_endpoint(epaddr)
         yield from endpoint.ev.pending.write(0xf)
-        yield from self.tick()
+        yield from self.tick_sys()
         # Check the pending flag has been cleared
         self.assertFalse((yield from self.trigger(epaddr)))
         self.assertFalse((yield from self.pending(epaddr)))
@@ -164,7 +168,7 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
         endpoint = self.get_endpoint(epaddr)
 
         # Make sure the endpoint is empty
-        empty = yield from endpoint.ibuf_empty.read()
+        empty = yield from endpoint.inbuf_empty.read()
         self.assertTrue(
             empty, "Device->Host buffer not empty when setting data!")
 
@@ -175,13 +179,13 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
             self.assertNotEqual(response, EndpointResponse.ACK)
 
         for v in data:
-            yield from endpoint.ibuf_head.write(v)
-            yield from self.tick_usb()
+            yield from endpoint.inbuf_head.write(v)
+            yield from self.tick_sys()
 
-        for i in range(4):
-            yield from self.tick_usb()
+        for i in range(0, 10):
+            yield from self.tick_usb12()
 
-        empty = yield from endpoint.ibuf_empty.read()
+        empty = yield from endpoint.inbuf_empty.read()
         if len(data) > 0:
             self.assertFalse(
                 bool(empty), "Buffer not empty after setting zero data!")
@@ -198,12 +202,12 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
 
         actual_data = []
         while range(0, 1024):
-            yield from endpoint.obuf_head.write(0)
-            empty = yield from endpoint.obuf_empty.read()
+            yield from endpoint.outbuf_head.write(0)
+            empty = yield from endpoint.outbuf_empty.read()
             if empty:
                 break
 
-            v = yield from endpoint.obuf_head.read()
+            v = yield from endpoint.outbuf_head.read()
             actual_data.append(v)
             yield
 

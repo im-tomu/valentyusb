@@ -340,8 +340,16 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
         )
         print("-"*10)
 
-    def tick_usb(self):
+    def tick_sys(self):
+        self.update_internal_signals()
+        yield
+
+    def tick_usb48(self):
         yield from self.wait_for_edge("usb_48")
+
+    def tick_usb12(self):
+        for i in range(0, 4):
+            yield from self.wait_for_edge("usb_48")
 
     def on_usb_48_edge(self):
         if False:
@@ -514,7 +522,7 @@ class TestUsbTransaction(CommonUsbTestCase, CommonTestMultiClockDomain):
             pending = yield from self.pending(epaddr)
             if pending:
                 break
-            yield from self.tick_usb()
+            yield from self.tick_usb48()
         self.assertTrue(pending)
 
         self.ep_print(epaddr, "expect_data: %s", data)

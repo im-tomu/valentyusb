@@ -38,6 +38,9 @@ class TxShifter(Module):
     o_data : Signal(1)
         Serial data output.
 
+    o_empty : Signal(1)
+        Asserted the cycle before the shifter loads in more i_data.
+
     o_get : Signal(1)
         Asserted the cycle after the shifter loads in i_data.
 
