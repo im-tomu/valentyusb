@@ -113,12 +113,12 @@ class EndpointOut(Endpoint):
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
             fifo.AsyncFIFOBuffered(width=8, depth=512))
 
-        self.submodules.outbuf_head = CSR(8)
-        self.submodules.outbuf_empty = CSRStatus(2)
+        self.submodules.obuf_head = CSR(8)
+        self.submodules.obuf_empty = CSRStatus(1)
         self.comb += [
-            self.outbuf_head.w.eq(self.obuf.dout),
-            self.obuf.re.eq(self.outbuf_head.re),
-            self.outbuf_empty.status[0].eq(~self.obuf.readable),
+            self.obuf_head.w.eq(self.obuf.dout),
+            self.obuf.re.eq(self.obuf_head.re),
+            self.obuf_empty.status[0].eq(~self.obuf.readable),
         ]
         self.ibuf = self.fake
 
@@ -139,12 +139,12 @@ class EndpointIn(Endpoint):
         xxxx_readable = Signal()
         self.specials.crc_readable = cdc.MultiReg(self.ibuf.readable, xxxx_readable)
 
-        self.submodules.inbuf_head = CSR(8)
-        self.submodules.inbuf_empty = CSRStatus(2)
+        self.submodules.ibuf_head = CSR(8)
+        self.submodules.ibuf_empty = CSRStatus(1)
         self.comb += [
-            self.ibuf.din.eq(self.inbuf_head.r),
-            self.ibuf.we.eq(self.inbuf_head.re),
-            self.inbuf_empty.status[0].eq(~xxxx_readable),
+            self.ibuf.din.eq(self.ibuf_head.r),
+            self.ibuf.we.eq(self.ibuf_head.re),
+            self.ibuf_empty.status[0].eq(~xxxx_readable),
         ]
         self.obuf = self.fake
 

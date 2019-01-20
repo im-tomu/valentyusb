@@ -168,7 +168,7 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
         endpoint = self.get_endpoint(epaddr)
 
         # Make sure the endpoint is empty
-        empty = yield from endpoint.inbuf_empty.read()
+        empty = yield from endpoint.ibuf_empty.read()
         self.assertTrue(
             empty, "Device->Host buffer not empty when setting data!")
 
@@ -179,13 +179,13 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
             self.assertNotEqual(response, EndpointResponse.ACK)
 
         for v in data:
-            yield from endpoint.inbuf_head.write(v)
+            yield from endpoint.ibuf_head.write(v)
             yield from self.tick_sys()
 
         for i in range(0, 10):
             yield from self.tick_usb12()
 
-        empty = yield from endpoint.inbuf_empty.read()
+        empty = yield from endpoint.ibuf_empty.read()
         if len(data) > 0:
             self.assertFalse(
                 bool(empty), "Buffer not empty after setting zero data!")
@@ -202,12 +202,12 @@ class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain
 
         actual_data = []
         while range(0, 1024):
-            yield from endpoint.outbuf_head.write(0)
-            empty = yield from endpoint.outbuf_empty.read()
+            yield from endpoint.obuf_head.write(0)
+            empty = yield from endpoint.obuf_empty.read()
             if empty:
                 break
 
-            v = yield from endpoint.outbuf_head.read()
+            v = yield from endpoint.obuf_head.read()
             actual_data.append(v)
             yield
 
