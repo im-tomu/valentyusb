@@ -49,6 +49,7 @@ def crc5(nibbles):
         reg.takeWord(n, 4)
     return [reg.getFinalValue() & 0x1f]
 
+
 def crc5_token(addr, ep):
     """
     >>> hex(crc5_token(0, 0))
