@@ -111,7 +111,7 @@ class EndpointOut(Endpoint):
         Endpoint.__init__(self)
 
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
-            fifo.AsyncFIFOBuffered(width=8, depth=512))
+            fifo.AsyncFIFOBuffered(width=8, depth=64))
 
         self.submodules.obuf_head = CSR(8)
         self.submodules.obuf_empty = CSRStatus(1)
