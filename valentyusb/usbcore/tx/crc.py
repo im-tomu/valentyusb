@@ -379,17 +379,21 @@ class TxParallelCrcGenerator(Module):
         Current CRC value.
 
     """
-    def __init__(self, data_width, crc_width, polynomial, initial):
+    def __init__(self, data_width, crc_width, polynomial, initial=0):
         self.i_data_payload = Signal(data_width)
         self.i_data_strobe = Signal()
         self.o_crc = Signal(crc_width)
-
         crc_dat = Signal(data_width)
         crc_cur = Signal(crc_width, reset=initial)
-        crc_next = Signal(crc_width)
+        crc_next = Signal(crc_width, reset_less=True)
+
+        crc_cur_reset_bits = [
+            int(i) for i in "{0:{width}b}".format(
+                crc_cur.reset.value,width=crc_width)[::-1]]
 
         self.comb += [
             crc_dat.eq(self.i_data_payload[::-1]),
+            # FIXME: Is XOR ^ initial actually correct here?
             self.o_crc.eq(crc_cur[::-1] ^ initial),
         ]
 
@@ -406,18 +410,27 @@ class TxParallelCrcGenerator(Module):
 
         _, cols_nin, cols_min = build_matrix(poly_list, data_width)
 
+        crc_next_reset_bits = list(crc_cur_reset_bits)
         for i in range(crc_width):
             to_xor = []
+            crc_next_reset_bit_i = []
             for j, use in enumerate(cols_nin[i]):
                 if use:
                     to_xor.append(crc_dat[j])
+                    crc_next_reset_bit_i.append(0)
             for j, use in enumerate(cols_min[i]):
                 if use:
                     to_xor.append(crc_cur[j])
+                    crc_next_reset_bit_i.append(crc_cur_reset_bits[j])
+
+            crc_next_reset_bits[i] = functools.reduce(operator.xor, crc_next_reset_bit_i)
 
             self.comb += [
                 crc_next[i].eq(functools.reduce(operator.xor, to_xor)),
             ]
+
+        crc_next_reset_value = int("0b"+"".join(str(i) for i in crc_next_reset_bits[::-1]), 2)
+        crc_next.reset.value = crc_next_reset_value
 
 
 def o(d):
