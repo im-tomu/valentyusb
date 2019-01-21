@@ -100,6 +100,9 @@ class CommonUsbTestCase(BaseUsbTestCase):
         epnum = EndpointType.epnum(epaddr)
         yield from self._send_packet(token_packet(pid, addr, epnum))
 
+    def send_sof_packet(self, ts):
+        yield from self._send_packet(sof_packet(ts))
+
     def send_data_packet(self, pid, data):
         assert pid in (PID.DATA0, PID.DATA1), pid
         yield from self._send_packet(data_packet(pid, data))
@@ -406,6 +409,83 @@ class CommonUsbTestCase(BaseUsbTestCase):
     ######################################################################
     # Actual test cases are after here.
     ######################################################################
+
+    def test_sof_is_ignored(self):
+        def stim():
+            addr = 0x20
+            epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+            epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+
+            # Send SOF packet
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+            yield from self.send_sof_packet(2)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # Setup stage
+            # ------------------------------------------
+            # Send SETUP packet
+            yield from self.send_token_packet(PID.SETUP, addr, epaddr_out)
+
+            # Send another SOF packet
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+            yield from self.send_sof_packet(200)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # Data stage
+            # ------------------------------------------
+            # Send DATA packet
+            data = [0, 1, 8, 0]
+            yield from self.send_data_packet(PID.DATA0, data)
+            yield from self.expect_ack()
+            yield from self.expect_data(epaddr_out, data)
+            yield from self.tick_usb12()
+            yield from self.tick_usb12()
+            yield from self.tick_usb12()
+            yield from self.check_pending(epaddr_out)
+
+            # Send another SOF packet
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+            yield from self.send_sof_packet(2000)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # Clear the pending flag
+            yield from self.check_pending(epaddr_out)
+            yield from self.tick_usb12()
+            yield from self.tick_usb12()
+            yield from self.clear_pending(epaddr_out)
+            yield from self.tick_usb12()
+            yield from self.tick_usb12()
+            self.assertFalse((yield from self.pending(epaddr_out)))
+
+            # Send another SOF packet
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+            yield from self.send_sof_packet(20000)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # Check SOF packet didn't trigger pending
+            self.assertFalse((yield from self.pending(epaddr_out)))
+
+            # Status stage
+            # ------------------------------------------
+            yield from self.set_response(epaddr_in, EndpointResponse.ACK)
+            yield from self.transaction_status_out(addr, epaddr_in)
+
+            # Send another SOF packet
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+            yield from self.send_sof_packet(200000)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+        self.run_sim(stim)
 
     def test_control_setup(self):
         def stim():

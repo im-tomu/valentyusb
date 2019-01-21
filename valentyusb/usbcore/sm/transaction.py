@@ -156,8 +156,11 @@ class UsbTransfer(Module):
                     NextValue(response_pid, PID.NAK),
                 ),
 
+                If(rxstate.o_pid == PID.SOF,
+                    NextState('WAIT_TOKEN'),
+
                 # Setup transfer
-                If(self.tok == PID.SETUP,
+                ).Elif(self.tok == PID.SETUP,
                     NextState("WAIT_DATA"),
 
                 # Out transfer
@@ -182,6 +185,8 @@ class UsbTransfer(Module):
             If(rxstate.o_decoded,
                 If((rxstate.o_pid & PIDTypes.TYPE_MASK) == PIDTypes.DATA,
                     NextState('RECV_DATA'),
+                ).Elif(rxstate.o_pid == PID.SOF,
+                    NextState('WAIT_DATA'),
                 ).Else(
                     NextState('ERROR'),
                 )
