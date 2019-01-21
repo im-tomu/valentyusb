@@ -158,6 +158,22 @@ class TestTxSerialCrcGenerator(BaseUsbTestCase):
         )
 
 
+def bytes_to_int(d):
+    """Convert a list of bytes to an int
+
+    Bytes are in LSB first.
+
+    >>> hex(bytes_to_int([0, 1]))
+    '0x100'
+    >>> hex(bytes_to_int([1, 2]))
+    '0x201'
+    """
+    v = 0
+    for i,d in enumerate(d):
+        v |= d << (i*8)
+    return v
+
+
 def cols(rows):
     """
     >>> a = [
@@ -388,7 +404,7 @@ class TxParallelCrcGenerator(Module):
         crc_next = Signal(crc_width, reset_less=True)
 
         crc_cur_reset_bits = [
-            int(i) for i in "{0:{width}b}".format(
+            int(i) for i in "{0:0{width}b}".format(
                 crc_cur.reset.value,width=crc_width)[::-1]]
 
         self.comb += [
@@ -433,19 +449,6 @@ class TxParallelCrcGenerator(Module):
         crc_next.reset.value = crc_next_reset_value
 
 
-def o(d):
-    """
-    >>> hex(o([0, 1]))
-    '0x100'
-    >>> hex(o([1, 2]))
-    '0x201'
-    """
-    v = 0
-    for i,d in enumerate(d):
-        v |= d << (i*8)
-    return v
-
-
 class TestTxParallelCrcGenerator(BaseUsbTestCase):
     def sim(self, name, dut, in_data, expected_crc):
         def stim():
@@ -463,7 +466,7 @@ class TestTxParallelCrcGenerator(BaseUsbTestCase):
         run_simulation(dut, stim(), vcd_name=self.make_vcd_name())
 
     def sim_crc16(self, in_data):
-        expected_crc = o(crc16(in_data))
+        expected_crc = bytes_to_int(crc16(in_data))
         dut = TxParallelCrcGenerator(
             crc_width  = 16,
             polynomial = 0b1000000000000101,
