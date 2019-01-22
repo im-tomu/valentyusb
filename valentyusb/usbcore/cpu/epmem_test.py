@@ -5,16 +5,23 @@ from unittest import TestCase
 
 from migen import *
 
+from ..test.common import BaseUsbTestCase, CommonUsbTestCase
+from ..io_test import TestIoBuf
+
 from .epmem import MemInterface
 
-class TestMemInterface(CommonUsbTestCase):
+
+class TestMemInterface(
+        BaseUsbTestCase,
+        CommonUsbTestCase,
+        unittest.TestCase):
 
     maxDiff=None
 
     def setUp(self):
         self.iobuf = TestIoBuf()
         self.dut = ClockDomainsRenamer("cpu_12")(
-            UsbDeviceCpuMemInterface(self.iobuf, num_endpoints=3))
+            MemInterface(self.iobuf, num_endpoints=3))
 
         self.packet_h2d = Signal(1)
         self.packet_d2h = Signal(1)

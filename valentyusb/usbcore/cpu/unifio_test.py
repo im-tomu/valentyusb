@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 
-from migen import *
-from migen.genlib import fifo
-from migen.genlib import cdc
+import unittest
 
-from litex.soc.interconnect import csr_eventmanager as ev
-from litex.soc.interconnect.csr import *
-from litex.soc.cores.gpio import GPIOOut
+from migen import *
 
 from ..endpoint import *
 from ..io import FakeIoBuf
-from ..rx.pipeline import RxPipeline
-from ..tx.pipeline import TxPipeline
-
+from ..test.common import BaseUsbTestCase, CommonUsbTestCase
 from ..utils.packet import *
-from ..test.common import CommonUsbTestCase
+
+from .unififo import UsbUniFifo
 
 
-class TestUsbUniFifo(CommonUsbTestCase):
+class TestUsbUniFifo(
+        BaseUsbTestCase,
+        CommonUsbTestCase,
+        unittest.TestCase):
 
     maxDiff=None
 

@@ -1,4 +1,11 @@
-class TestUsbTransaction(CommonUsbTestCase):
+import unittest
+
+from ..test.common import BaseUsbTestCase, CommonUsbTestCase
+
+class TestUsbTransaction(
+        BaseUsbTestCase,
+        CommonUsbTestCase,
+        unittest.TestCase):
 
     maxDiff=None
 

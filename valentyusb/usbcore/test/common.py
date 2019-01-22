@@ -26,6 +26,7 @@ class BaseUsbTestCase(unittest.TestCase):
     """
     Test case helpers common to all test cases, simple and complex
     """
+
     def make_vcd_name(self, basename=None, modulename=None, testsuffix=None):
         """
         Create a name for the vcd file based on the test case
@@ -50,10 +51,66 @@ class BaseUsbTestCase(unittest.TestCase):
             return ("vcd/%s.vcd" % basename)
 
 
-# Test case helper class for more complex test cases
-#
-class CommonUsbTestCase(BaseUsbTestCase):
+class CommonUsbTestCase:
+    """Base set of USB compliance tests.
+
+
+    """
+
     maxDiff=None
+
+    ######################################################################
+    # Interface subclasses need to implement.
+    ######################################################################
+
+    def run_sim(self, stim):
+        raise NotImplementedError
+
+    def tick_sys(self):
+        raise NotImplementedError
+
+    def tick_usb12(self):
+        raise NotImplementedError
+
+    def tick_usb48(self):
+        raise NotImplementedError
+
+    def update_internal_signals(self):
+        raise NotImplementedError
+
+    # IRQ / packet pending -----------------
+    def trigger(self, epaddr):
+        raise NotImplementedError
+
+    def pending(self, epaddr):
+        raise NotImplementedError
+
+    def clear_pending(self, epaddr):
+        raise NotImplementedError
+
+    # Endpoint state -----------------------
+    def response(self, epaddr):
+        raise NotImplementedError
+
+    def set_response(self, epaddr, v):
+        raise NotImplementedError
+
+    def expect_last_tok(self, epaddr, value):
+        if False:
+            yield
+
+    # Get/set endpoint data ----------------
+    def set_data(self, epaddr, data):
+        raise NotImplementedError
+
+    def expect_data(self, epaddr, data):
+        raise NotImplementedError
+
+    def dtb(self, epaddr):
+        raise NotImplementedError
+
+    ######################################################################
+    ######################################################################
 
     def assertMultiLineEqualSideBySide(self, data1, data2, msg):
         return assertMultiLineEqualSideBySide(data1, data2, msg)
@@ -359,56 +416,6 @@ class CommonUsbTestCase(BaseUsbTestCase):
         # Status stage
         yield from self.set_response(epaddr_in, EndpointResponse.ACK)
         yield from self.transaction_status_in(addr, epaddr_in)
-
-    ######################################################################
-    # Interface subclasses need to implement.
-    ######################################################################
-
-    def run_sim(self, stim):
-        raise NotImplementedError
-
-    def tick_sys(self):
-        raise NotImplementedError
-
-    def tick_usb12(self):
-        raise NotImplementedError
-
-    def tick_usb48(self):
-        raise NotImplementedError
-
-    def update_internal_signals(self):
-        raise NotImplementedError
-
-    # IRQ / packet pending -----------------
-    def trigger(self, epaddr):
-        raise NotImplementedError
-
-    def pending(self, epaddr):
-        raise NotImplementedError
-
-    def clear_pending(self, epaddr):
-        raise NotImplementedError
-
-    # Endpoint state -----------------------
-    def response(self, epaddr):
-        raise NotImplementedError
-
-    def set_response(self, epaddr, v):
-        raise NotImplementedError
-
-    def expect_last_tok(self, epaddr, value):
-        if False:
-            yield
-
-    # Get/set endpoint data ----------------
-    def set_data(self, epaddr, data):
-        raise NotImplementedError
-
-    def expect_data(self, epaddr, data):
-        raise NotImplementedError
-
-    def dtb(self, epaddr):
-        raise NotImplementedError
 
     ######################################################################
     # Actual test cases are after here.

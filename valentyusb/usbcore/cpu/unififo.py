@@ -14,7 +14,6 @@ from ..rx.pipeline import RxPipeline
 from ..tx.pipeline import TxPipeline
 
 from ..utils.packet import *
-from ..test.common import CommonUsbTestCase
 
 
 class UsbUniFifo(Module, AutoCSR):

@@ -47,7 +47,7 @@ def crc5(nibbles):
     reg = crc.CrcRegister(crc.CRC5_USB)
     for n in nibbles:
         reg.takeWord(n, 4)
-    return [reg.getFinalValue() & 0x1f]
+    return reg.getFinalValue() & 0x1f
 
 
 def crc5_token(addr, ep):

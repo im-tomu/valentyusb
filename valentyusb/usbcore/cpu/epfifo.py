@@ -15,7 +15,7 @@ from litex.soc.cores.gpio import GPIOOut
 
 from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
-from ..sm.transaction import UsbTransfer
+from ..sm.transfer import UsbTransfer
 
 
 class FakeFifo(Module):

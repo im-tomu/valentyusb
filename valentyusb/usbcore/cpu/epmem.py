@@ -13,6 +13,8 @@ from litex.soc.interconnect.csr import *
 
 from litex.soc.cores.gpio import GPIOOut
 
+from ..sm.transfer import UsbTransfer
+
 
 class MemInterface(Module, AutoCSR):
     """

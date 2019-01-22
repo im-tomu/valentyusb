@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+
+import unittest
+
+from migen import *
+from migen.genlib import cdc
+
+from .bitstuff import RxBitstuffRemover
+from .clock import RxClockDataRecovery
+from .detect import RxPacketDetect
+from .nrzi import RxNRZIDecoder
+from .shifter import RxShifter
+from ..utils.packet import b, nrzi
+from ..test.common import BaseUsbTestCase
+
+from .pipeline import RxPipeline
+
+
+class TestRxPipeline(BaseUsbTestCase):
+    def test_pkt_decode(self):
+
+        test_vectors = {
+            "USB2 SOF token": dict(
+                #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
+                value    = "11 00000001 10100101 10000110 11000010 __111",
+                data     = [b("10100101"), b("10000110"), b("11000010")],
+                pkt_good = True,
+            ),
+
+            "USB2 SOF token 1": dict(
+                #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
+                value    = "11 00000001 10100101 11011100 10100011 __111",
+                data     = [0xa5, 0x3b, 0xc5],
+                pkt_good = True,
+            ),
+
+            "USB2 SOF token - eop dribble 1": dict(
+                #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC  00
+                value    = "11 00000001 10100101 10000110 11000010 1__111",
+                data     = [b("10100101"), b("10000110"), b("11000010")],
+                pkt_good = True,
+            ),
+
+            "USB2 SOF token - eop dribble 6": dict(
+                #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC       00
+                value    = "11 00000001 10100101 10000110 11000010 111111__111",
+                data     = [b("10100101"), b("10000110"), b("11000010")],
+                pkt_good = True,
+            ),
+
+            "USB2 SOF token - bad pid": dict(
+                #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
+                value    = "11 00000001 10100100 10000110 11000010 __111",
+                data     = [b("10100100"), b("10000110"), b("11000010")],
+                pkt_good = False,
+            ),
+
+            "USB2 SOF token - bad crc5": dict(
+                #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
+                value    = "11 00000001 10100101 10000110 11000011 __111",
+                data     = [b("10100101"), b("10000110"), b("11000011")],
+                pkt_good = False,
+            ),
+
+            "USB2 ACK handshake": dict(
+                #              SSSSSSSS PPPPPPPP 00
+                value    = "11 00000001 01001011 __111",
+                data     = [b("01001011")],
+                pkt_good = True,
+            ),
+
+            "USB2 ACK handshake - pid error": dict(
+                #              SSSSSSSS PPPPPPPP 00
+                value    = "11 00000001 01001111 __111",
+                data     = [b("01001111")],
+                pkt_good = False,
+            ),
+
+            "USB2 ACK handshake - EOP dribble 1": dict(
+                #              SSSSSSSS PPPPPPPP  00
+                value    = "11 00000001 01001011 1__111",
+                data     = [b("01001011")],
+                pkt_good = True,
+            ),
+
+            "USB2 ACK handshake - EOP dribble 6": dict(
+                #              SSSSSSSS PPPPPPPP       00
+                value    = "11 00000001 01001011 111111__111",
+                data     = [b("01001011")],
+                pkt_good = True,
+            ),
+
+            "USB2 data with good CRC16": dict(
+                value = "11 00000001 11000011 00000001 01100000 00000000 10000000 00000000 00000000 00000010 00000000 10111011 00101001 __1111",
+                data  = [
+                    b("11000011"),                                     # PID
+                    0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, # Data payload
+                    0xdd, 0x94,                                     # CRC16
+                ],
+                pkt_good = True,
+            ),
+
+            "USB2 data with good CRC16 - 1 eop dribble": dict(
+                value = "11 00000001 11000011 00000001 01100000 00000000 10000000 00000000 00000000 00000010 00000000 10111011 00101001 1___1111",
+                data  = [
+                    b("11000011"),                                     # PID
+                    0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, # Data payload
+                    0xdd, 0x94,                                     # CRC16
+                ],
+                pkt_good = True,
+            ),
+
+            "USB2 data with good CRC16 - 6 eop dribble": dict(
+                value = "11 00000001 11000011 00000001 01100000 00000000 10000000 00000000 00000000 00000010 00000000 10111011 00101001 111111__1111",
+                data  = [
+                    b("11000011"),                                     # PID
+                    0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, # Data payload
+                    0xdd, 0x94,                                     # CRC16
+                ],
+                pkt_good = True,
+            ),
+
+            "USB2 data with bad CRC16": dict(
+                value = "11 00000001 11000011 00000001 01100000 00000000 10000000 00000000 00000000 00000010 00000000 10111011 00101011 __1111",
+                data  = [
+                    b("11000011"),                                     # PID
+                    0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, # Data payload
+                    0xdd, 0xd4,                                     # CRC16
+                ],
+                pkt_good = False,
+            ),
+
+            #dict(
+            #    # USB2 SETUP and DATA
+            #    value         = "11 00000001 10110100 00000000000 01000__111___1111111 00000001 11000011 00000001 01100000 00000000 10000000 00000000 00000000 00000010 00000000 10111011 00101001 __1111",
+            #    pid           = [0b1101,  0b0011],
+            #    token_payload = [0,       1664],
+            #    data_payload  = [[],      [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, 0xdd, 0x94]],
+            #    pkt_good      = [1,       1]
+            #),
+        }
+
+        def send(value):
+            clk12 = ClockSignal("usb_12")
+
+            def clk12_edge():
+                data_strobe  = yield dut.o_data_strobe
+                data_payload = yield dut.o_data_payload
+                if data_strobe:
+                    data.append(data_payload)
+
+            def tick(last_clk12=[None]):
+                current_clk12 = yield clk12
+                if current_clk12 and not last_clk12[0]:
+                    yield from clk12_edge()
+                last_clk12[0] = current_clk12
+                yield
+
+            for i in range(0, 100):
+                yield
+
+            data = []
+            for i in range(len(value)):
+                v = value[i]
+                if v == ' ':
+                    continue
+                elif v == '_':
+                    # SE0 - both lines pulled low
+                    yield dut.i_usbp.eq(0)
+                    yield dut.i_usbn.eq(0)
+                elif v == 'J':
+                    yield dut.i_usbp.eq(1)
+                    yield dut.i_usbn.eq(0)
+                elif v == 'K':
+                    yield dut.i_usbp.eq(0)
+                    yield dut.i_usbn.eq(1)
+                else:
+                    assert False, "Unknown value: %s" % v
+
+                for i in range(0, 4):
+                    yield from tick()
+
+            return data
+
+        def stim(value, data, pkt_good):
+            actual_data = yield from send(nrzi(value)+'J'*20)
+            self.assertSequenceEqual(data, actual_data)
+
+        for name, vector in test_vectors.items():
+            with self.subTest(name=name):
+                fname = name.replace(" ","_")
+                dut = RxPipeline()
+                run_simulation(
+                    dut, stim(**vector),
+                    vcd_name=self.make_vcd_name(testsuffix=fname),
+                    clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
+                )
+
+
+if __name__ == "__main__":
+    import doctest
+    doctest.testmod()
+    unittest.main()

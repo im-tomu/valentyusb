@@ -10,13 +10,17 @@ from ..io import FakeIoBuf
 from ..pid import PIDTypes
 from ..utils.packet import crc16
 
-from ..test.common import CommonUsbTestCase
+from ..test.common import BaseUsbTestCase, CommonUsbTestCase
 from ..test.clock import CommonTestMultiClockDomain
 
 from .epfifo import PerEndpointFifoInterface
 
 
-class TestPerEndpointFifoInterface(CommonUsbTestCase, CommonTestMultiClockDomain):
+class TestPerEndpointFifoInterface(
+        BaseUsbTestCase,
+        CommonUsbTestCase,
+        CommonTestMultiClockDomain,
+        unittest.TestCase):
 
     maxDiff=None
 
