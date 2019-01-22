@@ -184,10 +184,14 @@ class CommonUsbTestCase(BaseUsbTestCase):
 
     def check_pending(self, epaddr):
         # Check no pending packets
+        self.assertTrue((yield from self.pending(epaddr)))
+
+    def check_no_pending(self, epaddr):
+        # Check no pending packets
         self.assertFalse((yield from self.pending(epaddr)))
 
-    def check_pending_and_response(self, epaddr):
-        yield from self.check_pending(epaddr)
+    def check_no_pending_and_respond_ack(self, epaddr):
+        yield from self.check_no_pending(epaddr)
         # Check we are going to ack the packets
         self.assertEqual((yield from self.response(epaddr)), EndpointResponse.ACK)
 
@@ -229,7 +233,7 @@ class CommonUsbTestCase(BaseUsbTestCase):
     # <-ack
     # ....
     def transaction_data_out(self, addr, epaddr, data, chunk_size=8):
-        yield from self.check_pending_and_response(epaddr)
+        yield from self.check_no_pending_and_respond_ack(epaddr)
 
         datax = PID.DATA0
         for i, chunk in enumerate(grouper(chunk_size, data, pad=0)):
@@ -255,7 +259,7 @@ class CommonUsbTestCase(BaseUsbTestCase):
     # <-ack
     def transaction_status_out(self, addr, epaddr):
         assert EndpointType.epdir(epaddr) == EndpointType.OUT
-        yield from self.check_pending_and_response(epaddr)
+        yield from self.check_no_pending_and_respond_ack(epaddr)
 
         yield from self.send_token_packet(PID.OUT, addr, epaddr)
         yield from self.send_data_packet(PID.DATA1, [])
@@ -279,7 +283,7 @@ class CommonUsbTestCase(BaseUsbTestCase):
 
         datax = dtb
         for i, chunk in enumerate(grouper(chunk_size, data, pad=0)):
-            yield from self.check_pending_and_response(epaddr)
+            yield from self.check_no_pending_and_respond_ack(epaddr)
             yield from self.set_response(epaddr, EndpointResponse.NAK)
             yield from self.set_data(epaddr, chunk)
             yield from self.set_response(epaddr, EndpointResponse.ACK)
@@ -304,7 +308,7 @@ class CommonUsbTestCase(BaseUsbTestCase):
     # ->ack
     def transaction_status_in(self, addr, epaddr):
         assert EndpointType.epdir(epaddr) == EndpointType.IN
-        yield from self.check_pending_and_response(epaddr)
+        yield from self.check_no_pending_and_respond_ack(epaddr)
 
         yield from self.set_data(epaddr, [])
         yield from self.send_token_packet(PID.IN, addr, epaddr)
@@ -321,28 +325,28 @@ class CommonUsbTestCase(BaseUsbTestCase):
         epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
         epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
 
-        yield from self.check_pending(epaddr_in)
-        yield from self.check_pending(epaddr_out)
+        yield from self.check_no_pending(epaddr_in)
+        yield from self.check_no_pending(epaddr_out)
 
         # Setup stage
         yield from self.transaction_setup(addr, setup_data)
 
-        yield from self.check_pending(epaddr_in)
-        yield from self.check_pending(epaddr_out)
+        yield from self.check_no_pending(epaddr_in)
+        yield from self.check_no_pending(epaddr_out)
 
         # Data stage
         yield from self.set_response(epaddr_in, EndpointResponse.ACK)
         yield from self.transaction_data_in(addr, epaddr_in, descriptor_data)
 
-        yield from self.check_pending(epaddr_in)
-        yield from self.check_pending(epaddr_out)
+        yield from self.check_no_pending(epaddr_in)
+        yield from self.check_no_pending(epaddr_out)
 
         # Status stage
         yield from self.set_response(epaddr_out, EndpointResponse.ACK)
         yield from self.transaction_status_out(addr, epaddr_out)
 
-        yield from self.check_pending(epaddr_in)
-        yield from self.check_pending(epaddr_out)
+        yield from self.check_no_pending(epaddr_in)
+        yield from self.check_no_pending(epaddr_out)
 
     def control_transfer_out(self, addr, setup_data, descriptor_data):
         epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
@@ -416,6 +420,12 @@ class CommonUsbTestCase(BaseUsbTestCase):
             epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
             epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
 
+            yield from self.tick_usb12()
+            yield from self.clear_pending(epaddr_out)
+            yield from self.clear_pending(epaddr_in)
+            yield from self.tick_usb12()
+            yield from self.tick_usb12()
+
             # Send SOF packet
             for i in range(0, 10):
                 yield from self.tick_usb12()
@@ -442,9 +452,6 @@ class CommonUsbTestCase(BaseUsbTestCase):
             yield from self.send_data_packet(PID.DATA0, data)
             yield from self.expect_ack()
             yield from self.expect_data(epaddr_out, data)
-            yield from self.tick_usb12()
-            yield from self.tick_usb12()
-            yield from self.tick_usb12()
             yield from self.check_pending(epaddr_out)
 
             # Send another SOF packet
@@ -454,10 +461,12 @@ class CommonUsbTestCase(BaseUsbTestCase):
             for i in range(0, 10):
                 yield from self.tick_usb12()
 
-            # Clear the pending flag
+            # Check no change in pending flag
             yield from self.check_pending(epaddr_out)
             yield from self.tick_usb12()
             yield from self.tick_usb12()
+
+            # Clear pending flag
             yield from self.clear_pending(epaddr_out)
             yield from self.tick_usb12()
             yield from self.tick_usb12()
@@ -466,24 +475,28 @@ class CommonUsbTestCase(BaseUsbTestCase):
             # Send another SOF packet
             for i in range(0, 10):
                 yield from self.tick_usb12()
-            yield from self.send_sof_packet(20000)
+            yield from self.send_sof_packet(2**11 - 1)
             for i in range(0, 10):
                 yield from self.tick_usb12()
 
             # Check SOF packet didn't trigger pending
-            self.assertFalse((yield from self.pending(epaddr_out)))
+            self.check_no_pending(epaddr_out)
 
             # Status stage
             # ------------------------------------------
             yield from self.set_response(epaddr_in, EndpointResponse.ACK)
-            yield from self.transaction_status_out(addr, epaddr_in)
+            yield from self.transaction_status_in(addr, epaddr_in)
+
+            yield from self.check_no_pending(epaddr_in)
 
             # Send another SOF packet
             for i in range(0, 10):
                 yield from self.tick_usb12()
-            yield from self.send_sof_packet(200000)
+            yield from self.send_sof_packet(1 << 10)
             for i in range(0, 10):
                 yield from self.tick_usb12()
+
+            yield from self.check_no_pending(epaddr_in)
 
         self.run_sim(stim)
 
