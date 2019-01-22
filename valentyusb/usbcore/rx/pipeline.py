@@ -105,6 +105,13 @@ class TestRxPipeline(BaseUsbTestCase):
                 pkt_good = True,
             ),
 
+            "USB2 SOF token 1": dict(
+                #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
+                value    = "11 00000001 10100101 11011100 10100011 __111",
+                data     = [0xa5, 0x3b, 0xc5],
+                pkt_good = True,
+            ),
+
             "USB2 SOF token - eop dribble 1": dict(
                 #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC  00
                 value    = "11 00000001 10100101 10000110 11000010 1__111",
