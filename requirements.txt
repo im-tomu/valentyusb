@@ -1,2 +1,8 @@
-migen
 crcmod
+-e git+https://github.com/m-labs/migen@master#egg=migen
+-e git+https://github.com/mithro/litex@enable-lto#egg=litex
+pytest>=3.6.0
+pytest-pep8
+pytest-sugar
+pytest-travis-fold
+pytest-xdist

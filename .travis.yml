@@ -1,0 +1,8 @@
+language: python
+python:
+  - "3.6"
+install:
+  - pip install -U -r requirements.txt
+script:
+  - pytest --collect-only valentyusb
+  - pytest -v valentyusb
