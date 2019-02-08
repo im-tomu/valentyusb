@@ -10,7 +10,7 @@ from ..test.common import BaseUsbTestCase
 from .bitstuff import RxBitstuffRemover
 
 class TestRxBitstuffRemover(BaseUsbTestCase):
-    def test_bitstuff(self):
+    def bitstuff_test(self, vector, short_name):
         def set_input(dut, r, v):
             yield dut.reset.eq(r == '1')
             yield dut.i_data.eq(v == '1')
@@ -44,93 +44,108 @@ class TestRxBitstuffRemover(BaseUsbTestCase):
                         output += yield from get_output(dut)
             return output
 
-        test_vectors = [
+        def stim(output, **kw):
+            actual_output = yield from send(**kw)
+            self.assertEqual(output, actual_output)
+
+        with self.subTest(short_name=short_name, vector=vector):
+            dut = RxBitstuffRemover()
+
+            run_simulation(
+                dut,
+                stim(**vector),
+                vcd_name=self.make_vcd_name(testsuffix=short_name),
+            )
+
+    def test_no_bit_stuff(self):
+        return self.bitstuff_test(
             # No bit stuff
             dict(
                 reset  = "00000000000000000000",
                 value  = "10110111011110111110",
                 output = "10110111011110111110",
-            ),
+            ), "no-bit-stuff")
 
+    def test_bit_stuff(self):
+        return self.bitstuff_test(
             # Bit stuff
             dict(
                 reset  = "0000000",
                 value  = "1111110",
                 output = "111111s",
-            ),
+            ), "bit-stuff")
 
+    def test_bit_stuff_after_reset(self):
+        return self.bitstuff_test(
             # Bit stuff after reset
             dict(
                 reset  = "00010000000",
                 value  = "11111111110",
                 output = "111_111111s",
-            ),
+            ), "bit-stuff-after-reset")
 
+    def test_bit_stuff_error(self):
+        return self.bitstuff_test(
             # Bit stuff error
             dict(
                 reset  = "0000000",
                 value  = "1111111",
                 output = "111111e",
-            ),
+            ), "bit_stuff_error")
 
+    def test_bit_stuff_error_after_reset(self):
+        return self.bitstuff_test(
             # Bit stuff error after reset
             dict(
                 reset  = "00010000000",
                 value  = "11111111111",
                 output = "111_111111e",
-            ),
+            ), "bit-stuff-error-after-reset")
 
+    def test_multiple_bit_stuff_scenario(self):
+        return self.bitstuff_test(
             dict(
                 # Multiple bitstuff scenario
                 reset  = "000000000000000000000",
                 value  = "111111011111101111110",
                 output = "111111s111111s111111s",
-            ),
+            ), "multiple-bit-stuff-scenario")
 
+    def test_mixed_bit_stuff_error(self):
+        return self.bitstuff_test(
             dict(
                 # Mixed bitstuff error
                 reset  = "000000000000000000000000000000000",
                 value  = "111111111111101111110111111111111",
                 output = "111111e111111s111111s111111e11111",
-            ),
+            ), "mixed-bit-stuff-error")
 
+    def test_idle_packet_idle(self):
+        return self.bitstuff_test(
             dict(
                 # Idle, Packet, Idle
                 reset  = "0000000000000000000000001100000",
                 value  = "111110000000111111011101__11111",
                 output = "111110000000111111s11101__11111",
-            ),
+            ), "idle-packet-idle")
 
+    def test_idle_packet_idle_packet_idle(self):
+        return self.bitstuff_test(
             dict(
                 # Idle, Packet, Idle, Packet, Idle
                 reset  = "00000000000000000000000011000000000000000000000000000001100000",
                 value  = "111110000000111111011101__11111111110000000111111011101__11111",
                 output = "111110000000111111s11101__111111e1110000000111111s11101__11111",
-            ),
+            ), "idle-packet-idle-packet-idle")
 
+    def test_captured_setup_packet_no_stuff(self):
+        return self.bitstuff_test(
             dict(
                 # Captured setup packet (no bitstuff)
                 reset  = "000000000000000000000000000000000110",
                 value  = "100000001101101000000000000001000__1",
                 output = "100000001101101000000000000001000__1"
-            )
-        ]
-
-        def stim(output, **kw):
-            actual_output = yield from send(**kw)
-            self.assertEqual(output, actual_output)
-
-        i = 0
-        for vector in test_vectors:
-            with self.subTest(i=i, vector=vector):
-                dut = RxBitstuffRemover()
-
-                run_simulation(
-                    dut,
-                    stim(**vector),
-                    vcd_name=self.make_vcd_name(testsuffix="%02d" % i),
-                )
-                i += 1
+            ), "captured-setup-packet-no-stuff")
 
 
 if __name__ == "__main__":
