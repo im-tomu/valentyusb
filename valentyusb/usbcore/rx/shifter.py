@@ -31,6 +31,9 @@ class RxShifter(Module):
     i_data : Signal(1)
         Serial input data.
 
+    i_valid : Signal(1)
+        Indicates i_data contains a valid bit
+
     Output Ports
     ------------
     o_data : Signal(width)
@@ -41,7 +44,7 @@ class RxShifter(Module):
     """
     def __init__(self, width):
         self.i_data = Signal()
-        self.i_data = Signal()
+        self.i_valid = Signal()
 
         self.o_data = Signal(width)
         self.o_put = Signal()
@@ -51,11 +54,18 @@ class RxShifter(Module):
         shift_reg = Signal(width+1, reset=0b1)
 
         self.sync += [
-            self.o_put.eq(shift_reg[width]),
             If(shift_reg[width],
+                self.o_put.eq(1),
                 self.o_data.eq(shift_reg[0:width]),
-                shift_reg.eq(Cat(self.i_data, shift_reg.reset[0:width])),
-            ).Else(
+                If(self.i_valid,
+                    shift_reg.eq(Cat(self.i_data, shift_reg.reset[0:width])),
+                ).Else(
+                    shift_reg.eq(shift_reg.reset[0:width])
+                )
+            ).Elif(self.i_valid,
+                self.o_put.eq(0),
                 shift_reg.eq(Cat(self.i_data, shift_reg[0:width])),
+            ).Else(
+                self.o_put.eq(0),
             ),
         ]
