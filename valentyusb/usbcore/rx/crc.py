@@ -41,6 +41,9 @@ class RxCrcChecker(Module):
     i_reset : Signal(1)
         Resets the CRC calculation back to the initial state.
 
+    i_valid : Signal(1)
+        Indicate that i_data is valid and a CRC should be calculated
+
     Output Ports
     ------------
     o_crc_good : Signal()
@@ -49,6 +52,7 @@ class RxCrcChecker(Module):
     def __init__(self, width, polynomial, initial, residual):
         self.i_data = Signal()
         self.i_reset = Signal()
+        self.i_valid = Signal()
 
         crc = Signal(width)
         crc_good = Signal(1)
@@ -56,7 +60,7 @@ class RxCrcChecker(Module):
 
         self.comb += [
             crc_good.eq(crc == residual),
-            crc_invert.eq(i_data ^ crc[width - 1])
+            crc_invert.eq(self.i_data ^ crc[width - 1])
         ]
 
         for i in range(width):
@@ -70,9 +74,9 @@ class RxCrcChecker(Module):
                     rhs = crc[i - 1]
 
             self.sync += [
-                If(i_reset,
+                If(self.i_reset,
                     crc[i].eq((initial >> i) & 1)
-                ).Elif(i_valid,
+                ).Elif(self.i_valid,
                     crc[i].eq(rhs)
                 )
             ]
