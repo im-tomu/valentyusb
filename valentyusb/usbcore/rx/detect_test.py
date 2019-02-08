@@ -64,7 +64,7 @@ class TestRxPacketDetect(BaseUsbTestCase):
             dict(
                 # Idle, Packet, Idle
                 value      = "11111000000011111111101__11111",
-                pkt_start  = "             S                 ",
+                pkt_start  = "            S                  ",
                 pkt_active = "_____________-----------_______"
             ), "idle-packet-idle")
 
@@ -73,7 +73,7 @@ class TestRxPacketDetect(BaseUsbTestCase):
             dict(
                 # Idle, Packet, Idle (pipeline stall)
                 value      = "111110000000111111111101__11111",
-                pkt_start  = "             S                  ",
+                pkt_start  = "            S                   ",
                 pkt_active = "_____________------------_______"
             ), "idle-packet-idle-stall")
 
@@ -82,7 +82,7 @@ class TestRxPacketDetect(BaseUsbTestCase):
             dict(
                 # Idle, Packet, Idle (pipeline stalls)
                 value      = "11111000000011111111111101__11111",
-                pkt_start  = "             S                    ",
+                pkt_start  = "            S                     ",
                 pkt_active = "_____________--------------_______"
             ), "idle-packet-idle-stalls")
 
@@ -91,7 +91,7 @@ class TestRxPacketDetect(BaseUsbTestCase):
             dict(
                 # Idle, Packet, Idle, Packet, Idle
                 value      = "11111000000011111111101__1111111111000000011111111101__11111",
-                pkt_start  = "             S                             S                 ",
+                pkt_start  = "            S                             S                  ",
                 pkt_active = "_____________-----------___________________-----------_______"
             ), "idle-packet-idle-packet-idle")
 
@@ -100,7 +100,7 @@ class TestRxPacketDetect(BaseUsbTestCase):
             dict(
                 # Idle, Short Sync Packet, Idle
                 value      = "111110000011111111101__11111",
-                pkt_start  = "           S                 ",
+                pkt_start  = "          S                  ",
                 pkt_active = "___________-----------_______"
             ), "idle-shortsyncpacket-idle")
 
