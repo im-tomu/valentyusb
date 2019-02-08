@@ -73,7 +73,7 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
                     yield
                     clock += 1
                     out_seq += yield from get_output()
-            self.assertEqual(out_seq, "0" + seq)
+            self.assertEqual(out_seq, "j" + seq)
 
 
         if short_test:
