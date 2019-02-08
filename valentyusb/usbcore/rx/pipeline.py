@@ -80,7 +80,7 @@ class RxPipeline(Module):
         self.comb += [
             shifter.reset.eq(reset),
             shifter.i_data.eq(bit_dat),
-            shifter.ce.eq(~bitstuff.o_stall),
+            shifter.i_valid.eq(~bitstuff.o_stall),
         ]
         self.comb += [
             self.o_data_strobe.eq(shifter.o_put),
