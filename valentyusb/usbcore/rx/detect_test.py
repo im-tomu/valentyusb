@@ -12,59 +12,7 @@ from .detect import RxPacketDetect
 
 
 class TestRxPacketDetect(BaseUsbTestCase):
-    def test_packet_detect(self):
-
-        test_vectors = [
-            dict(
-                # SE0, Idle
-                value      = "______________111111111111111",
-                pkt_start  = "                              ",
-                pkt_active = "______________________________"
-            ),
-
-            dict(
-                # Idle, Packet, Idle
-                value      = "11111000000011111111101__11111",
-                pkt_start  = "             S                 ",
-                pkt_active = "_____________-----------_______"
-            ),
-
-            dict(
-                # Idle, Packet, Idle (pipeline stall)
-                value      = "111110000000111111111101__11111",
-                pkt_start  = "             S                  ",
-                pkt_active = "_____________------------_______"
-            ),
-
-            dict(
-                # Idle, Packet, Idle (pipeline stalls)
-                value      = "11111000000011111111111101__11111",
-                pkt_start  = "             S                    ",
-                pkt_active = "_____________--------------_______"
-            ),
-
-            dict(
-                # Idle, Packet, Idle, Packet, Idle
-                value      = "11111000000011111111101__1111111111000000011111111101__11111",
-                pkt_start  = "             S                             S                 ",
-                pkt_active = "_____________-----------___________________-----------_______"
-            ),
-
-            dict(
-                # Idle, Short Sync Packet, Idle
-                value      = "111110000011111111101__11111",
-                pkt_start  = "           S                 ",
-                pkt_active = "___________-----------_______"
-            ),
-
-            dict(
-                # Idle Glitch
-                value      = "11111111110011111111_1111__111",
-                pkt_start  = "                               ",
-                pkt_active = "_______________________________"
-            ),
-        ]
-
+    def packet_detect_test(self, vector, short_name):
         def send(value):
             value += "_"
             pkt_start = ""
@@ -93,18 +41,77 @@ class TestRxPacketDetect(BaseUsbTestCase):
             self.assertSequenceEqual(pkt_start, actual_pkt_start)
             self.assertSequenceEqual(pkt_active, actual_pkt_active)
 
-        i = 0
-        for vector in test_vectors:
-            with self.subTest(i=i, vector=vector):
-                dut = RxPacketDetect()
+        with self.subTest(short_name=short_name, vector=vector):
+            dut = RxPacketDetect()
 
-                run_simulation(
-                    dut,
-                    stim(**vector),
-                    vcd_name=self.make_vcd_name(testsuffix=str(i)),
-                )
-                i += 1
+            run_simulation(
+                dut,
+                stim(**vector),
+                vcd_name=self.make_vcd_name(testsuffix=short_name),
+            )
 
+    def test_se0_idle(self):
+        return self.packet_detect_test(
+            dict(
+                # SE0, Idle
+                value      = "______________111111111111111",
+                pkt_start  = "                              ",
+                pkt_active = "______________________________"
+            ), "se0-idle")
+
+    def test_idle_packet_idle(self):
+        return self.packet_detect_test(
+            dict(
+                # Idle, Packet, Idle
+                value      = "11111000000011111111101__11111",
+                pkt_start  = "             S                 ",
+                pkt_active = "_____________-----------_______"
+            ), "idle-packet-idle")
+
+    def test_idle_packet_idle_stall(self):
+        return self.packet_detect_test(
+            dict(
+                # Idle, Packet, Idle (pipeline stall)
+                value      = "111110000000111111111101__11111",
+                pkt_start  = "             S                  ",
+                pkt_active = "_____________------------_______"
+            ), "idle-packet-idle-stall")
+
+    def test_idle_packet_idle_stalls(self):
+        return self.packet_detect_test(
+            dict(
+                # Idle, Packet, Idle (pipeline stalls)
+                value      = "11111000000011111111111101__11111",
+                pkt_start  = "             S                    ",
+                pkt_active = "_____________--------------_______"
+            ), "idle-packet-idle-stalls")
+
+    def test_idle_packet_idle_packet_idle(self):
+        return self.packet_detect_test(
+            dict(
+                # Idle, Packet, Idle, Packet, Idle
+                value      = "11111000000011111111101__1111111111000000011111111101__11111",
+                pkt_start  = "             S                             S                 ",
+                pkt_active = "_____________-----------___________________-----------_______"
+            ), "idle-packet-idle-packet-idle")
+
+    def test_idle_sync_idle(self):
+        return self.packet_detect_test(
+            dict(
+                # Idle, Short Sync Packet, Idle
+                value      = "111110000011111111101__11111",
+                pkt_start  = "           S                 ",
+                pkt_active = "___________-----------_______"
+            ), "idle-shortsyncpacket-idle")
+
+    def test_idle_glitch(self):
+        return self.packet_detect_test(
+            dict(
+                # Idle Glitch
+                value      = "11111111110011111111_1111__111",
+                pkt_start  = "                               ",
+                pkt_active = "_______________________________"
+            ), "idle-glitch")
 
 if __name__ == "__main__":
     unittest.main()
