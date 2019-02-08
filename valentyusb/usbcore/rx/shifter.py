@@ -6,7 +6,6 @@ from ..test.common import BaseUsbTestCase
 
 import unittest
 
-@CEInserter()
 @ResetInserter()
 class RxShifter(Module):
     """RX Shifter
