@@ -35,18 +35,16 @@ class TestRxCrcChecker(BaseUsbTestCase):
             self.assertEqual(actual_crc_good, crc_good)
 
         with self.subTest(i=i, vector=vector):
-            i_valid = Signal()
-            i_data = Signal()
-            i_reset = Signal()
 
             dut = RxCrcChecker(
                 vector["width"],
                 vector["polynomial"],
                 vector["initial"],
-                vector["residual"],
-                i_valid,
-                i_data,
-                i_reset)
+                vector["residual"]
+            )
+            i_valid = dut.i_valid
+            i_data = dut.i_data
+            i_reset = dut.i_reset
 
             run_simulation(
                 dut,
@@ -55,7 +53,7 @@ class TestRxCrcChecker(BaseUsbTestCase):
             )
 
     def test_usb2_token_with_good_crc5(self):
-        return self.shifter_test(0, 
+        return self.shifter_test(0,
             dict(
                 # USB2 token with good CRC5 (1)
                 width       = 5,
