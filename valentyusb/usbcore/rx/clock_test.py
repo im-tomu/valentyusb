@@ -10,7 +10,31 @@ from ..test.common import BaseUsbTestCase
 from .clock import RxClockDataRecovery
 
 class TestRxClockDataRecovery(BaseUsbTestCase):
-    def test_basic_recovery(self):
+    def test_j(self):
+        return self.basic_recovery_test("j")
+
+    def test_k(self):
+        return self.basic_recovery_test("k")
+
+    def test_0(self):
+        return self.basic_recovery_test("0")
+
+    def test_1(self):
+        return self.basic_recovery_test("1")
+
+    def test_jk01(self):
+        return self.basic_recovery_test("jk01")
+
+    def test_jjjkj0j1kjkkk0k10j0k00011j1k1011(self):
+        return self.basic_recovery_test("jjjkj0j1kjkkk0k10j0k00011j1k1011")
+
+    def test_jjjkj0j1kjkkk0k10j0k00011j1k1011(self):
+        return self.basic_recovery_test("jjjkj0j1kjkkk0k10j0k00011j1k1011", True)
+
+    def test_kkkkk0k0kjjjk0kkkkjjjkjkjkjjj0kj(self):
+        return self.basic_recovery_test("kkkkk0k0kjjjk0kkkkjjjkjkjkjjj0kj", True)
+
+    def basic_recovery_test(self, seq, short_test=True):
         """
         This test covers basic clock and data recovery.
         """
@@ -51,16 +75,8 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
                     out_seq += yield from get_output()
             self.assertEqual(out_seq, "0" + seq)
 
-        test_sequences = [
-            "j",
-            "k",
-            "0",
-            "1",
-            "jk01",
-            "jjjkj0j1kjkkk0k10j0k00011j1k1011"
-        ]
 
-        for seq in test_sequences:
+        if short_test:
             with self.subTest(seq=seq):
                 usbp_raw = Signal()
                 usbn_raw = Signal()
@@ -74,13 +90,7 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
                         testsuffix="clock.basic_recovery_%s" % seq),
                 )
 
-
-        long_test_sequences = [
-            "jjjkj0j1kjkkk0k10j0k00011j1k1011",
-            "kkkkk0k0kjjjk0kkkkjjjkjkjkjjj0kj"
-        ]
-
-        for seq in long_test_sequences:
+        else:
             for glitch in range(0, 32, 8):
                 with self.subTest(seq=seq, glitch=glitch):
                     usbp_raw = Signal()
