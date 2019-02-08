@@ -16,7 +16,6 @@ class TestRxShifter(BaseUsbTestCase):
         def send(reset, data , put=None, output=None):
             for i in range(len(data)+2):
                 if i < len(data):
-                    yield dut.ce.eq(1)
                     if data[i] == '|':
                         assert reset[i] == '|', reset[i]
                         assert put[i]   == '|', put[i]
