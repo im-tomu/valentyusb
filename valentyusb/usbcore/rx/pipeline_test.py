@@ -73,6 +73,14 @@ class TestRxPipeline(BaseUsbTestCase):
                 clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
             )
 
+    def test_usb2_stuffed_sof(self):
+        return self.pkt_decode_test(
+            dict(
+                value    = "11 00000001 10100101 00010000 01111101 __111",
+                data     = [0xa5, 0x10, 0x7d],
+                pkt_good = True,
+            ), "USB2 Stuffed SOF")
+
     def test_usb2_sof_token(self):
         return self.pkt_decode_test(
             dict(
