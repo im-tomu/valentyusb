@@ -63,7 +63,26 @@ class TestRxPipeline(BaseUsbTestCase):
 
         def stim(value, data, pkt_good):
             actual_data = yield from send(nrzi(value)+'J'*20)
-            self.assertSequenceEqual(data, actual_data)
+            msg = "\n"
+
+            loop=0
+            msg = msg + "Wanted: ["
+            for var in data:
+                if loop > 0:
+                    msg = msg + ", "
+                msg = msg + "0x{:02x}".format(var)
+                loop = loop + 1
+            msg = msg + "]\n"
+
+            loop=0
+            msg = msg + "   Got: ["
+            for var in actual_data:
+                if loop > 0:
+                    msg = msg + ", "
+                msg = msg + "0x{:02x}".format(var)
+                loop = loop + 1
+            msg = msg + "]"
+            self.assertSequenceEqual(data, actual_data, msg=msg)
 
         with self.subTest(name=name):
             fname = name.replace(" ","_")
@@ -74,13 +93,21 @@ class TestRxPipeline(BaseUsbTestCase):
                 clocks={"sys": 10, "usb_48": 40, "usb_12": 160},
             )
 
-    def test_usb2_stuffed_sof(self):
+    def test_usb2_sof_stuffed_mid(self):
         return self.pkt_decode_test(
             dict(
                 value    = "11 00000001 10100101 00010000 01111101 __111",
                 data     = [0xa5, 0x10, 0x7d],
                 pkt_good = True,
-            ), "USB2 Stuffed SOF")
+            ), "USB2 SOF Stuffed Middle")
+
+    def test_usb2_sof_stuffed_end(self):
+        return self.pkt_decode_test(
+            dict(
+                value    = "11 00000001 10100101 11100001 01111110 __111",
+                data     = [0xa5, 0xe1, 0x7e],
+                pkt_good = True,
+            ), "USB2 SOF Stuffed End")
 
     def test_usb2_sof_token(self):
         return self.pkt_decode_test(

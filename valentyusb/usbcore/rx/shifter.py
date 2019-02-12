@@ -50,6 +50,7 @@ class RxShifter(Module):
         # register to indicate when it is full.
         shift_reg = Signal(width+1, reset=0b1)
 
+        # self.comb += self.o_data.eq(shift_reg[0:width])
         self.sync += [
             self.o_put.eq(shift_reg[width]),
             If(shift_reg[width],
