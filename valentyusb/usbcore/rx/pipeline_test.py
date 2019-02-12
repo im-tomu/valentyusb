@@ -96,8 +96,8 @@ class TestRxPipeline(BaseUsbTestCase):
     def test_usb2_sof_stuffed_mid(self):
         return self.pkt_decode_test(
             dict(
-                value    = "11 00000001 10100101 00010000 01111101 __111",
-                data     = [0xa5, 0x10, 0x7d],
+                value    = "11 00000001 10100101 11111111 00111100 __111",
+                data     = [0xa5, 0xff, 0x3c],
                 pkt_good = True,
             ), "USB2 SOF Stuffed Middle")
 
@@ -105,7 +105,7 @@ class TestRxPipeline(BaseUsbTestCase):
         return self.pkt_decode_test(
             dict(
                 value    = "11 00000001 10100101 11100001 01111110 __111",
-                data     = [0xa5, 0xe1, 0x7e],
+                data     = [b("10100101"), b("11100001"), b("01111110")],
                 pkt_good = True,
             ), "USB2 SOF Stuffed End")
 
@@ -113,8 +113,8 @@ class TestRxPipeline(BaseUsbTestCase):
         return self.pkt_decode_test(
             dict(
                 #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
-                value    = "11 00000001 10100101 10000110 11000010 __111",
-                data     = [b("10100101"), b("10000110"), b("11000010")],
+                value    = "11 00000001 10100101 00010010 11000101 __111",
+                data     = [b("10100101"), b("00010010"), b("11000101")],
                 pkt_good = True,
             ), "USB2 SOF token")
 
@@ -123,7 +123,7 @@ class TestRxPipeline(BaseUsbTestCase):
             dict(
                 #              SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
                 value    = "11 00000001 10100101 11011100 10100011 __111",
-                data     = [0xa5, 0x3b, 0xc5],
+                data     = [b("10100101"), b("11011100"), b("10100011")],
                 pkt_good = True,
             ), "USB2 SOF token 1")
 
