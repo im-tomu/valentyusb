@@ -57,7 +57,8 @@ class TestRxPipeline(BaseUsbTestCase):
 
                 for i in range(0, 4):
                     yield from tick()
-
+            for i in range(0, 300):
+                yield
             return data
 
         def stim(value, data, pkt_good):

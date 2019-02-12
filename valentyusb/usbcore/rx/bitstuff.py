@@ -55,7 +55,7 @@ class RxBitstuffRemover(Module):
 
         drop_bit = Signal(1)
 
-        for i in range(6):
+        for i in range(5):
             stuff.act("D%d" % i,
                 If(self.i_data,
                     # Receiving '1' increments the bitstuff counter.
@@ -66,7 +66,7 @@ class RxBitstuffRemover(Module):
                 ),
             )
 
-        stuff.act("D6",
+        stuff.act("D5",
             drop_bit.eq(1),
             # Reset the bitstuff counter, drop the data.
             NextState("D0")

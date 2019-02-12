@@ -84,7 +84,7 @@ class RxPipeline(Module):
         ]
         self.comb += [
             self.o_data_strobe.eq(shifter.o_put),
-            self.o_data_payload.eq(shifter.o_data[::-1]),
+            self.o_data_payload.eq(shifter.o_data[0:8]),
         ]
 
         # Packet ended signal
