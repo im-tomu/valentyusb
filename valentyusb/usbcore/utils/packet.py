@@ -261,22 +261,23 @@ def sof_packet(frame):
     sync, pid, frame no (11bits), crc5(5bits), eop
 
     >>> sof_packet(1)
-    '101001010000000010111100'
+    '101001010000000110111000'
 
     >>> sof_packet(100)
-    '101001010011000011111001'
+    '101001010110010011111000'
 
     >>> sof_packet(257)
-    '101001010000010000011100'
+    '101001010000000100011001'
 
     >>> sof_packet(1429)
-    '101001010100110110000101'
+    '101001011001010110000101'
 
     >>> sof_packet(2**11 - 2)
-    '101001011111111111101011'
+    '101001010001010010011000'
     """
     assert frame < 2**11, (frame, '<', 2**11)
-    data = [frame >> 3, (frame & 0b111) << 5]
+    frame_rev = eval('0b' + bin(frame | 0x1000000)[::-1][:11])
+    data = [frame_rev >> 3, (frame_rev & 0b111) << 5]
     data[-1] = data[-1] | crc5_sof(frame)
     return encode_pid(PID.SOF) + encode_data(data)
 
