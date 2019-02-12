@@ -421,6 +421,50 @@ class CommonUsbTestCase:
     # Actual test cases are after here.
     ######################################################################
 
+    def test_sof_stuffing(self):
+        def stim():
+            addr = 0x20
+            epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+            epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+
+            yield from self.tick_usb12()
+            yield from self.clear_pending(epaddr_out)
+            yield from self.clear_pending(epaddr_in)
+            yield from self.tick_usb12()
+            yield from self.tick_usb12()
+
+            # Send SOF packet
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # SOF 0xa5 0xff 0x3c
+            yield from self.send_sof_packet(2041)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # SOF 0xa5 0x12 0xc5
+            yield from self.send_sof_packet(150)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # SOF 0xa5 0xe1 0x7e
+            yield from self.send_sof_packet(1803)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            # SOF 0xa5 0x19 0xf5
+            yield from self.send_sof_packet(207)
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            for i in range(0, 10):
+                yield from self.tick_usb12()
+
+            yield from self.check_no_pending(epaddr_in)
+
+        self.run_sim(stim)
+
+
     def test_sof_is_ignored(self):
         def stim():
             addr = 0x20
