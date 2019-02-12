@@ -79,7 +79,7 @@ class RxPipeline(Module):
         self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
             shifter.reset.eq(reset),
-            shifter.i_data.eq(bit_dat),
+            shifter.i_data.eq(bit_dat ^ bitstuff.o_stall),
             shifter.ce.eq(~bitstuff.o_stall),
         ]
         self.comb += [
