@@ -276,10 +276,10 @@ def sof_packet(frame):
     '101001010001010010011000'
     """
     def rev_byte(x):
-        return eval('0b' + bin(x | 0x10000000)[::-1][:8])
+        return int("{0:08b}".format(x)[:8][::-1], 2)
 
     assert frame < 2**11, (frame, '<', 2**11)
-    frame_rev = eval('0b' + bin(frame | 0x1000000)[::-1][:11])
+    frame_rev = int("{0:011b}".format(frame)[:11][::-1], 2)
     data = [frame_rev >> 3, (frame_rev & 0b111) << 5]
     data[-1] = data[-1] | crc5_sof(frame)
     data[0] = rev_byte(data[0])
