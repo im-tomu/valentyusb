@@ -76,7 +76,7 @@ def crc5_sof(v):
     """
     reg = crc.CrcRegister(crc.CRC5_USB)
     reg.takeWord(v, 11)
-    return reg.getFinalValue()
+    return eval('0b' + bin(reg.getFinalValue() | 0x10000000)[::-1][:5])
 
 
 def crc16(input_data):
@@ -275,10 +275,15 @@ def sof_packet(frame):
     >>> sof_packet(2**11 - 2)
     '101001010001010010011000'
     """
+    def rev_byte(x):
+        return eval('0b' + bin(x | 0x10000000)[::-1][:8])
+
     assert frame < 2**11, (frame, '<', 2**11)
     frame_rev = eval('0b' + bin(frame | 0x1000000)[::-1][:11])
     data = [frame_rev >> 3, (frame_rev & 0b111) << 5]
     data[-1] = data[-1] | crc5_sof(frame)
+    data[0] = rev_byte(data[0])
+    data[1] = rev_byte(data[1])
     return encode_pid(PID.SOF) + encode_data(data)
 
 
