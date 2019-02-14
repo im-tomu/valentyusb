@@ -6,22 +6,33 @@ from unittest import TestCase
 from migen import *
 
 from ..test.common import BaseUsbTestCase, CommonUsbTestCase
-from ..io_test import TestIoBuf
+from ..io_test import FakeIoBuf
 
 from .epmem import MemInterface
-
+from ..endpoint import EndpointType, EndpointResponse
+from ..test.clock import CommonTestMultiClockDomain
+from ..utils.bits import get_bit, set_bit
 
 class TestMemInterface(
         BaseUsbTestCase,
         CommonUsbTestCase,
+        CommonTestMultiClockDomain,
         unittest.TestCase):
 
     maxDiff=None
 
+    def on_usb_48_edge(self):
+        if False:
+            yield
+
+    def on_usb_12_edge(self):
+        if False:
+            yield
+
     def setUp(self):
-        self.iobuf = TestIoBuf()
-        self.dut = ClockDomainsRenamer("cpu_12")(
-            MemInterface(self.iobuf, num_endpoints=3))
+        CommonTestMultiClockDomain.setUp(self, ("usb_12", "usb_48"))
+        self.iobuf = FakeIoBuf()
+        self.dut = MemInterface(self.iobuf, num_endpoints=3)
 
         self.packet_h2d = Signal(1)
         self.packet_d2h = Signal(1)
@@ -41,24 +52,33 @@ class TestMemInterface(
             yield from self.idle()
             yield from stim()
 
-        print()
-        print("-"*10)
+        # print()
+        # print("-"*10)
         run_simulation(
             self.dut,
             padfront(),
             vcd_name=self.make_vcd_name(),
             clocks={
-                "sys": 12,
-                "usb_48": 48,
-                "usb_12": 192,
-                "cpu_12": 192,
+                "sys": 2,
+                "usb_48": 8,
+                "usb_12": 32,
             },
         )
-        print("-"*10)
+        # print("-"*10)
 
-    def _update_internal_signals(self):
-        if False:
-            yield
+    def tick_sys(self):
+        yield from self.update_internal_signals()
+        yield
+
+    def tick_usb48(self):
+        yield from self.wait_for_edge("usb_48")
+
+    def tick_usb12(self):
+        for i in range(0, 4):
+            yield from self.tick_usb48()
+
+    def update_internal_signals(self):
+        yield from self.update_clocks()
 
     ######################################################################
     ## Helpers
@@ -78,6 +98,11 @@ class TestMemInterface(
 
     def get_evsrc(self, epaddr):
         epnum = EndpointType.epnum(epaddr)
+        epdir = EndpointType.epdir(epaddr)
+        # if epdir == EndpointType.OUT:
+            # print("get_evsrc name: oep{}".format(epnum))
+        # elif epdir == EndpointType.IN:
+            # print("get_evsrc name: iep{}".format(epnum))
         return self.get_module(epaddr, "ep{}".format(epnum), obj=self.dut.packet)
 
     def get_ptr_csr(self, epaddr):
@@ -90,13 +115,13 @@ class TestMemInterface(
 
     def set_csr(self, csr, epaddr, v):
         c = yield from csr.read()
-        v = _set_bit(c, epaddr, v)
+        v = set_bit(c, epaddr, v)
         yield from csr.write(v)
 
     # Data Toggle Bit
     def dtb(self, epaddr):
         v = yield from self.dut.dtb.read()
-        return _get_bit(epaddr, v)
+        return get_bit(epaddr, v)
 
     def set_dtb(self, epaddr):
         yield from self.set_csr(self.dut.dtb, epaddr, 1)
@@ -107,7 +132,7 @@ class TestMemInterface(
     # Arm endpoint Bit
     def arm(self, epaddr):
         v = yield from self.dut.arm.read()
-        return _get_bit(epaddr, v)
+        return get_bit(epaddr, v)
 
     def set_arm(self, epaddr):
         yield from self.set_csr(self.dut.arm, epaddr, 1)
@@ -118,7 +143,7 @@ class TestMemInterface(
     # Stall endpoint Bit
     def sta(self, epaddr):
         v = yield from self.dut.sta.read()
-        return _get_bit(epaddr, v)
+        return get_bit(epaddr, v)
 
     def set_sta(self, epaddr):
         yield from self.set_csr(self.dut.sta, epaddr, 1)
@@ -133,6 +158,7 @@ class TestMemInterface(
         return v
 
     def pending(self, epaddr):
+        # print("epaddr: {}".format(epaddr))
         evsrc = self.get_evsrc(epaddr)
         v = yield evsrc.pending
         return v
@@ -189,6 +215,11 @@ class TestMemInterface(
         ep_ptr = yield from self.get_ptr_csr(epaddr).read()
         buf = self.get_module(epaddr, "buf")
 
+        # # Make sure the endpoint is empty
+        # empty = yield from endpoint.ibuf_empty.read()
+        # self.assertTrue(
+        #     empty, "Device->Host buffer not empty when setting data!")
+
         for i, v in enumerate(data):
             yield buf[ep_ptr+i].eq(v)
 
@@ -202,16 +233,48 @@ class TestMemInterface(
         ep_ptr = yield from self.get_ptr_csr(epaddr).read()
         buf = self.get_module(epaddr, "buf")
 
+        # actual_data = []
+        # while range(0, 1024):
+        #     yield from endpoint.obuf_head.write(0)
+        #     empty = yield from endpoint.obuf_empty.read()
+        #     if empty:
+        #         break
+
+        #     v = yield from endpoint.obuf_head.read()
+        #     actual_data.append(v)
+        #     yield
+
         # Make sure there is something pending
         self.assertTrue((yield from self.pending(epaddr)))
 
         actual_data = []
         for i in range(len(data), 0, -1):
-            d = yield buf[ep_ptr-i]
+            # Subtract two bytes, since the CRC16 is stripped from the buffer.
+            d = yield buf[ep_ptr-i-2]
             actual_data.append(d)
 
-        self.ep_print(epaddr, "Got: %r (expected: %r)", actual_data, data)
-        self.assertSequenceEqual(data, actual_data)
+        msg = "\n"
+
+        loop=0
+        msg = msg + "Wanted: ["
+        for var in data:
+            if loop > 0:
+                msg = msg + ", "
+            msg = msg + "0x{:02x}".format(var)
+            loop = loop + 1
+        msg = msg + "]\n"
+
+        loop=0
+        msg = msg + "   Got: ["
+        for var in actual_data:
+            if loop > 0:
+                msg = msg + ", "
+            msg = msg + "0x{:02x}".format(var)
+            loop = loop + 1
+        msg = msg + "]"
+    
+        # self.ep_print(epaddr, msg)
+        self.assertSequenceEqual(data, actual_data, msg)
 
 
 if __name__ == '__main__':
