@@ -6,7 +6,7 @@ from unittest import TestCase
 from migen import *
 
 from ..endpoint import EndpointType, EndpointResponse
-from ..io import FakeIoBuf
+from ..io_test import FakeIoBuf
 from ..pid import PIDTypes
 from ..utils.packet import crc16
 
