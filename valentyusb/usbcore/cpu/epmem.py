@@ -13,6 +13,7 @@ from litex.soc.interconnect.csr import *
 
 from litex.soc.cores.gpio import GPIOOut
 
+from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
 
 
@@ -81,23 +82,22 @@ class MemInterface(Module, AutoCSR):
 
         self.eps_idx = eps_idx = Signal(5)
         self.comb += [
-            self.eps_idx.eq(Cat(usb_core.endp, usb_core.tok == PID.IN)),
+            self.eps_idx.eq(Cat(usb_core.tok == PID.IN, usb_core.endp)),
         ]
 
         l = num_endpoints * 2
 
-        self.submodules.sta = CSRStorage(l)                         # Stall endpoint
-        self.submodules.dtb = CSRStorage(l, write_from_dev=True)    # Data toggle bit
-        self.submodules.arm = CSRStorage(l)                         # Endpoint is ready
+        self.submodules.sta = CSRStorage(5)                         # Stall endpoint
+        self.submodules.dtb = CSRStorage(5, write_from_dev=True)    # Data toggle bit
+        self.submodules.arm = CSRStorage(5)                         # Endpoint is ready
 
         self.comb += [
             usb_core.sta.eq(self.csr_bits(self.sta)[eps_idx]),
-            usb_core.dtb.eq(self.csr_bits(self.dtb)[eps_idx]),
             usb_core.arm.eq(self.csr_bits(self.arm)[eps_idx]), # & Array(self.packet.pending.r)[eps_idx]),
             If(~iobuf.usb_pullup,
                 *all_trig,
             ).Else(
-                Array(trig)[usb_core.ep_addr].eq(usb_core.commit),
+                Array(trig)[eps_idx].eq(usb_core.commit),
             ),
         ]
 
@@ -128,6 +128,14 @@ class MemInterface(Module, AutoCSR):
         ]
         self.sync.usb_12 += [
             If(usb_core.data_recv_put, self.obuf_ptr.eq(self.obuf_ptr + 1)),
+            If(usb_core.commit,
+                self.dtb.we.eq(1),
+                usb_core.dtb.eq(~self.csr_bits(self.dtb)[eps_idx]),
+                # self.csr_bits(self.dtb)[eps_idx].eq(~self.csr_bits(self.dtb)[eps_idx]),
+                self.dtb.dat_w.eq(~self.dtb.storage),
+            ).Else(
+                self.dtb.we.eq(0),
+            ),
         ]
 
         # Input pathway
