@@ -438,22 +438,22 @@ class CommonUsbTestCase:
                 yield from self.tick_usb12()
 
             # SOF 0xa5 0xff 0x3c
-            yield from self.send_sof_packet(2041)
+            yield from self.send_sof_packet(0x04ff)
             for i in range(0, 10):
                 yield from self.tick_usb12()
 
             # SOF 0xa5 0x12 0xc5
-            yield from self.send_sof_packet(150)
+            yield from self.send_sof_packet(0x0512)
             for i in range(0, 10):
                 yield from self.tick_usb12()
 
             # SOF 0xa5 0xe1 0x7e
-            yield from self.send_sof_packet(1803)
+            yield from self.send_sof_packet(0x06e1)
             for i in range(0, 10):
                 yield from self.tick_usb12()
 
             # SOF 0xa5 0x19 0xf5
-            yield from self.send_sof_packet(207)
+            yield from self.send_sof_packet(0x0519)
             for i in range(0, 10):
                 yield from self.tick_usb12()
 
