@@ -194,23 +194,34 @@ class TestMemInterface(
 
         return EndpointResponse.NAK
 
+    def format_epaddr(self, ep):
+        epdir = "IN"
+        if ep & 1 == 0:
+            epdir = "OUT"
+        return "{} - EP{} ({})".format(ep, ep >> 1, epdir)
+
     def set_response(self, epaddr, v):
         assert isinstance(v, EndpointResponse), v
         if v == EndpointResponse.STALL:
+            # print("Setting response to {} to STALL".format(self.format_epaddr(epaddr)))
             yield from self.set_sta(epaddr)
-        else:
+            yield from self.clear_arm(epaddr)
+        elif v == EndpointResponse.ACK:
+            # print("Setting response to {} to ACK".format(self.format_epaddr(epaddr)))
             yield from self.clear_sta(epaddr)
-
-        if v == EndpointResponse.ACK:
             yield from self.set_arm(epaddr)
         elif v == EndpointResponse.NAK:
+            # print("Setting response to {} to NAK".format(self.format_epaddr(epaddr)))
+            yield from self.clear_sta(epaddr)
             yield from self.clear_arm(epaddr)
+        else:
+            print("Unknown EP response to {}: {}".format(self.format_epaddr(epaddr), v))
 
     # Get/set endpoint data ----------------
     def set_data(self, epaddr, data):
         """Set an endpoints buffer to given data to be sent."""
         assert isinstance(data, (list, tuple))
-        self.ep_print(epaddr, "Set: %r", data)
+        # self.ep_print(epaddr, "Set: %r", data)
 
         ep_ptr = yield from self.get_ptr_csr(epaddr).read()
         buf = self.get_module(epaddr, "buf")

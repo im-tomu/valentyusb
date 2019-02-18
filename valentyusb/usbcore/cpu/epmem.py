@@ -21,11 +21,11 @@ class MemInterface(Module, AutoCSR):
     """
     Interfaces the USB state machine core to the soft CPU.
 
-    This interface has two memory regions;
+    This interface has two memory regions:
      * Output memory. Writable by CPU, readable by USB Core.
      * Input memory. Writable by USB Core, readable by CPU.
 
-    Each endpoint has;
+    Each endpoint has:
      * A current pointer
      * A current length
      * Control bits
@@ -41,9 +41,33 @@ class MemInterface(Module, AutoCSR):
 
     After a packet has been sent or received, the pending flag will be raised.
     While the pending flag is raised, the USB core will respond with NAK.
+
+    The `arm`, `dtb`, and `sta` registers are bitmasks.  They are packed
+    in pairs of IO.  If you only have one endpoint, then `arm`, `dtb`, and
+    `sta` are packed like this:
+        IO
+    Where
+        Bit 1 is set to affect EP0 IN, and
+        Bit 0 is set to affect EP0 OUT
+    Likewise, if you have 3 endpoints, they are packed as:
+        IOIOIO
+        |||||\- EP0 OUT
+        ||||\-- EP0 IN
+        |||\--- EP1 OUT
+        ||\---- EP1 IN
+        |\----- EP2 OUT
+        \------ EP2 IN
+
+    Therefore, to ARM the EP1 IN endpoint, do:
+        arm_write((1<<1) | 1);
+    Or for EP2 IN:
+        arm_write((1<<2) | 1);
     """
 
     def csr_bits(self, csr):
+        """
+        What does this function do?!
+        """
         l = value_bits_sign(csr.storage)[0]
         bits = [Signal() for i in range(l)]
         self.comb += [bits[i].eq(csr.storage[i]) for i in range(l)]
@@ -80,20 +104,41 @@ class MemInterface(Module, AutoCSR):
 
         self.packet.finalize()
 
+        # eps_idx is the result of the last IN/OUT/SETUP token, and
+        # therefore describes the current EP that the USB core sees.
+        # The register is of the form:
+        #    EEEEI
+        # Where:
+        #   E: The last endpoint number
+        #   I: True if the current endpoint is an IN endpoint
         self.eps_idx = eps_idx = Signal(5)
+        # self.eps_idx_in = eps_idx_in = Signal(5)
         self.comb += [
+            # Sic. The Cat() function places the first argument in the LSB,
+            # and the second argument in the MSB.
             self.eps_idx.eq(Cat(usb_core.tok == PID.IN, usb_core.endp)),
+
+            # self.eps_idx_in.eq(Cat(0, usb_core.endp)),
         ]
 
-        l = num_endpoints * 2
+        signal_bits = num_endpoints * 2
 
-        self.submodules.sta = CSRStorage(5)                         # Stall endpoint
-        self.submodules.dtb = CSRStorage(5, write_from_dev=True)    # Data toggle bit
-        self.submodules.arm = CSRStorage(5)                         # Endpoint is ready
+        # Keep a copy of the control bits for each endpoint
 
+        # Stall endpoint
+        self.submodules.sta = CSRStorage(signal_bits)
+
+        # Data toggle bit
+        self.submodules.dtb = CSRStorage(signal_bits, write_from_dev=True)
+
+        # Endpoint is ready
+        self.submodules.arm = CSRStorage(signal_bits)
+
+        # Wire up the USB core control bits to the currently-active
+        # endpoint bit.
         self.comb += [
             usb_core.sta.eq(self.csr_bits(self.sta)[eps_idx]),
-            usb_core.arm.eq(self.csr_bits(self.arm)[eps_idx]), # & Array(self.packet.pending.r)[eps_idx]),
+            usb_core.arm.eq(self.csr_bits(self.arm)[eps_idx]),
             If(~iobuf.usb_pullup,
                 *all_trig,
             ).Else(
@@ -119,7 +164,7 @@ class MemInterface(Module, AutoCSR):
             self.oport_wr.we.eq(usb_core.data_recv_put),
         ]
         # On a commit, copy the current obuf_ptr to the CSR register.
-        self.sync += [
+        self.sync.usb_12 += [
             If(usb_core.commit,
                 If((usb_core.tok == PID.OUT) | (usb_core.tok == PID.SETUP),
                     Array(optrs)[usb_core.endp].eq(self.obuf_ptr),
@@ -131,11 +176,10 @@ class MemInterface(Module, AutoCSR):
             If(usb_core.commit,
                 self.dtb.we.eq(1),
                 usb_core.dtb.eq(~self.csr_bits(self.dtb)[eps_idx]),
-                # self.csr_bits(self.dtb)[eps_idx].eq(~self.csr_bits(self.dtb)[eps_idx]),
-                self.dtb.dat_w.eq(~self.dtb.storage),
             ).Else(
                 self.dtb.we.eq(0),
             ),
+            self.dtb.dat_w.eq(self.dtb.storage ^ (1 << eps_idx)),
         ]
 
         # Input pathway
@@ -167,7 +211,7 @@ class MemInterface(Module, AutoCSR):
             #self.iport_rd.re.eq(),
         ]
         # On a transfer start, copy the CSR register into ibuf_ptr
-        self.sync += [
+        self.sync.usb_12 += [
             If(usb_core.start,
                 self.ibuf_ptr.eq(Array(iptrs)[usb_core.endp]),
             ),
