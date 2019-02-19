@@ -4,6 +4,8 @@ import unittest
 import inspect
 
 from itertools import zip_longest
+from litex.soc.interconnect.csr import CSRStorage
+import migen
 
 from ..endpoint import *
 from ..pid import *
@@ -121,6 +123,17 @@ class CommonUsbTestCase:
             EndpointType.epdir(epaddr).name,
             msg) % args)
 
+    def patch_csrs(self):
+        for csr in self.dut.get_csrs():
+            if isinstance(csr, CSRStorage) and hasattr(csr, "dat_w"):
+                self.dut.sync += [
+                    migen.If(csr.we,
+                        csr.storage.eq(csr.dat_w),
+                        csr.re.eq(1),
+                    ).Else(
+                        csr.re.eq(0),
+                    )
+                ]
     ######################################################################
     # Helper methods
     # FIXME: Should these be marked as internal only?
