@@ -85,8 +85,6 @@ class TestPerEndpointFifoInterface(
             yield from self.idle()
             yield from stim()
 
-        print()
-        print("-"*10)
         run_simulation(
             self.dut,
             padfront(),

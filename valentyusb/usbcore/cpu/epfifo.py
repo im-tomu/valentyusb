@@ -39,14 +39,14 @@ class Endpoint(Module, AutoCSR):
         self.trigger = self.ev.packet.trigger
 
         # Last PID?
-        self.submodules.last_tok = CSRStatus(2)
+        self.last_tok = CSRStatus(2)
 
         # How to respond to requests;
         #  - 10 - No response
         #  - 00 - ACK
         #  - 01 - NAK
         #  - 11 - STALL
-        self.submodules.respond = CSRStorage(2, write_from_dev=True)
+        self.respond = CSRStorage(2, write_from_dev=True)
 
         self.response = Signal(2)
         self.reset = Signal()
@@ -61,7 +61,7 @@ class Endpoint(Module, AutoCSR):
             self.respond.we.eq(self.reset),
         ]
 
-        self.submodules.dtb = CSRStorage(1, write_from_dev=True)
+        self.dtb = CSRStorage(1, write_from_dev=True)
         self.comb += [
             self.dtb.dat_w.eq(~self.dtb.storage | self.reset),
         ]
@@ -113,8 +113,8 @@ class EndpointOut(Endpoint):
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
             fifo.AsyncFIFOBuffered(width=8, depth=64))
 
-        self.submodules.obuf_head = CSR(8)
-        self.submodules.obuf_empty = CSRStatus(1)
+        self.obuf_head = CSR(8)
+        self.obuf_empty = CSRStatus(1)
         self.comb += [
             self.obuf_head.w.eq(self.obuf.dout),
             self.obuf.re.eq(self.obuf_head.re),
@@ -139,8 +139,8 @@ class EndpointIn(Endpoint):
         xxxx_readable = Signal()
         self.specials.crc_readable = cdc.MultiReg(self.ibuf.readable, xxxx_readable)
 
-        self.submodules.ibuf_head = CSR(8)
-        self.submodules.ibuf_empty = CSRStatus(1)
+        self.ibuf_head = CSR(8)
+        self.ibuf_empty = CSRStatus(1)
         self.comb += [
             self.ibuf.din.eq(self.ibuf_head.r),
             self.ibuf.we.eq(self.ibuf_head.re),

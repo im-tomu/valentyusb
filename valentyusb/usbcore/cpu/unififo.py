@@ -43,8 +43,8 @@ class UsbUniFifo(Module, AutoCSR):
         ]
 
         # System side (reading)
-        self.submodules.obuf_head = CSR(8)
-        self.submodules.obuf_empty = CSRStatus(1)
+        self.obuf_head = CSR(8)
+        self.obuf_empty = CSRStatus(1)
         self.comb += [
             self.obuf_head.w.eq(self.obuf.dout),
             self.obuf.re.eq(self.obuf_head.re),
@@ -60,9 +60,9 @@ class UsbUniFifo(Module, AutoCSR):
         self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_12"})(ibuf)
 
         # System side (writing)
-        self.submodules.arm = CSRStorage(1)
-        self.submodules.ibuf_head = CSR(8)
-        self.submodules.ibuf_empty = CSRStatus(1)
+        self.arm = CSRStorage(1)
+        self.ibuf_head = CSR(8)
+        self.ibuf_empty = CSRStatus(1)
         self.comb += [
             self.ibuf.din.eq(self.ibuf_head.r),
             self.ibuf.we.eq(self.ibuf_head.re),
