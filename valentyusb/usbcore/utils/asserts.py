@@ -5,9 +5,9 @@ import subprocess
 from .sdiff import Differ, getTerminalSize, original_diff
 import sys
 
-def assertMultiLineEqualSideBySide(data1, data2, msg):
+def assertMultiLineEqualSideBySide(expected, actual, msg):
     # print("data1: {}".format(data1.splitlines(1)))
-    if data1 == data2:
+    if expected == actual:
         return
 
     withcolor = True
@@ -15,7 +15,24 @@ def assertMultiLineEqualSideBySide(data1, data2, msg):
         withcolor = False
 
     (columns, lines) = getTerminalSize()
-    lines = original_diff(data1.splitlines(1), data2.splitlines(1),
+
+    # Print out header
+    expected = expected.splitlines(1)
+    actual = actual.splitlines(1)
+    differ = Differ(linejunk=None, charjunk=None,
+                    cutoff=0.1, fuzzy=0,
+                    cutoffchar=False, context=5)
+    for line in differ.formattext(' ',
+                                  None, "expected", None, "actual", columns,
+                                      withcolor=withcolor, linediff=None):
+        msg = msg + '\n' + line
+    for line in differ.formattext(' ',
+                                  None, "--------", None, "--------", columns,
+                                      withcolor=withcolor, linediff=None):
+        msg = msg + '\n' + line
+
+    # Print out body
+    lines = original_diff(expected, actual,
                           linejunk=None, charjunk=None,
                           cutoff=0.1, fuzzy=0,
                           cutoffchar=False, context=5,
