@@ -85,6 +85,7 @@ class TestPerEndpointFifoInterface(
             yield from self.idle()
             yield from stim()
 
+        CommonUsbTestCase.patch_csrs(self)
         run_simulation(
             self.dut,
             padfront(),

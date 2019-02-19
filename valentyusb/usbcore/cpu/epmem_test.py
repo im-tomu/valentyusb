@@ -54,6 +54,7 @@ class TestMemInterface(
 
         # print()
         # print("-"*10)
+        CommonUsbTestCase.patch_csrs(self)
         run_simulation(
             self.dut,
             padfront(),

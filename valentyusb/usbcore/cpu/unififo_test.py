@@ -97,6 +97,7 @@ class TestUsbUniFifo(
 
         print()
         print("-"*10)
+        CommonUsbTestCase.patch_csrs(self)
         run_simulation(
             self.dut, padfront(),
             vcd_name=self.make_vcd_name(),
