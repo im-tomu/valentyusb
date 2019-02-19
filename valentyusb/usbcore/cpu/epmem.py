@@ -126,13 +126,13 @@ class MemInterface(Module, AutoCSR):
         # Keep a copy of the control bits for each endpoint
 
         # Stall endpoint
-        self.submodules.sta = CSRStorage(signal_bits)
+        self.sta = CSRStorage(signal_bits)
 
         # Data toggle bit
-        self.submodules.dtb = CSRStorage(signal_bits, write_from_dev=True)
+        self.dtb = CSRStorage(signal_bits, write_from_dev=True)
 
         # Endpoint is ready
-        self.submodules.arm = CSRStorage(signal_bits)
+        self.arm = CSRStorage(signal_bits)
 
         # Wire up the USB core control bits to the currently-active
         # endpoint bit.
@@ -154,7 +154,7 @@ class MemInterface(Module, AutoCSR):
 
         optrs = []
         for i in range(0, num_endpoints):
-            exec("self.submodules.optr_ep{0} = CSRStatus(ptr_width, name='optr_ep{0}')".format(i))
+            exec("self.optr_ep{0} = CSRStatus(ptr_width, name='optr_ep{0}')".format(i))
             optrs.append(getattr(self, "optr_ep{}".format(i)).status)
 
         self.obuf_ptr = Signal(ptr_width)
@@ -195,12 +195,12 @@ class MemInterface(Module, AutoCSR):
         #    exec("self.submodules.ilen_ep{0} = CSRStorage(ptr_width, name='ilen_ep{0}')".format(i))
         #    ilens.append(getattr(self, "ilen_ep{}".format(i)).storage)
         assert num_endpoints == 3
-        self.submodules.iptr_ep0 = CSRStorage(ptr_width)
-        self.submodules.ilen_ep0 = CSRStorage(ptr_width)
-        self.submodules.iptr_ep1 = CSRStorage(ptr_width)
-        self.submodules.ilen_ep1 = CSRStorage(ptr_width)
-        self.submodules.iptr_ep2 = CSRStorage(ptr_width)
-        self.submodules.ilen_ep2 = CSRStorage(ptr_width)
+        self.iptr_ep0 = CSRStorage(ptr_width)
+        self.ilen_ep0 = CSRStorage(ptr_width)
+        self.iptr_ep1 = CSRStorage(ptr_width)
+        self.ilen_ep1 = CSRStorage(ptr_width)
+        self.iptr_ep2 = CSRStorage(ptr_width)
+        self.ilen_ep2 = CSRStorage(ptr_width)
         iptrs = [self.iptr_ep0.storage,self.iptr_ep1.storage,self.iptr_ep2.storage]
         ilens = [self.ilen_ep0.storage,self.ilen_ep1.storage,self.ilen_ep2.storage]
 
