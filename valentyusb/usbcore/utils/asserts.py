@@ -2,22 +2,26 @@
 
 import tempfile
 import subprocess
+from .sdiff import Differ, getTerminalSize, original_diff
+import sys
 
 def assertMultiLineEqualSideBySide(data1, data2, msg):
+    # print("data1: {}".format(data1.splitlines(1)))
     if data1 == data2:
         return
-    f1 = tempfile.NamedTemporaryFile()
-    f1.write(data1.encode('utf-8'))
-    f1.flush()
 
-    f2 = tempfile.NamedTemporaryFile()
-    f2.write(data2.encode('utf-8'))
-    f2.flush()
+    withcolor = True
+    if not sys.stdout.isatty():
+        withcolor = False
 
-    p = subprocess.Popen(["sdiff", f1.name, f2.name], stdout=subprocess.PIPE)
-    stdout, stderr = p.communicate()
-    diff = stdout.decode('utf-8')
+    (columns, lines) = getTerminalSize()
+    lines = original_diff(data1.splitlines(1), data2.splitlines(1),
+                          linejunk=None, charjunk=None,
+                          cutoff=0.1, fuzzy=0,
+                          cutoffchar=False, context=5,
+                          width=columns,
+                          withcolor=withcolor)
+    for line in lines:
+        msg = msg + '\n' + line
 
-    f1.close()
-    f2.close()
-    assert False, msg+'\n'+diff
+    assert False, msg
