@@ -104,7 +104,7 @@ class TestMemInterface(
             # print("get_evsrc name: oep{}".format(epnum))
         # elif epdir == EndpointType.IN:
             # print("get_evsrc name: iep{}".format(epnum))
-        return self.get_module(epaddr, "ep{}".format(epnum), obj=self.dut.packet)
+        return self.get_module(epaddr, "ep{}".format(epnum), obj=self.dut.ev)
 
     def get_ptr_csr(self, epaddr):
         epnum = EndpointType.epnum(epaddr)
@@ -177,7 +177,7 @@ class TestMemInterface(
 
         # Clear pending flag
         mask = 1 << epaddr
-        yield from self.dut.packet.pending.write(mask)
+        yield from self.dut.ev.pending.write(mask)
         yield
         # Check the pending flag has been cleared
         self.assertFalse((yield from self.trigger(epaddr)))

@@ -10,16 +10,19 @@ from ..test.common import BaseUsbTestCase, CommonUsbTestCase
 from ..utils.packet import *
 
 from .unififo import UsbUniFifo
+from ..test.clock import CommonTestMultiClockDomain
 
 
 class TestUsbUniFifo(
         BaseUsbTestCase,
         CommonUsbTestCase,
+        CommonTestMultiClockDomain,
         unittest.TestCase):
 
     maxDiff=None
 
     def setUp(self):
+        CommonTestMultiClockDomain.setUp(self, ("usb_12", "usb_48"))
         self.iobuf = FakeIoBuf()
         self.dut = UsbUniFifo(self.iobuf)
 
@@ -103,7 +106,6 @@ class TestUsbUniFifo(
             vcd_name=self.make_vcd_name(),
             clocks={"sys": 4, "usb_48": 4, "usb_12": 16},
         )
-        #    clocks={"usb_48": 4, "sys": 4})
         print("-"*10)
 
     def recv_packet(self):
@@ -163,12 +165,32 @@ class TestUsbUniFifo(
 
         yield from self.dut.arm.write(1)
 
+    def tick_sys(self):
+        yield from self.update_internal_signals()
+        yield
+
+    def tick_usb48(self):
+        yield from self.wait_for_edge("usb_48")
+
+    def tick_usb12(self):
+        for i in range(0, 4):
+            yield from self.tick_usb48()
+
     def next_state(self, state):
         self.assertIn(state, self.states)
         yield self.dut.state.eq(self.states.index(state))
         self.state = state
 
-    def _update_internal_signals(self):
+    def on_usb_48_edge(self):
+        if False:
+            yield
+
+    def on_usb_12_edge(self):
+        if False:
+            yield
+
+    def update_internal_signals(self):
+        yield from self.update_clocks()
         def decode_pid(pkt_data):
             pkt_data = encode_data(pkt_data[:1])
             pidt = int(pkt_data[0:4][::-1], 2)

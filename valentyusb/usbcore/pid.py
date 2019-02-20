@@ -32,31 +32,31 @@ class PID(IntEnum):
     """
 
     # Token pids
-    SETUP   = 0b1101
-    OUT     = 0b0001
-    IN      = 0b1001
-    SOF     = 0b0101
+    SETUP   = 0b1101 # D
+    OUT     = 0b0001 # 1
+    IN      = 0b1001 # 9
+    SOF     = 0b0101 # 5
 
     # Data pid
-    DATA0   = 0b0011
-    DATA1   = 0b1011
-    # USB2.0 only
-    DATA2   = 0b0111
-    MDATA   = 0b1111
+    DATA0   = 0b0011 # 3
+    DATA1   = 0b1011 # B
+    # USB HS only
+    DATA2   = 0b0111 # B
+    MDATA   = 0b1111 # F
 
     # Handshake pids
-    ACK     = 0b0010 # 0x2
-    NAK     = 0b1010 # 0xa
-    STALL   = 0b1110 # 0xe
-    # USB2.0 only
-    NYET    = 0b0110
+    ACK     = 0b0010 # 2
+    NAK     = 0b1010 # A
+    STALL   = 0b1110 # E
+    # USB HS only
+    NYET    = 0b0110 # 6
 
-    # USB2.0 only
-    PRE      = 0b1100
-    ERR      = 0b1100
-    SPLIT    = 0b1000
-    PING     = 0b0100
-    RESERVED = 0b0000
+    # USB HS only
+    PRE      = 0b1100 # C
+    ERR      = 0b1100 # C
+    SPLIT    = 0b1000 # 8
+    PING     = 0b0100 # 4
+    RESERVED = 0b0000 # 0
 
     def byte(self):
         v = self.value

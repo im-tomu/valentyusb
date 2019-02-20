@@ -66,7 +66,9 @@ class MemInterface(Module, AutoCSR):
 
     def csr_bits(self, csr):
         """
-        What does this function do?!
+        Work around the lack of bit-addressability in CSRs by creating
+        an array of signals that are aliases of the various CSR storage
+        values.
         """
         l = value_bits_sign(csr.storage)[0]
         bits = [Signal() for i in range(l)]
@@ -82,27 +84,23 @@ class MemInterface(Module, AutoCSR):
         self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
         self.iobuf = usb_core.iobuf
 
-        #self.submodules.packet = ev.EventManager()
-        #self.packet.setup = ev.EventSourcePulse()
-        #self.submodules.setup_ptr = CSRStatus(ptr_width)
-
         # Output endpoints
         all_trig = []
         trig = []
 
-        self.submodules.packet = ev.EventManager()
+        self.submodules.ev = ev.EventManager()
         for i in range(0, num_endpoints):
-            exec("self.packet.oep{} = ev.EventSourcePulse()".format(i))
-            t = getattr(self.packet, "oep{}".format(i)).trigger
+            exec("self.ev.oep{} = ev.EventSourcePulse()".format(i))
+            t = getattr(self.ev, "oep{}".format(i)).trigger
             all_trig.append(t.eq(1))
             trig.append(t)
 
-            exec("self.packet.iep{} = ev.EventSourcePulse()".format(i))
-            t = getattr(self.packet, "iep{}".format(i)).trigger
+            exec("self.ev.iep{} = ev.EventSourcePulse()".format(i))
+            t = getattr(self.ev, "iep{}".format(i)).trigger
             all_trig.append(t.eq(1))
             trig.append(t)
 
-        self.packet.finalize()
+        self.ev.finalize()
 
         # eps_idx is the result of the last IN/OUT/SETUP token, and
         # therefore describes the current EP that the USB core sees.
@@ -112,7 +110,7 @@ class MemInterface(Module, AutoCSR):
         #   E: The last endpoint number
         #   I: True if the current endpoint is an IN endpoint
         self.eps_idx = eps_idx = Signal(5)
-        # self.eps_idx_in = eps_idx_in = Signal(5)
+
         self.comb += [
             # Sic. The Cat() function places the first argument in the LSB,
             # and the second argument in the MSB.
@@ -126,19 +124,20 @@ class MemInterface(Module, AutoCSR):
         # Keep a copy of the control bits for each endpoint
 
         # Stall endpoint
-        self.sta = CSRStorage(signal_bits)
+        self.sta = CSRStorage(signal_bits, write_from_dev=True)
 
         # Data toggle bit
         self.dtb = CSRStorage(signal_bits, write_from_dev=True)
 
         # Endpoint is ready
-        self.arm = CSRStorage(signal_bits)
+        self.arm = CSRStorage(signal_bits, write_from_dev=True)
 
         # Wire up the USB core control bits to the currently-active
         # endpoint bit.
         self.comb += [
             usb_core.sta.eq(self.csr_bits(self.sta)[eps_idx]),
             usb_core.arm.eq(self.csr_bits(self.arm)[eps_idx]),
+            usb_core.dtb.eq(~self.csr_bits(self.dtb)[eps_idx]),
             If(~iobuf.usb_pullup,
                 *all_trig,
             ).Else(
@@ -171,15 +170,50 @@ class MemInterface(Module, AutoCSR):
                 ),
             ),
         ]
+
+        # Set up a signal to reset EP0 when we get a SETUP packet
+        self.usb_ep0_reset = Signal()
+        self.update_dtb = Signal()
+        self.update_ctrl = Signal()
+        self.should_check_ep0 = Signal()
+        # self.comb += [
+        #     self.usb_ep0_reset.eq(usb_core.start & (usb_core.tok == PID.SETUP))
+        # ]
+
         self.sync.usb_12 += [
             If(usb_core.data_recv_put, self.obuf_ptr.eq(self.obuf_ptr + 1)),
-            If(usb_core.commit,
+
+            # If the EP0 needs resetting, then clear the EP0 IN and OUT bits, which
+            # are stored in the lower two bits of the three control registers.
+            If(usb_core.start,
+                self.should_check_ep0.eq(1),
+            ).Elif(self.should_check_ep0,
+                self.should_check_ep0.eq(0),
+                If(usb_core.tok == PID.SETUP,
+                    self.update_ctrl.eq(1),
+                    self.update_dtb.eq(1),
+                    self.dtb.dat_w.eq(self.dtb.storage & ~0b11),
+                    self.sta.dat_w.eq(self.sta.storage & ~0b11),
+                    self.arm.dat_w.eq(self.arm.storage & ~0b11),
+                ),
+            ).Elif(self.update_ctrl,
+                self.update_ctrl.eq(0),
+                self.arm.we.eq(1),
+                self.sta.we.eq(1),
+            ).Elif(usb_core.commit,
+                self.update_dtb.eq(1),
+                self.dtb.dat_w.eq((self.dtb.storage ^ (1 << eps_idx))),
+                self.arm.dat_w.eq((self.arm.storage & ~(1 << eps_idx))),
+                self.sta.dat_w.eq((self.sta.storage & ~(1 << eps_idx))),
+                self.update_ctrl.eq(1),
+            ).Elif(self.update_dtb,
+                self.update_dtb.eq(0),
                 self.dtb.we.eq(1),
-                usb_core.dtb.eq(~self.csr_bits(self.dtb)[eps_idx]),
             ).Else(
+                self.arm.we.eq(0),
+                self.sta.we.eq(0),
                 self.dtb.we.eq(0),
-            ),
-            self.dtb.dat_w.eq(self.dtb.storage ^ (1 << eps_idx)),
+            )
         ]
 
         # Input pathway

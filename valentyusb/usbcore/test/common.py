@@ -597,6 +597,7 @@ class CommonUsbTestCase:
             yield from self.send_data_packet(PID.DATA1, d)
             yield from self.expect_ack()
 
+            # Now that we've transferred the data, the next response ought to be NAK
             respond = yield from self.response(epaddr_out)
             self.assertEqual(EndpointResponse.NAK, respond)
             yield from self.tick_usb12()
