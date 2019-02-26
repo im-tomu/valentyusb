@@ -83,7 +83,7 @@ class RxPipeline(Module):
             shifter.ce.eq(~bitstuff.o_stall),
         ]
         self.comb += [
-            self.o_data_strobe.eq(shifter.o_put),
+            self.o_data_strobe.eq(shifter.o_put & ~bitstuff.o_stall),
             self.o_data_payload.eq(shifter.o_data[::-1]),
         ]
 
