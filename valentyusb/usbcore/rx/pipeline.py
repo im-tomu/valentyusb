@@ -76,18 +76,29 @@ class RxPipeline(Module):
 
         # 1bit->8bit (1byte) serial to parallel conversion
         shifter = RxShifter(width=8)
+        last_stall = Signal()
+        last_bit_dat = Signal()
+        last_put = Signal()
+        last_data = Signal(8)
+        last_reset = Signal()
         self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
-            shifter.reset.eq(reset),
-            shifter.i_data.eq(bit_dat ^ bitstuff.o_stall),
+            shifter.reset.eq(last_reset),
+            shifter.i_data.eq(last_bit_dat | bitstuff.o_stall),
             shifter.ce.eq(~bitstuff.o_stall),
         ]
+
         self.comb += [
-            self.o_data_strobe.eq(shifter.o_put & ~bitstuff.o_stall),
-            self.o_data_payload.eq(shifter.o_data[::-1]),
+            self.o_data_strobe.eq(last_put & ~last_stall),
+            self.o_data_payload.eq(last_data),
         ]
 
         # Packet ended signal
         self.sync.usb_12 += [
             self.o_pkt_end.eq(bit_se0),
+            last_stall.eq(bitstuff.o_stall),
+            last_bit_dat.eq(bit_dat),
+            last_put.eq(shifter.o_put),
+            last_data.eq(shifter.o_data[::-1]),
+            last_reset.eq(reset),
         ]
