@@ -26,13 +26,13 @@ class PacketHeaderDecode(Module):
 
         # FIXME: This whole module should just be in the usb_12 clock domain?
         self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(FSM())
-        fsm.act('IDLE',
+        fsm.act("IDLE",
             If(rx.o_pkt_start,
-                NextState('WAIT_PID'),
+                NextState("WAIT_PID"),
             ),
         )
         pid = rx.o_data_payload[0:4]
-        fsm.act('WAIT_PID',
+        fsm.act("WAIT_PID",
             If(rx.o_data_strobe,
                 NextValue(self.o_pid, pid),
                 Case(pid & PIDTypes.TYPE_MASK, {
@@ -42,21 +42,21 @@ class PacketHeaderDecode(Module):
                 }),
             ),
         )
-        fsm.act('WAIT_BYTE0',
+        fsm.act("WAIT_BYTE0",
             If(rx.o_data_strobe,
                 NextValue(self.o_addr[0:7], rx.o_data_payload[0:7]),
                 NextValue(endp4, rx.o_data_payload[7]),
-                NextState('WAIT_BYTE1'),
+                NextState("WAIT_BYTE1"),
             ),
         )
-        fsm.act('WAIT_BYTE1',
+        fsm.act("WAIT_BYTE1",
             If(rx.o_data_strobe,
                 NextValue(self.o_endp, Cat(endp4, rx.o_data_payload[0:3])),
                 NextValue(crc5, rx.o_data_payload[4:]),
-                NextState('END'),
+                NextState("END"),
             ),
         )
-        fsm.act('END',
+        fsm.act("END",
             self.o_decoded.eq(1),
-            NextState('IDLE'),
+            NextState("IDLE"),
         )

@@ -155,7 +155,7 @@ class UsbTransfer(Module):
                 ),
 
                 If(rxstate.o_pid == PID.SOF,
-                    NextState('WAIT_TOKEN'),
+                    NextState("WAIT_TOKEN"),
 
                 # Setup transfer
                 ).Elif(self.tok == PID.SETUP,
@@ -182,11 +182,11 @@ class UsbTransfer(Module):
         transfer.act("WAIT_DATA",
             If(rxstate.o_decoded,
                 If((rxstate.o_pid & PIDTypes.TYPE_MASK) == PIDTypes.DATA,
-                    NextState('RECV_DATA'),
+                    NextState("RECV_DATA"),
                 ).Elif(rxstate.o_pid == PID.SOF,
-                    NextState('WAIT_DATA'),
+                    NextState("WAIT_DATA"),
                 ).Else(
-                    NextState('ERROR'),
+                    NextState("ERROR"),
                 )
             ),
         )
@@ -219,9 +219,9 @@ class UsbTransfer(Module):
                 self.commit.eq(1),
                 # Host can't reject?
                 If((rxstate.o_pid & PIDTypes.TYPE_MASK) == PIDTypes.HANDSHAKE,
-                    NextState('WAIT_TOKEN'),
+                    NextState("WAIT_TOKEN"),
                 ).Else(
-                    NextState('ERROR'),
+                    NextState("ERROR"),
                 )
             ),
         )
