@@ -34,7 +34,7 @@ def assertMultiLineEqualSideBySide(expected, actual, msg):
     # Print out body
     lines = original_diff(expected, actual,
                           linejunk=None, charjunk=None,
-                          cutoff=0.1, fuzzy=0,
+                          cutoff=0, fuzzy=1,
                           cutoffchar=False, context=5,
                           width=columns,
                           withcolor=withcolor)
