@@ -53,20 +53,25 @@ class RxClockDataRecovery(Module):
         Qualify with line_state_valid.
     """
     def __init__(self, usbp_raw, usbn_raw):
-        #######################################################################
-        # Synchronize raw USB signals
-        #
-        # We need to synchronize the raw USB signals with the usb_48 clock
-        # domain.  MultiReg implements a multi-stage shift register that takes
-        # care of this for us.  Without MultiReg we would have metastability
-        # issues.
-        #
-        usbp = Signal(reset=1)
-        usbn = Signal()
+        if False:
+            #######################################################################
+            # Synchronize raw USB signals
+            #
+            # We need to synchronize the raw USB signals with the usb_48 clock
+            # domain.  MultiReg implements a multi-stage shift register that takes
+            # care of this for us.  Without MultiReg we would have metastability
+            # issues.
+            #
+            usbp = Signal(reset=1)
+            usbn = Signal()
 
-        self.specials += cdc.MultiReg(usbp_raw, usbp, n=3, reset=1)
-        self.specials += cdc.MultiReg(usbn_raw, usbn, n=3)
-
+            self.specials += cdc.MultiReg(usbp_raw, usbp, n=1, reset=1)
+            self.specials += cdc.MultiReg(usbn_raw, usbn, n=1)
+        else:
+            # Leave raw USB signals meta-stable.  The synchronizer should clean
+            # them up.
+            usbp = usbp_raw
+            usbn = usbn_raw
 
         #######################################################################
         # Line State Recovery State Machine
@@ -126,6 +131,8 @@ class RxClockDataRecovery(Module):
         # bit_phase         0   0   1   2   3   0   1   2   3   0   1   2   0   1   2
         #
 
+        # We 4x oversample, so make the line_state_phase have
+        # 4 possible values.
         line_state_phase = Signal(2)
 
         self.line_state_valid = Signal()

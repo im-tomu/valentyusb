@@ -64,48 +64,59 @@ class RxNRZIDecoder(Module):
         self.i_dk = Signal()
         self.i_se0 = Signal()
 
-        valid = Signal(1)
-        data = Signal(1)
-
-        # simple state machine decodes a JK transition as a '0' and no
-        # transition as a '1'.  se0 is ignored.
-        self.submodules.nrzi = nrzi = FSM()
-
-        nrzi.act("DJ",
-            If(self.i_valid,
-                valid.eq(1),
-
-                If(self.i_dj,
-                    data.eq(1)
-                ).Elif(self.i_dk,
-                    data.eq(0),
-                    NextState("DK")
-                )
-            )
-        )
-
-        nrzi.act("DK",
-            If(self.i_valid,
-                valid.eq(1),
-
-                If(self.i_dj,
-                    data.eq(0),
-                    NextState("DJ")
-                ).Elif(self.i_dk,
-                    data.eq(1)
-                )
-            )
-        )
-
         # pass all of the outputs through a pipe stage
         self.o_valid = Signal(1)
         self.o_data = Signal(1)
         self.o_se0 = Signal(1)
 
-        self.sync += [
-            self.o_valid.eq(valid),
-            If(valid,
-                self.o_se0.eq(self.i_se0),
-                self.o_data.eq(data),
-            ),
-        ]
+        if False:
+            valid = Signal(1)
+            data = Signal(1)
+
+            # simple state machine decodes a JK transition as a '0' and no
+            # transition as a '1'.  se0 is ignored.
+            self.submodules.nrzi = nrzi = FSM()
+
+            nrzi.act("DJ",
+                If(self.i_valid,
+                    valid.eq(1),
+
+                    If(self.i_dj,
+                        data.eq(1)
+                    ).Elif(self.i_dk,
+                        data.eq(0),
+                        NextState("DK")
+                    )
+                )
+            )
+
+            nrzi.act("DK",
+                If(self.i_valid,
+                    valid.eq(1),
+
+                    If(self.i_dj,
+                        data.eq(0),
+                        NextState("DJ")
+                    ).Elif(self.i_dk,
+                        data.eq(1)
+                    )
+                )
+            )
+
+            self.sync += [
+                self.o_valid.eq(valid),
+                If(valid,
+                    self.o_se0.eq(self.i_se0),
+                    self.o_data.eq(data),
+                ),
+            ]
+        else:
+            last_data = Signal()
+            self.sync += [
+                If(self.i_valid,
+                    last_data.eq(self.i_dk),
+                    self.o_data.eq(~(self.i_dk ^ last_data)),
+                    self.o_valid.eq(self.i_dj ^ ~self.i_dk),
+                    self.o_se0.eq((~self.i_dj) & (~self.i_dk)),
+                ),
+            ]

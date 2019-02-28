@@ -52,9 +52,13 @@ class RxPipeline(Module):
         # Cross the data from the 48MHz domain to the 12MHz domain
         bit_dat = Signal()
         bit_se0 = Signal()
-        cdc_dat = cdc.MultiReg(nrzi.o_data, bit_dat, odomain="usb_12", n=3)
-        cdc_se0 = cdc.MultiReg(nrzi.o_se0,  bit_se0, odomain="usb_12", n=3)
-        self.specials += [cdc_dat, cdc_se0]
+        self.comb += [
+            bit_dat.eq(nrzi.o_data),
+            bit_se0.eq(nrzi.o_se0),
+        ]
+        # cdc_dat = cdc.MultiReg(nrzi.o_data, bit_dat, odomain="usb_12", n=2)
+        # cdc_se0 = cdc.MultiReg(nrzi.o_se0,  bit_se0, odomain="usb_12", n=2)
+        # self.specials += [cdc_dat, cdc_se0]
 
         # The packet detector resets the reset of the pipeline.
         reset = Signal()
@@ -67,20 +71,22 @@ class RxPipeline(Module):
             detect.reset.eq(bit_se0 | self.reset),
         ]
 
-        bitstuff = RxBitstuffRemover()
-        self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
-        self.comb += [
-            bitstuff.reset.eq(reset),
-            bitstuff.i_data.eq(bit_dat),
-        ]
-
-        # 1bit->8bit (1byte) serial to parallel conversion
-        shifter = RxShifter(width=8)
         last_stall = Signal()
         last_bit_dat = Signal()
         last_put = Signal()
         last_data = Signal(8)
         last_reset = Signal()
+        last_se0 = Signal()
+
+        bitstuff = RxBitstuffRemover()
+        self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
+        self.comb += [
+            bitstuff.reset.eq(last_reset),
+            bitstuff.i_data.eq(bit_dat),
+        ]
+
+        # 1bit->8bit (1byte) serial to parallel conversion
+        shifter = RxShifter(width=8)
         self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
             shifter.reset.eq(last_reset),
@@ -95,10 +101,11 @@ class RxPipeline(Module):
 
         # Packet ended signal
         self.sync.usb_12 += [
-            self.o_pkt_end.eq(bit_se0),
+            self.o_pkt_end.eq(last_se0),
             last_stall.eq(bitstuff.o_stall),
             last_bit_dat.eq(bit_dat),
             last_put.eq(shifter.o_put),
             last_data.eq(shifter.o_data[::-1]),
             last_reset.eq(reset),
+            last_se0.eq(bit_se0),
         ]

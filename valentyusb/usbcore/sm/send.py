@@ -29,7 +29,8 @@ class TxPacketSend(Module):
         self.o_data_ack = Signal()
 
         o_oe12 = Signal()
-        self.specials += cdc.MultiReg(tx.o_oe, o_oe12, odomain="usb_12", n=3)
+        # self.specials += cdc.MultiReg(tx.o_oe, o_oe12, odomain="usb_12", n=2)
+        self.comb += [o_oe12.eq(tx.o_oe)]
 
         pid = Signal(4)
 
@@ -37,11 +38,16 @@ class TxPacketSend(Module):
         self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(fsm)
         fsm.act('IDLE',
             #NextValue(tx.i_oe, self.i_pkt_start),
-            NextValue(tx.i_oe, 0),
             If(self.i_pkt_start,
+                # If i_pkt_start is set, then send the next packet.
+                # We pre-queue the SYNC byte here to cut down on latency.
+                NextValue(tx.i_oe, 1),
+                tx.i_data_payload[::-1].eq(0b00000001),
                 NextValue(pid, self.i_pid),
                 NextState('QUEUE_SYNC'),
-            ),
+            ).Else(
+                NextValue(tx.i_oe, 0),
+            )
         )
 
         # Send the QUEUE_SYNC byte

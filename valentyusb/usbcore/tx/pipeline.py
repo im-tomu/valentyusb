@@ -76,9 +76,13 @@ class TxPipeline(Module):
         # Cross the data from the 12MHz domain to the 48MHz domain
         fit_dat = Signal()
         fit_oe  = Signal()
-        cdc_dat = cdc.MultiReg(bitstuff.o_data, fit_dat, odomain="usb_48", n=3)
-        cdc_oe  = cdc.MultiReg(i_oe_n2, fit_oe, odomain="usb_48", n=3)
-        self.specials += [cdc_dat, cdc_oe]
+        # cdc_dat = cdc.MultiReg(bitstuff.o_data, fit_dat, odomain="usb_48", n=3)
+        # cdc_oe  = cdc.MultiReg(i_oe_n2, fit_oe, odomain="usb_48", n=3)
+        # self.specials += [cdc_dat, cdc_oe]
+        self.comb += [
+            fit_dat.eq(bitstuff.o_data),
+            fit_oe.eq(i_oe_n2),
+        ]
 
         # 48MHz domain
         # NRZI decoding
