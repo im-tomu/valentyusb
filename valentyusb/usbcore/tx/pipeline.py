@@ -27,7 +27,8 @@ class TxPipeline(Module):
 
         self.o_pkt_end = Signal()
 
-        reset = Signal()
+        reset_shifter = Signal()
+        reset_bitstuff = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
         stall = Signal()
 
         # 12MHz domain
@@ -37,41 +38,37 @@ class TxPipeline(Module):
             shifter.i_data.eq(self.i_data_payload),
             self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
 
-            shifter.reset.eq(reset),
+            shifter.reset.eq(reset_shifter),
             shifter.ce.eq(~stall),
         ]
 
         # FIXME: This is a horrible hack
         stalled_reset = Signal()
-        reset_n1 = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
-        i_oe_n1 = Signal()  # 1 cycle delay inside bit stuffer
         i_oe_n2 = Signal()  # Where does this delay come from?
         self.sync.usb_12 += [
             If(shifter.o_empty,
                 stalled_reset.eq(~self.i_oe),
             ),
             If(~stall,
-                reset.eq(stalled_reset),
-            ),
-            If(~stall,
+                reset_shifter.eq(stalled_reset),
                 If(shifter.o_get,
-                    i_oe_n1.eq(self.i_oe),
+                    i_oe_n2.eq(self.i_oe),
                 ),
-                reset_n1.eq(reset),
-                i_oe_n2.eq(i_oe_n1),
+                reset_bitstuff.eq(reset_shifter),
             ),
-        ]
-
-        self.comb += [
         ]
 
         bitstuff = TxBitstuffer()
         self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
         self.comb += [
             bitstuff.i_data.eq(shifter.o_data),
-            bitstuff.reset.eq(reset_n1),
+            bitstuff.reset.eq(reset_bitstuff),
             stall.eq(bitstuff.o_stall),
         ]
+
+        transmission_enabled = Signal()
+        sending_sync = Signal()
+        sync_pulse = Signal(8)
 
         # Cross the data from the 12MHz domain to the 48MHz domain
         fit_dat = Signal()
@@ -96,4 +93,15 @@ class TxPipeline(Module):
             self.o_usbp.eq(nrzi.o_usbp),
             self.o_usbn.eq(nrzi.o_usbn),
             self.o_oe.eq(nrzi.o_oe),
+        ]
+
+        self.sync.usb_12 += [
+            If(~nrzi.o_oe & transmission_enabled,
+                transmission_enabled.eq(0),
+            ).Elif(~transmission_enabled & self.i_oe,
+                transmission_enabled.eq(1),
+                sync_pulse.eq(0b10000000),
+            ).Else(
+                sync_pulse.eq(sync_pulse >> 1),
+            )
         ]
