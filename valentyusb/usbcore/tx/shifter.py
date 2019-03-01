@@ -57,7 +57,6 @@ class TxShifter(Module):
 
         empty = Signal(1)
         self.sync += [
-            self.o_data.eq(shifter[0]),
             pos.eq(pos >> 1),
             shifter.eq(shifter >> 1),
             If(empty,
@@ -69,4 +68,5 @@ class TxShifter(Module):
         self.comb += [
             empty.eq(pos[0]),
             self.o_empty.eq(empty),
+            self.o_data.eq(shifter[0]),
         ]
