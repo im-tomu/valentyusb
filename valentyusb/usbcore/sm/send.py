@@ -53,6 +53,9 @@ class TxPacketSend(Module):
         # Send the QUEUE_SYNC byte
         fsm.act('QUEUE_SYNC',
             NextValue(tx.i_oe, 1),
+            # The PID might change mid-sync, because we're still figuring
+            # out what the response ought to be.
+            NextValue(pid, self.i_pid),
             tx.i_data_payload[::-1].eq(0b00000001),
             If(tx.o_data_strobe,
                 NextState('QUEUE_PID'),

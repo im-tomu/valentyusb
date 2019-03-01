@@ -205,6 +205,11 @@ class UsbTransfer(Module):
 
         # In pathway
         transfer.act("SEND_DATA",
+            If(self.dtb,
+                txstate.i_pid.eq(PID.DATA1),
+            ).Else(
+                txstate.i_pid.eq(PID.DATA0),
+            ),
             self.data_send_get.eq(txstate.o_data_ack),
             If(txstate.o_pkt_end, NextState("WAIT_HAND")),
         )
@@ -226,6 +231,7 @@ class UsbTransfer(Module):
             ),
         )
         transfer.act("SEND_HAND",
+            txstate.i_pid.eq(response_pid),
             # Do some pipelining.  Transmit the last byte of data
             # here as part of the handshake process.
             If(response_pid == PID.ACK,
@@ -248,10 +254,11 @@ class UsbTransfer(Module):
                 rx.reset.eq(1),
             ),
         ]
+
         # Code to initiate the sending of packets when entering the SEND_XXX
         # states.
         self.comb += [
-            If(transfer.after_entering("SEND_DATA"),
+            If(transfer.before_entering("SEND_DATA"),
                 If(self.dtb,
                     txstate.i_pid.eq(PID.DATA1),
                 ).Else(
@@ -259,7 +266,7 @@ class UsbTransfer(Module):
                 ),
                 txstate.i_pkt_start.eq(1),
             ),
-            If(transfer.after_entering("SEND_HAND"),
+            If(transfer.before_entering("SEND_HAND"),
                 txstate.i_pid.eq(response_pid),
                 txstate.i_pkt_start.eq(1),
             ),
