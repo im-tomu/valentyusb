@@ -2,6 +2,7 @@
 
 from migen import *
 from migen.genlib import cdc
+from migen.genlib.fsm import FSM, NextState, NextValue
 
 import unittest
 
@@ -27,64 +28,100 @@ class TxPipeline(Module):
 
         self.o_pkt_end = Signal()
 
+        fsm = FSM()
+        self.submodules.tx_pipeline_fsm = ClockDomainsRenamer("usb_12")(fsm)
+        shifter = TxShifter(width=8)
+        self.submodules.shifter = ClockDomainsRenamer("usb_12")(shifter)
+        bitstuff = TxBitstuffer()
+        self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
+        nrzi = TxNRZIEncoder()
+        self.submodules.nrzi = ClockDomainsRenamer("usb_48")(nrzi)
+
+        sync_pulse = Signal(8)
+        sending_sync = Signal()
+
+        fit_dat = Signal()
+        fit_oe  = Signal()
+
         reset_shifter = Signal()
         reset_bitstuff = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
         stall = Signal()
+        transmission_enabled = Signal()
 
         # 12MHz domain
-        shifter = TxShifter(width=8)
-        self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
+
+        stalled_reset = Signal()
+        bitstuff_valid_data = Signal()
+
         self.comb += [
             shifter.i_data.eq(self.i_data_payload),
-            self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
+            # Send a data strobe when we're two bits from the end of the sync pulse.
+            # This is because the pipeline takes two bit times, and we want to ensure the pipeline
+            # has spooled up enough by the time we're there.
 
             shifter.reset.eq(reset_shifter),
             shifter.ce.eq(~stall),
         ]
 
-        # FIXME: This is a horrible hack
-        stalled_reset = Signal()
-        i_oe_n2 = Signal()  # Where does this delay come from?
-        self.sync.usb_12 += [
+        fsm.act('IDLE',
+            If(self.i_oe,
+                NextState('SEND_SYNC'),
+                NextValue(sync_pulse, 0b10000000),
+                NextValue(sending_sync, 1),
+                NextValue(transmission_enabled, 1),
+            )
+        )
+
+        fsm.act('SEND_SYNC',
+            NextValue(sync_pulse, sync_pulse >> 1),
+            NextValue(transmission_enabled, 1),
+            fit_dat.eq(sync_pulse[0]),
+            fit_oe.eq(1),
+            If(sync_pulse[0],
+                NextValue(sending_sync, 0),
+                NextState('SEND_DATA'),
+                reset_bitstuff.eq(1),
+            ).Elif(sync_pulse[1],
+                reset_shifter.eq(1),
+            ).Elif(sync_pulse[2],
+                stalled_reset.eq(1),
+                self.o_data_strobe.eq(1),
+            ),
+        )
+        fsm.act('SEND_DATA',
+            self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
+            fit_dat.eq(shifter.o_data),
+            fit_oe.eq(1),
+            NextValue(transmission_enabled, 1),
             If(shifter.o_empty,
                 stalled_reset.eq(~self.i_oe),
             ),
             If(~stall,
                 reset_shifter.eq(stalled_reset),
                 If(shifter.o_get,
-                    i_oe_n2.eq(self.i_oe),
+                    bitstuff_valid_data.eq(self.i_oe),
                 ),
                 reset_bitstuff.eq(reset_shifter),
             ),
-        ]
+            If(~self.i_oe & shifter.o_empty,
+                NextValue(transmission_enabled, 0),
+                NextState('IDLE')
+            ),
+        )
 
-        bitstuff = TxBitstuffer()
-        self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
         self.comb += [
             bitstuff.i_data.eq(shifter.o_data),
             bitstuff.reset.eq(reset_bitstuff),
             stall.eq(bitstuff.o_stall),
         ]
 
-        transmission_enabled = Signal()
-        sending_sync = Signal()
-        sync_pulse = Signal(8)
-
-        # Cross the data from the 12MHz domain to the 48MHz domain
-        fit_dat = Signal()
-        fit_oe  = Signal()
-        # cdc_dat = cdc.MultiReg(bitstuff.o_data, fit_dat, odomain="usb_48", n=3)
-        # cdc_oe  = cdc.MultiReg(i_oe_n2, fit_oe, odomain="usb_48", n=3)
-        # self.specials += [cdc_dat, cdc_oe]
         self.comb += [
-            fit_dat.eq(bitstuff.o_data),
-            fit_oe.eq(i_oe_n2),
+            fit_dat.eq(bitstuff.o_data | sync_pulse[0]),
+            fit_oe.eq(bitstuff_valid_data | transmission_enabled),
         ]
 
         # 48MHz domain
         # NRZI decoding
-        nrzi = TxNRZIEncoder()
-        self.submodules.nrzi = nrzi = ClockDomainsRenamer("usb_48")(nrzi)
         self.comb += [
             nrzi.i_valid.eq(self.i_bit_strobe),
             nrzi.i_data.eq(fit_dat),
@@ -93,15 +130,4 @@ class TxPipeline(Module):
             self.o_usbp.eq(nrzi.o_usbp),
             self.o_usbn.eq(nrzi.o_usbn),
             self.o_oe.eq(nrzi.o_oe),
-        ]
-
-        self.sync.usb_12 += [
-            If(~nrzi.o_oe & transmission_enabled,
-                transmission_enabled.eq(0),
-            ).Elif(~transmission_enabled & self.i_oe,
-                transmission_enabled.eq(1),
-                sync_pulse.eq(0b10000000),
-            ).Else(
-                sync_pulse.eq(sync_pulse >> 1),
-            )
         ]
