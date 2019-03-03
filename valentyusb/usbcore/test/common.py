@@ -210,11 +210,11 @@ class CommonUsbTestCase:
 
         # USB specifies that the turn-around time is 6.5 bit times for the device
         self.assertLessEqual(bit_times/4.0, 6.5,
-        msg="Response came in {} bit times, which is more than 6.5".format(bit_times / 4.0))
+            msg="Response came in {} bit times, which is more than 6.5".format(bit_times / 4.0))
 
         # Read in the transmission data
         result = ""
-        for i in range(0, 2048):
+        for i in range(0, 512):
             yield from self.update_internal_signals()
 
             result += yield from self.iobuf.current()
