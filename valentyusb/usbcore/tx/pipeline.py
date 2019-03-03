@@ -90,7 +90,7 @@ class TxPipeline(Module):
         )
         fsm.act('SEND_DATA',
             self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
-            fit_dat.eq(shifter.o_data ^ bitstuff.o_stall),
+            fit_dat.eq(shifter.o_data & ~bitstuff.o_stall),
             fit_oe.eq(1),
             NextValue(transmission_enabled, 1),
             If(shifter.o_empty,
@@ -103,7 +103,7 @@ class TxPipeline(Module):
                 ),
                 reset_bitstuff.eq(reset_shifter),
             ),
-            If(~self.i_oe & shifter.o_empty,
+            If(~self.i_oe & shifter.o_empty & ~bitstuff.o_stall,
                 NextValue(transmission_enabled, 0),
                 NextState('IDLE')
             ),
