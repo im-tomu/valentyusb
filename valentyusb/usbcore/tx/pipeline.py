@@ -90,7 +90,7 @@ class TxPipeline(Module):
         )
         fsm.act('SEND_DATA',
             self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
-            fit_dat.eq(shifter.o_data),
+            fit_dat.eq(shifter.o_data ^ bitstuff.o_stall),
             fit_oe.eq(1),
             NextValue(transmission_enabled, 1),
             If(shifter.o_empty,
@@ -113,11 +113,6 @@ class TxPipeline(Module):
             bitstuff.i_data.eq(shifter.o_data),
             bitstuff.reset.eq(reset_bitstuff),
             stall.eq(bitstuff.o_stall),
-        ]
-
-        self.comb += [
-            fit_dat.eq(bitstuff.o_data | sync_pulse[0]),
-            fit_oe.eq(bitstuff_valid_data | transmission_enabled),
         ]
 
         # 48MHz domain
