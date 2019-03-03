@@ -42,7 +42,6 @@ class TxPacketSend(Module):
                 # If i_pkt_start is set, then send the next packet.
                 # We pre-queue the SYNC byte here to cut down on latency.
                 NextValue(tx.i_oe, 1),
-                tx.i_data_payload[::-1].eq(0b00000001),
                 NextValue(pid, self.i_pid),
                 NextState('QUEUE_SYNC'),
             ).Else(
@@ -56,7 +55,6 @@ class TxPacketSend(Module):
             # The PID might change mid-sync, because we're still figuring
             # out what the response ought to be.
             NextValue(pid, self.i_pid),
-            tx.i_data_payload[::-1].eq(0b00000001),
             If(tx.o_data_strobe,
                 NextState('QUEUE_PID'),
             ),
