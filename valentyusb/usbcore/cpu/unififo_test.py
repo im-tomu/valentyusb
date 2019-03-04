@@ -101,10 +101,16 @@ class TestUsbUniFifo(
         print()
         print("-"*10)
         CommonUsbTestCase.patch_csrs(self)
+        clocks={
+            "sys": 12,
+            "usb_48": 48,
+            "usb_12": 192,
+        }
+
         run_simulation(
             self.dut, padfront(),
             vcd_name=self.make_vcd_name(),
-            clocks={"sys": 4, "usb_48": 4, "usb_12": 16},
+            clocks=clocks,
         )
         print("-"*10)
 
@@ -112,22 +118,24 @@ class TestUsbUniFifo(
         rx = (yield from self.dut.ev.pending.read()) & 0b1
         if not rx:
             return
+        yield
 
         actual_data = []
-        while range(0, 1024):
-            yield from self.dut.obuf_head.write(0)
+        while range(0, 256):
             empty = yield from self.dut.obuf_empty.read()
             if empty:
                 break
 
             v = yield from self.dut.obuf_head.read()
+            yield from self.dut.obuf_head.write(0)
             actual_data.append(v)
-            yield
+            for i in range(192):
+                yield
 
         yield from self.dut.ev.pending.write(0b1)
-        yield
+        for i in range(192):
+            yield
 
-        #self.assertEqual(actual_data[0], 0b00000001)
         return actual_data
 
     def send_packet(self, pid, data=None):
@@ -151,14 +159,11 @@ class TestUsbUniFifo(
         print("send_packet", pkt_data)
         for d in pkt_data:
             yield from self.dut.ibuf_head.write(d)
-            yield
-            yield
-            yield
-            yield
+            for i in range(192):
+                yield
 
-        yield
-        yield
-        yield
+        for i in range(192):
+            yield
 
         empty = yield from self.dut.ibuf_empty.read()
         self.assertFalse(empty)
@@ -316,16 +321,16 @@ class TestUsbUniFifo(
 
     # IRQ / packet pending -----------------
     def trigger(self, epaddr):
-        yield from self._update_internal_signals()
+        yield from self.update_internal_signals()
         return self.endpoints[epaddr].trigger
 
     def pending(self, epaddr):
-        yield from self._update_internal_signals()
+        yield from self.update_internal_signals()
         return self.endpoints[epaddr].pending or self.endpoints[epaddr].trigger
 
     def clear_pending(self, epaddr):
         # Can't clear pending while trigger is active.
-        for i in range(0, 100):
+        for i in range(0, 192):
             trigger = (yield from self.trigger(epaddr))
             if not trigger:
                 break
