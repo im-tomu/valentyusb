@@ -29,6 +29,7 @@ class RxPipeline(Module):
         self.o_data_payload = Signal(8)
 
         self.o_pkt_start = Signal()
+        self.o_pkt_in_progress = Signal()
         self.o_pkt_end = Signal()
 
         # 48MHz domain
@@ -56,9 +57,6 @@ class RxPipeline(Module):
             bit_dat.eq(nrzi.o_data),
             bit_se0.eq(nrzi.o_se0),
         ]
-        # cdc_dat = cdc.MultiReg(nrzi.o_data, bit_dat, odomain="usb_12", n=2)
-        # cdc_se0 = cdc.MultiReg(nrzi.o_se0,  bit_se0, odomain="usb_12", n=2)
-        # self.specials += [cdc_dat, cdc_se0]
 
         # The packet detector resets the reset of the pipeline.
         reset = Signal()
@@ -101,7 +99,14 @@ class RxPipeline(Module):
 
         # Packet ended signal
         self.sync.usb_12 += [
-            self.o_pkt_end.eq(last_se0),
+            If(self.o_pkt_start,
+                self.o_pkt_in_progress.eq(1),
+            ).Elif(last_se0 & self.o_pkt_in_progress,
+                self.o_pkt_end.eq(1),
+                self.o_pkt_in_progress.eq(0),
+            ).Else(
+                self.o_pkt_end.eq(0),
+            ),
             last_stall.eq(bitstuff.o_stall),
             last_bit_dat.eq(bit_dat),
             last_put.eq(shifter.o_put),
