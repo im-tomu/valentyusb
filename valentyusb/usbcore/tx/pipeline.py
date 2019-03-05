@@ -28,8 +28,8 @@ class TxPipeline(Module):
 
         self.o_pkt_end = Signal()
 
-        fsm = FSM()
-        self.submodules.tx_pipeline_fsm = ClockDomainsRenamer("usb_12")(fsm)
+        tx_pipeline_fsm = FSM()
+        self.submodules.tx_pipeline_fsm = ClockDomainsRenamer("usb_12")(tx_pipeline_fsm)
         shifter = TxShifter(width=8)
         self.submodules.shifter = ClockDomainsRenamer("usb_12")(shifter)
         bitstuff = TxBitstuffer()
@@ -38,15 +38,14 @@ class TxPipeline(Module):
         self.submodules.nrzi = ClockDomainsRenamer("usb_48")(nrzi)
 
         sync_pulse = Signal(8)
-        sending_sync = Signal()
 
-        fit_dat = Signal()
-        fit_oe  = Signal()
+        self.fit_dat = fit_dat = Signal()
+        self.fit_oe  = fit_oe  = Signal()
 
         reset_shifter = Signal()
         reset_bitstuff = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
         stall = Signal()
-        transmission_enabled = Signal()
+        tx_pipeline_fsm
 
         # 12MHz domain
 
@@ -63,36 +62,40 @@ class TxPipeline(Module):
             shifter.ce.eq(~stall),
         ]
 
-        fsm.act('IDLE',
+        self.sync.usb_12 += sync_pulse.eq(sync_pulse >> 1)
+
+        tx_pipeline_fsm.act('IDLE',
             If(self.i_oe,
                 NextState('SEND_SYNC'),
-                NextValue(sync_pulse, 0b10000000),
-                NextValue(sending_sync, 1),
-                NextValue(transmission_enabled, 1),
+                NextValue(sync_pulse, 1 << 7),
             )
         )
 
-        fsm.act('SEND_SYNC',
-            NextValue(sync_pulse, sync_pulse >> 1),
-            NextValue(transmission_enabled, 1),
-            fit_dat.eq(sync_pulse[0]),
+        tx_pipeline_fsm.act('SEND_SYNC',
             fit_oe.eq(1),
+
+            fit_dat.eq(sync_pulse[0]),
+
+            reset_bitstuff.eq(sync_pulse[0]),
+
+            # The shifter has only one clock cycle of latency, so reset it
+            # one cycle before the end of the sync byte.
+            reset_shifter.eq(sync_pulse[1]),
+
+            # The pipeline takes two bits to fill.  Reset the bitstuff stall
+            # flag, and request the next byte from the module controlling us.
+            stalled_reset.eq(sync_pulse[2]),
+            self.o_data_strobe.eq(sync_pulse[5]),
             If(sync_pulse[0],
-                NextValue(sending_sync, 0),
                 NextState('SEND_DATA'),
-                reset_bitstuff.eq(1),
-            ).Elif(sync_pulse[1],
-                reset_shifter.eq(1),
-            ).Elif(sync_pulse[2],
-                stalled_reset.eq(1),
-                self.o_data_strobe.eq(1),
+                # XXX Fix this so that it doesn't glitch
+                # NextValue(fit_dat, shifter.o_data & ~bitstuff.o_stall),
             ),
         )
-        fsm.act('SEND_DATA',
+        tx_pipeline_fsm.act('SEND_DATA',
             self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
             fit_dat.eq(shifter.o_data & ~bitstuff.o_stall),
             fit_oe.eq(1),
-            NextValue(transmission_enabled, 1),
             If(shifter.o_empty,
                 stalled_reset.eq(~self.i_oe),
             ),
@@ -104,7 +107,6 @@ class TxPipeline(Module):
                 reset_bitstuff.eq(reset_shifter),
             ),
             If(~self.i_oe & shifter.o_empty & ~bitstuff.o_stall,
-                NextValue(transmission_enabled, 0),
                 NextState('IDLE')
             ),
         )
@@ -116,7 +118,14 @@ class TxPipeline(Module):
         ]
 
         # 48MHz domain
-        # NRZI decoding
+        # NRZI encoding
+        # nrzi_dat = Signal()
+        # nrzi_oe = Signal()
+        # Cross the data from the 12MHz domain to the 48MHz domain
+        # cdc_dat = cdc.MultiReg(fit_dat, nrzi_dat, odomain="usb_48", n=3)
+        # cdc_oe  = cdc.MultiReg(fit_oe, nrzi_oe, odomain="usb_48", n=3)
+        # self.specials += [cdc_dat, cdc_oe]
+
         self.comb += [
             nrzi.i_valid.eq(self.i_bit_strobe),
             nrzi.i_data.eq(fit_dat),

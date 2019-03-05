@@ -29,6 +29,7 @@ class UsbUniFifo(Module, AutoCSR):
         # RX side
         # ---------------------
         self.submodules.rx = rx = RxPipeline()
+        self.byte_count = CSRStatus(8)
 
         obuf = fifo.AsyncFIFOBuffered(width=8, depth=128)
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(obuf)
@@ -40,6 +41,7 @@ class UsbUniFifo(Module, AutoCSR):
         ]
         self.sync.usb_12 += [
             self.ev.rx.trigger.eq(self.rx.o_pkt_end),
+            If(self.rx.o_data_strobe, self.byte_count.status.eq(self.byte_count.status + 1))
         ]
 
         # System side (reading)
