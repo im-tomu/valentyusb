@@ -42,15 +42,25 @@ class TxPipeline(Module):
         self.fit_dat = fit_dat = Signal()
         self.fit_oe  = fit_oe  = Signal()
 
-        reset_shifter = Signal()
-        reset_bitstuff = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
+        da_reset_shifter = Signal()
+        da_reset_bitstuff = Signal() # Need to reset the bit stuffer 1 cycle after the shifter.
         stall = Signal()
-        tx_pipeline_fsm
+
+        # These signals are set during the sync pulse
+        sp_reset_bitstuff = Signal()
+        sp_reset_shifter = Signal()
+        sp_bit = Signal()
+        sp_o_data_strobe = Signal()
 
         # 12MHz domain
 
-        stalled_reset = Signal()
+        da_stalled_reset = Signal()
         bitstuff_valid_data = Signal()
+
+        # Keep a Gray counter around to smoothly transition between states
+        state_gray = Signal(2)
+        state_data = Signal()
+        state_sync = Signal()
 
         self.comb += [
             shifter.i_data.eq(self.i_data_payload),
@@ -58,64 +68,71 @@ class TxPipeline(Module):
             # This is because the pipeline takes two bit times, and we want to ensure the pipeline
             # has spooled up enough by the time we're there.
 
-            shifter.reset.eq(reset_shifter),
+            shifter.reset.eq(da_reset_shifter | sp_reset_shifter),
             shifter.ce.eq(~stall),
+
+            bitstuff.reset.eq(da_reset_bitstuff),
+            bitstuff.i_data.eq(shifter.o_data),
+            stall.eq(bitstuff.o_stall),
+
+            sp_bit.eq(sync_pulse[0]),
+            sp_reset_bitstuff.eq(sync_pulse[0]),
+
+            # The shifter has one clock cycle of latency, so reset it
+            # one cycle before the end of the sync byte.
+            sp_reset_shifter.eq(sync_pulse[1]),
+
+            sp_o_data_strobe.eq(sync_pulse[5]),
+
+            state_data.eq(state_gray[0] & state_gray[1]),
+            state_sync.eq(state_gray[0] & ~state_gray[1]),
+
+            fit_oe.eq(state_data | state_sync),
+            fit_dat.eq((state_data & shifter.o_data & ~bitstuff.o_stall) | sp_bit),
+            self.o_data_strobe.eq((state_data & shifter.o_get & ~stall & self.i_oe) | sp_o_data_strobe),
         ]
 
-        self.sync.usb_12 += sync_pulse.eq(sync_pulse >> 1)
+        # If we reset the shifter, then o_empty will go high on the next cycle.
+        #
+
+        self.sync.usb_12 += [
+            # If the shifter runs out of data, percolate the "reset" signal to the
+            # shifter, and then down to the bitstuffer.
+            # da_reset_shifter.eq(~stall & shifter.o_empty & ~da_stalled_reset),
+            # da_stalled_reset.eq(da_reset_shifter),
+            # da_reset_bitstuff.eq(~stall & da_reset_shifter),
+            bitstuff_valid_data.eq(~stall & shifter.o_get & self.i_oe),
+        ]
 
         tx_pipeline_fsm.act('IDLE',
             If(self.i_oe,
                 NextState('SEND_SYNC'),
                 NextValue(sync_pulse, 1 << 7),
+                NextValue(state_gray, 0b01),
+            ).Else(
+                NextValue(state_gray, 0b00),
             )
         )
 
         tx_pipeline_fsm.act('SEND_SYNC',
-            fit_oe.eq(1),
+            NextValue(sync_pulse, sync_pulse >> 1),
 
-            fit_dat.eq(sync_pulse[0]),
-
-            reset_bitstuff.eq(sync_pulse[0]),
-
-            # The shifter has only one clock cycle of latency, so reset it
-            # one cycle before the end of the sync byte.
-            reset_shifter.eq(sync_pulse[1]),
-
-            # The pipeline takes two bits to fill.  Reset the bitstuff stall
-            # flag, and request the next byte from the module controlling us.
-            stalled_reset.eq(sync_pulse[2]),
-            self.o_data_strobe.eq(sync_pulse[5]),
             If(sync_pulse[0],
                 NextState('SEND_DATA'),
-                # XXX Fix this so that it doesn't glitch
-                # NextValue(fit_dat, shifter.o_data & ~bitstuff.o_stall),
-            ),
-        )
-        tx_pipeline_fsm.act('SEND_DATA',
-            self.o_data_strobe.eq(shifter.o_get & ~stall & self.i_oe),
-            fit_dat.eq(shifter.o_data & ~bitstuff.o_stall),
-            fit_oe.eq(1),
-            If(shifter.o_empty,
-                stalled_reset.eq(~self.i_oe),
-            ),
-            If(~stall,
-                reset_shifter.eq(stalled_reset),
-                If(shifter.o_get,
-                    bitstuff_valid_data.eq(self.i_oe),
-                ),
-                reset_bitstuff.eq(reset_shifter),
-            ),
-            If(~self.i_oe & shifter.o_empty & ~bitstuff.o_stall,
-                NextState('IDLE')
+                NextValue(state_gray, 0b11),
+            ).Else(
+                NextValue(state_gray, 0b01),
             ),
         )
 
-        self.comb += [
-            bitstuff.i_data.eq(shifter.o_data),
-            bitstuff.reset.eq(reset_bitstuff),
-            stall.eq(bitstuff.o_stall),
-        ]
+        tx_pipeline_fsm.act('SEND_DATA',
+            If(~self.i_oe & shifter.o_empty & ~bitstuff.o_stall,
+                NextState('IDLE'),
+                NextValue(state_gray, 0b10),
+            ).Else(
+                NextValue(state_gray, 0b11),
+            ),
+        )
 
         # 48MHz domain
         # NRZI encoding
