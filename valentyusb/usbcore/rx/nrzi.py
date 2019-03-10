@@ -116,7 +116,7 @@ class RxNRZIDecoder(Module):
                 If(self.i_valid,
                     last_data.eq(self.i_dk),
                     self.o_data.eq(~(self.i_dk ^ last_data)),
-                    self.o_valid.eq(self.i_dj ^ ~self.i_dk),
                     self.o_se0.eq((~self.i_dj) & (~self.i_dk)),
                 ),
+                self.o_valid.eq(self.i_valid),
             ]

@@ -53,10 +53,38 @@ class RxPipeline(Module):
         # Cross the data from the 48MHz domain to the 12MHz domain
         bit_dat = Signal()
         bit_se0 = Signal()
+#        self.comb += [
+#            bit_dat.eq(nrzi.o_data),
+#            bit_se0.eq(nrzi.o_se0),
+#        ]
+
+        fifo_idle = Signal(4)
+        fifo_delay = Signal(4)
+        fifo_filling = Signal()
+
+        self.sync.usb_48 += If(nrzi.o_valid,
+            If(nrzi.o_data, If(~fifo_idle[3], fifo_idle.eq(fifo_idle + 1))).Else(fifo_idle.eq(0))
+        )
+
+        fifo = genlib.fifo.AsyncFIFO(2, 32)
+        self.submodules.fifo = fifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(fifo)
+
         self.comb += [
-            bit_dat.eq(nrzi.o_data),
-            bit_se0.eq(nrzi.o_se0),
+            fifo.din[0].eq(nrzi.o_data),
+            fifo.din[1].eq(nrzi.o_se0),
+            fifo.we.eq(nrzi.o_valid & (~fifo_idle[3] | ~nrzi.o_data)),
+            bit_dat.eq(fifo.dout[0]),
+            bit_se0.eq(fifo.dout[1]),
+            fifo.re.eq(fifo_delay[3]),
+            fifo_filling.eq(~fifo_delay[3]),
         ]
+
+        self.sync.usb_12 += If(fifo.readable,
+            fifo_delay.eq(fifo_delay + fifo_filling),
+        ).Else(
+            fifo_delay.eq(0)
+        )
+
 
         # The packet detector resets the reset of the pipeline.
         reset = Signal()
