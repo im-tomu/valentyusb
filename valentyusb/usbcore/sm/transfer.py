@@ -78,6 +78,7 @@ class UsbTransfer(Module):
         self.commit = Signal()     # Asserted when a transfer succeeds
         self.abort  = Signal()     # Asserted when a transfer fails
         self.end    = Signal()     # Asserted when transfer ends
+        self.error  = Signal()     # Asserted when in the ERROR state
         self.comb += [
             self.end.eq(self.commit | self.abort),
         ]
@@ -118,6 +119,7 @@ class UsbTransfer(Module):
         transfer = FSM(reset_state="WAIT_TOKEN")
         self.submodules.transfer = transfer = ClockDomainsRenamer("usb_12")(transfer)
         transfer.act("ERROR",
+            self.error.eq(1),
             If(self.reset, NextState("WAIT_TOKEN")),
         )
 
