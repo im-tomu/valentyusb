@@ -75,8 +75,8 @@ class RxPipeline(Module):
             fifo.we.eq(nrzi.o_valid & (~fifo_idle[3] | ~nrzi.o_data)),
             bit_dat.eq(fifo.dout[0]),
             bit_se0.eq(fifo.dout[1]),
-            fifo.re.eq(fifo_delay[3]),
-            fifo_filling.eq(~fifo_delay[3]),
+            fifo.re.eq(fifo_delay[2]),
+            fifo_filling.eq(~fifo_delay[2]),
         ]
 
         self.sync.usb_12 += If(fifo.readable,
