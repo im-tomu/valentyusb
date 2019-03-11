@@ -76,6 +76,7 @@ class Endpoint(Module, AutoCSR):
                     self.dtb.we.eq(0),
                 ),
             ).Else(
+                self.dtb.we.eq(0),
                 toggle.eq(0),
             ),
         ]
