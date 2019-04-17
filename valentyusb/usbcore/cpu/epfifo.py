@@ -166,7 +166,7 @@ class PerEndpointFifoInterface(Module, AutoCSR):
     Extra CSR registers set the response type (ACK/NAK/STALL).
     """
 
-    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]):
+    def __init__(self, iobuf, endpoints=[EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR], debug=False):
         size = 9
 
         # USB Core
