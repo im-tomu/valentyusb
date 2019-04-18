@@ -16,6 +16,7 @@ from litex.soc.cores.gpio import GPIOOut
 from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
+from .usbwishbonebridge import USBWishboneBridge
 
 
 class FakeFifo(Module):
@@ -116,9 +117,10 @@ class EndpointOut(Endpoint):
 
         self.obuf_head = CSR(8)
         self.obuf_empty = CSRStatus(1)
+        self.reset = Signal()
         self.comb += [
             self.obuf_head.w.eq(self.obuf.dout),
-            self.obuf.re.eq(self.obuf_head.re),
+            self.obuf.re.eq(self.obuf_head.re | self.reset),
             self.obuf_empty.status[0].eq(~self.obuf.readable),
         ]
         self.ibuf = self.fake
@@ -175,6 +177,13 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
         self.iobuf = usb_core.iobuf
 
+        # Generate debug signals, in case debug is enabled.
+        debug_packet_detected = Signal()
+        debug_data_mux = Signal(8)
+        debug_data_ready_mux = Signal()
+        debug_sink_data = Signal(8)
+        debug_sink_data_ready = Signal()
+
         # Endpoint controls
         ems = []
         eps = []
@@ -213,35 +222,53 @@ class PerEndpointFifoInterface(Module, AutoCSR):
 
         # Setup packet causes ep0 in and ep0 out to reset
         self.comb += [
-            eps[ep0out_addr].reset.eq(usb_core.setup),
-            eps[ep0in_addr].reset.eq(usb_core.setup),
+            eps[ep0out_addr].reset.eq(usb_core.setup & ~debug_packet_detected),
+            eps[ep0in_addr].reset.eq(usb_core.setup & ~debug_packet_detected),
         ]
+
+        # Wire up debug signals if required
+        if debug:
+            self.submodules.debug_bridge = USBWishboneBridge(self.usb_core)
+            self.comb += [
+                debug_packet_detected.eq(self.debug_bridge.debug_in_progress),
+                debug_sink_data.eq(self.debug_bridge.sink_data),
+                debug_sink_data_ready.eq(self.debug_bridge.sink_valid),
+                eps[ep0out_addr].reset.eq(self.debug_bridge.debug_in_progress),
+            ]
 
         self.comb += [
             # This needs to be correct *before* token is finished, everything
             # else uses registered outputs.
-            usb_core.sta.eq(eps[eps_idx].response == EndpointResponse.STALL),
-            usb_core.arm.eq(eps[eps_idx].response == EndpointResponse.ACK),
-            usb_core.dtb.eq(eps[eps_idx].dtb.storage),
+            usb_core.sta.eq((eps[eps_idx].response == EndpointResponse.STALL) & ~debug_sink_data_ready),
+            usb_core.arm.eq((eps[eps_idx].response == EndpointResponse.ACK) | debug_sink_data_ready),
+            usb_core.dtb.eq(eps[eps_idx].dtb.storage | debug_packet_detected),
 
             # Control signals
             If(~iobuf.usb_pullup,
                 *trigger_all,
             ).Else(
-                eps[eps_idx].trigger.eq(usb_core.commit),
+                eps[eps_idx].trigger.eq(usb_core.commit & ~debug_packet_detected),
+            ),
+
+            If(debug_packet_detected,
+                debug_data_mux.eq(debug_sink_data),
+                debug_data_ready_mux.eq(debug_sink_data_ready),
+            ).Else(
+                debug_data_mux.eq(eps[eps_idx].ibuf.dout),
+                debug_data_ready_mux.eq(eps[eps_idx].ibuf.readable),
             ),
             # FIFO
             # Host->Device[Out Endpoint] pathway
-            eps[eps_idx].obuf.we.eq(usb_core.data_recv_put),
+            eps[eps_idx].obuf.we.eq(usb_core.data_recv_put & ~debug_packet_detected),
             eps[eps_idx].obuf.din.eq(usb_core.data_recv_payload),
             # [In Endpoint]Device->Host pathway
-            usb_core.data_send_have.eq(eps[eps_idx].ibuf.readable),
-            usb_core.data_send_payload.eq(eps[eps_idx].ibuf.dout),
-            eps[eps_idx].ibuf.re.eq(usb_core.data_send_get),
+            usb_core.data_send_have.eq(debug_data_ready_mux),
+            usb_core.data_send_payload.eq(debug_data_mux),
+            eps[eps_idx].ibuf.re.eq(usb_core.data_send_get & ~debug_packet_detected),
         ]
 
         self.sync += [
-            If(usb_core.commit,
+            If(usb_core.commit & ~debug_packet_detected,
                 eps[eps_idx].last_tok.status.eq(usb_core.tok[2:]),
             ),
         ]
