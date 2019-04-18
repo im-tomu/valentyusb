@@ -183,6 +183,7 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         debug_data_ready_mux = Signal()
         debug_sink_data = Signal(8)
         debug_sink_data_ready = Signal()
+        debug_ack_response = Signal()
 
         # Endpoint controls
         ems = []
@@ -230,17 +231,18 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         if debug:
             self.submodules.debug_bridge = USBWishboneBridge(self.usb_core)
             self.comb += [
-                debug_packet_detected.eq(self.debug_bridge.debug_in_progress),
+                debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
                 debug_sink_data.eq(self.debug_bridge.sink_data),
                 debug_sink_data_ready.eq(self.debug_bridge.sink_valid),
-                eps[ep0out_addr].reset.eq(self.debug_bridge.debug_in_progress),
+                debug_ack_response.eq(self.debug_bridge.send_ack | self.debug_bridge.sink_valid),
+                eps[ep0out_addr].reset.eq(~self.debug_bridge.n_debug_in_progress),
             ]
 
         self.comb += [
             # This needs to be correct *before* token is finished, everything
             # else uses registered outputs.
             usb_core.sta.eq((eps[eps_idx].response == EndpointResponse.STALL) & ~debug_sink_data_ready),
-            usb_core.arm.eq((eps[eps_idx].response == EndpointResponse.ACK) | debug_sink_data_ready),
+            usb_core.arm.eq((eps[eps_idx].response == EndpointResponse.ACK) | debug_ack_response),
             usb_core.dtb.eq(eps[eps_idx].dtb.storage | debug_packet_detected),
 
             # Control signals
