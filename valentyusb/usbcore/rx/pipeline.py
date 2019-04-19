@@ -66,7 +66,7 @@ class RxPipeline(Module):
             If(nrzi.o_data, If(~fifo_idle[3], fifo_idle.eq(fifo_idle + 1))).Else(fifo_idle.eq(0))
         )
 
-        fifo = genlib.fifo.AsyncFIFO(2, 32)
+        fifo = genlib.fifo.AsyncFIFO(2, 8)
         self.submodules.fifo = fifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(fifo)
 
         self.comb += [

@@ -137,7 +137,7 @@ class EndpointIn(Endpoint):
         Endpoint.__init__(self)
 
         self.submodules.ibuf = ClockDomainsRenamer({"write": "sys", "read": "usb_12"})(
-            fifo.AsyncFIFOBuffered(width=8, depth=512))
+            fifo.AsyncFIFOBuffered(width=8, depth=128))
 
         xxxx_readable = Signal()
         self.specials.crc_readable = cdc.MultiReg(self.ibuf.readable, xxxx_readable)
