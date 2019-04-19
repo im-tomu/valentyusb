@@ -73,13 +73,13 @@ class USBWishboneBridge(Module):
         ]
 
 
-        # fsm = ResetInserter()(FSM(reset_state="IDLE"))
-        fsm = FSM(reset_state="IDLE")
+        fsm = ResetInserter()(FSM(reset_state="IDLE"))
+        # fsm = FSM(reset_state="IDLE")
         timer = WaitTimer(clk_freq//10)
         self.submodules += fsm, timer
-        # self.comb += [
-        #     fsm.reset.eq(timer.done)
-        # ]
+        self.comb += [
+            fsm.reset.eq(timer.done)
+        ]
         fsm.act("IDLE",
             self.n_debug_in_progress.eq(1),
             If(usb_core.data_recv_put,
@@ -148,12 +148,6 @@ class USBWishboneBridge(Module):
             )
         )
 
-        # fsm.act("ACK_DATA_RECEIVED_2",
-        #     self.send_ack.eq(1),
-        #     If(usb_core.end,
-        #         NextState("WRITE_DATA")
-        #     )
-        # )
         self.comb += [
             # Trim off the last two bits of the address, because wishbone addresses
             # are word-based, and a word is 32-bits.  Therefore, the last two bits
@@ -175,27 +169,9 @@ class USBWishboneBridge(Module):
         # self.send_ack, without putting anything in self.sink_data.
         fsm.act("WAIT_SEND_ACK_START",
             If(usb_core.start,
-                NextState("WAIT_SEND_ACK_FINISH"),
+                NextState("WAIT_PKT_END_DBG"),
             )
         )
-        fsm.act("WAIT_SEND_ACK_FINISH",
-            self.send_ack.eq(1),
-            If(usb_core.end,
-                NextState("IDLE"),
-            ),
-        )
-        # fsm.act("WAIT_PKT_2",
-        #     self.send_ack.eq(1),
-        #     If(usb_core.end,
-        #         NextState("WAIT_PKT_END_DBG"),
-        #     )
-        # )
-        # fsm.act("WAIT_PKT_3",
-        #     self.send_ack.eq(1),
-        #     If(usb_core.end,
-        #         NextState("WAIT_PKT_END_DBG"),
-        #     ),
-        # )
 
         fsm.act("READ_DATA",
             self.wishbone.stb.eq(1),
@@ -207,8 +183,7 @@ class USBWishboneBridge(Module):
             )
         )
         self.comb += \
-            chooser(data, byte_counter, self.sink_data, n=4, reverse=True)
-            # chooser(address, byte_counter, self.sink_data, n=4, reverse=True)
+            chooser(data, byte_counter, self.sink_data, n=4, reverse=False)
         fsm.act("SEND_DATA",
             # Keep sink_valid high during the packet, which indicates we have data
             # to send.  This also causes an "ACK" to be transmitted.
@@ -216,13 +191,13 @@ class USBWishboneBridge(Module):
             If(usb_core.data_send_get,
                 byte_counter_ce.eq(1),
             ),
-            If(byte_counter == 3,
+            If(byte_counter == 4,
                 NextState("WAIT_PKT_END_DBG")
             )
         )
 
         fsm.act("WAIT_PKT_END_DBG",
-            # self.send_ack.eq(1),
+            self.send_ack.eq(1),
             If(usb_core.end,
                 NextState("IDLE"),
             )
