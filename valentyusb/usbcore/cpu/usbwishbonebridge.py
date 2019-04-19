@@ -154,14 +154,6 @@ class USBWishboneBridge(Module):
                 NextState("WAIT_SEND_ACK_START"),
             )
         )
-        # To validate the write was successful, the host will now
-        # send an "IN" request.  Acknowledge that by setting
-        # self.send_ack, without putting anything in self.sink_data.
-        fsm.act("WAIT_SEND_ACK_START",
-            If(usb_core.start,
-                NextState("WAIT_PKT_END_DBG"),
-            )
-        )
 
         fsm.act("READ_DATA",
             byte_counter_reset.eq(1),
@@ -183,10 +175,18 @@ class USBWishboneBridge(Module):
                 byte_counter_ce.eq(1),
             ),
             If(byte_counter == 4,
-                NextState("WAIT_PKT_END_DBG")
+                NextState("WAIT_SEND_ACK_START")
             )
         )
 
+        # To validate the transaction was successful, the host will now
+        # send an "IN" request.  Acknowledge that by setting
+        # self.send_ack, without putting anything in self.sink_data.
+        fsm.act("WAIT_SEND_ACK_START",
+            If(usb_core.start,
+                NextState("WAIT_PKT_END_DBG"),
+            )
+        )
         fsm.act("WAIT_PKT_END_DBG",
             self.send_ack.eq(1),
             If(usb_core.end,
