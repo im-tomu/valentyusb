@@ -108,6 +108,10 @@ class USBWishboneBridge(Module):
                     ),
                 ),
             ),
+            # We don't need to explicitly ACK the SETUP packet, because
+            # they're always acknowledged implicitly.  Wait until the
+            # packet ends (i.e. until we've sent the ACK packet) before
+            # moving to the next state.
             If(usb_core.end,
                 byte_counter_reset.eq(1),
                 If(cmd,
@@ -119,34 +123,37 @@ class USBWishboneBridge(Module):
         )
 
         fsm.act("RECEIVE_DATA",
+            # Set the "ACK" bit to 1, so we acknowledge the packet
+            # once it comes in, and so that we're in a position to
+            # receive data.
+            self.send_ack.eq(1),
             If(usb_core.data_recv_put,
                 rx_data_ce.eq(1),
                 byte_counter_ce.eq(1),
                 If(byte_counter == 3,
                     NextState("WAIT_RECEIVE_DATA_END"),
                     byte_counter_reset.eq(1)
+                ).Elif(usb_core.end,
+                    NextState("WRITE_DATA"),
+                    byte_counter_reset.eq(1)
                 )
             )
         )
         fsm.act("WAIT_RECEIVE_DATA_END",
             self.send_ack.eq(1),
-            If(usb_core.end,
-                NextState("ACK_DATA_RECEIVED")
-            )
-        )
-        fsm.act("ACK_DATA_RECEIVED",
-            self.send_ack.eq(1),
-            If(usb_core.end,
-                NextState("ACK_DATA_RECEIVED"),
-            ),
-        )
-
-        fsm.act("ACK_DATA_RECEIVED",
-            self.send_ack.eq(1),
+            # Wait for the end of the USB packet, if
+            # it hasn't come already.
             If(usb_core.end,
                 NextState("WRITE_DATA")
             )
         )
+
+        # fsm.act("ACK_DATA_RECEIVED_2",
+        #     self.send_ack.eq(1),
+        #     If(usb_core.end,
+        #         NextState("WRITE_DATA")
+        #     )
+        # )
         self.comb += [
             # Trim off the last two bits of the address, because wishbone addresses
             # are word-based, and a word is 32-bits.  Therefore, the last two bits
@@ -160,27 +167,35 @@ class USBWishboneBridge(Module):
             self.wishbone.we.eq(1),
             self.wishbone.cyc.eq(1),
             If(self.wishbone.ack,
-                NextState("WAIT_SEND_ACK"),
+                NextState("WAIT_SEND_ACK_START"),
             )
         )
-        fsm.act("WAIT_SEND_ACK",
-            self.send_ack.eq(1),
-            If(usb_core.end,
-                NextState("WAIT_PKT_END_DBG"),
-            ),
-        )
-        fsm.act("WAIT_PKT_2",
-            self.send_ack.eq(1),
-            If(usb_core.end,
-                NextState("WAIT_PKT_END_DBG"),
+        # To validate the write was successful, the host will now
+        # send an "IN" request.  Acknowledge that by setting
+        # self.send_ack, without putting anything in self.sink_data.
+        fsm.act("WAIT_SEND_ACK_START",
+            If(usb_core.start,
+                NextState("WAIT_SEND_ACK_FINISH"),
             )
         )
-        fsm.act("WAIT_PKT_3",
+        fsm.act("WAIT_SEND_ACK_FINISH",
             self.send_ack.eq(1),
             If(usb_core.end,
-                NextState("WAIT_PKT_END_DBG"),
+                NextState("IDLE"),
             ),
         )
+        # fsm.act("WAIT_PKT_2",
+        #     self.send_ack.eq(1),
+        #     If(usb_core.end,
+        #         NextState("WAIT_PKT_END_DBG"),
+        #     )
+        # )
+        # fsm.act("WAIT_PKT_3",
+        #     self.send_ack.eq(1),
+        #     If(usb_core.end,
+        #         NextState("WAIT_PKT_END_DBG"),
+        #     ),
+        # )
 
         fsm.act("READ_DATA",
             self.wishbone.stb.eq(1),
@@ -195,17 +210,19 @@ class USBWishboneBridge(Module):
             chooser(data, byte_counter, self.sink_data, n=4, reverse=True)
             # chooser(address, byte_counter, self.sink_data, n=4, reverse=True)
         fsm.act("SEND_DATA",
+            # Keep sink_valid high during the packet, which indicates we have data
+            # to send.  This also causes an "ACK" to be transmitted.
             self.sink_valid.eq(1),
             If(usb_core.data_send_get,
                 byte_counter_ce.eq(1),
-                If(byte_counter == 3,
-                    NextState("WAIT_PKT_END_DBG")
-                )
+            ),
+            If(byte_counter == 3,
+                NextState("WAIT_PKT_END_DBG")
             )
         )
 
         fsm.act("WAIT_PKT_END_DBG",
-            self.send_ack.eq(1),
+            # self.send_ack.eq(1),
             If(usb_core.end,
                 NextState("IDLE"),
             )
