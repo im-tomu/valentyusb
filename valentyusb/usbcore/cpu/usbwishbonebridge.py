@@ -14,8 +14,6 @@ class USBWishboneBridge(Module):
     def __init__(self, usb_core, clk_freq=12000000):
         self.wishbone = wishbone.Interface()
 
-        length = 4 # Limit us to 4-byte writes
-
         # # #
 
         byte_counter = Signal(3, reset_less=True)
@@ -67,7 +65,6 @@ class USBWishboneBridge(Module):
 
 
         fsm = ResetInserter()(FSM(reset_state="IDLE"))
-        # fsm = FSM(reset_state="IDLE")
         self.submodules += fsm
         fsm.act("IDLE",
             self.n_debug_in_progress.eq(1),
@@ -162,8 +159,14 @@ class USBWishboneBridge(Module):
             self.wishbone.cyc.eq(1),
             If(self.wishbone.ack | self.wishbone.err,
                 tx_data_ce.eq(1),
-                NextState("SEND_DATA")
+                NextState("SEND_DATA_WAIT_START")
             )
+        )
+
+        fsm.act("SEND_DATA_WAIT_START",
+            If(usb_core.start,
+                NextState("SEND_DATA"),
+            ),
         )
         self.comb += \
             chooser(data, byte_counter, self.sink_data, n=4, reverse=False)
@@ -201,9 +204,9 @@ class USBWishboneBridge(Module):
             )
         )
 
-        # timer = WaitTimer(clk_freq//100)
-        # self.submodules += timer
-        # self.comb += [
-        #     fsm.reset.eq(timer.done),
-        #     timer.wait.eq(~fsm.ongoing("IDLE"))
-        # ]
+        timer = WaitTimer(clk_freq//100)
+        self.submodules += timer
+        self.comb += [
+            fsm.reset.eq(timer.done),
+            timer.wait.eq(~fsm.ongoing("IDLE"))
+        ]
