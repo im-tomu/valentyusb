@@ -56,13 +56,6 @@ class USBWishboneBridge(Module):
         tx_data_ce = Signal()
 
         self.sync += [
-            # If(cmd_ce, cmd.eq(usb_core.data_recv_payload[7:8])),
-            # If(address_ce, address.eq(Cat(usb_core.data_recv_put, address[0:24]))),
-            # If(rx_data_ce,
-            #     data.eq(Cat(usb_core.data_recv_put, data[0:24]))
-            # ).Elif(tx_data_ce,
-            #     data.eq(self.wishbone.dat_r)
-            # )
             If(cmd_ce, cmd.eq(usb_core.data_recv_payload[7:8])),
             If(address_ce, address.eq(Cat(address[8:32], usb_core.data_recv_payload))),
             If(rx_data_ce,
@@ -75,11 +68,7 @@ class USBWishboneBridge(Module):
 
         fsm = ResetInserter()(FSM(reset_state="IDLE"))
         # fsm = FSM(reset_state="IDLE")
-        timer = WaitTimer(clk_freq//10)
-        self.submodules += fsm, timer
-        self.comb += [
-            fsm.reset.eq(timer.done)
-        ]
+        self.submodules += fsm
         fsm.act("IDLE",
             self.n_debug_in_progress.eq(1),
             If(usb_core.data_recv_put,
@@ -157,10 +146,11 @@ class USBWishboneBridge(Module):
             self.wishbone.sel.eq(2**len(self.wishbone.sel) - 1)
         ]
         fsm.act("WRITE_DATA",
+            byte_counter_reset.eq(1),
             self.wishbone.stb.eq(1),
             self.wishbone.we.eq(1),
             self.wishbone.cyc.eq(1),
-            If(self.wishbone.ack,
+            If(self.wishbone.ack | self.wishbone.err,
                 NextState("WAIT_SEND_ACK_START"),
             )
         )
@@ -174,10 +164,11 @@ class USBWishboneBridge(Module):
         )
 
         fsm.act("READ_DATA",
+            byte_counter_reset.eq(1),
             self.wishbone.stb.eq(1),
             self.wishbone.we.eq(0),
             self.wishbone.cyc.eq(1),
-            If(self.wishbone.ack,
+            If(self.wishbone.ack | self.wishbone.err,
                 tx_data_ce.eq(1),
                 NextState("SEND_DATA")
             )
@@ -210,4 +201,9 @@ class USBWishboneBridge(Module):
             )
         )
 
-        self.comb += timer.wait.eq(~fsm.ongoing("IDLE"))
+        # timer = WaitTimer(clk_freq//100)
+        # self.submodules += timer
+        # self.comb += [
+        #     fsm.reset.eq(timer.done),
+        #     timer.wait.eq(~fsm.ongoing("IDLE"))
+        # ]
