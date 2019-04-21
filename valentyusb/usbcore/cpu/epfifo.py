@@ -117,10 +117,9 @@ class EndpointOut(Endpoint):
 
         self.obuf_head = CSR(8)
         self.obuf_empty = CSRStatus(1)
-        self.reset = Signal()
         self.comb += [
             self.obuf_head.w.eq(self.obuf.dout),
-            self.obuf.re.eq(self.obuf_head.re | self.reset),
+            self.obuf.re.eq(self.obuf_head.re),
             self.obuf_empty.status[0].eq(~self.obuf.readable),
         ]
         self.ibuf = self.fake
@@ -185,6 +184,13 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         debug_sink_data_ready = Signal()
         debug_ack_response = Signal()
 
+        # Delay the "put" signal by one cycle, to allow the 
+        # debug system to inhibit this write.
+        # In practice, this doesn't impact our latency at all
+        # as this signal runs at a rate of ~1 MHz.
+        data_recv_put_delayed = Signal()
+        self.sync += data_recv_put_delayed.eq(usb_core.data_recv_put)
+
         # Endpoint controls
         ems = []
         eps = []
@@ -235,7 +241,6 @@ class PerEndpointFifoInterface(Module, AutoCSR):
                 debug_sink_data.eq(self.debug_bridge.sink_data),
                 debug_sink_data_ready.eq(self.debug_bridge.sink_valid),
                 debug_ack_response.eq(self.debug_bridge.send_ack | self.debug_bridge.sink_valid),
-                eps[ep0out_addr].reset.eq(~self.debug_bridge.n_debug_in_progress),
             ]
 
         self.comb += [
@@ -261,7 +266,7 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             ),
             # FIFO
             # Host->Device[Out Endpoint] pathway
-            eps[eps_idx].obuf.we.eq(usb_core.data_recv_put & ~debug_packet_detected),
+            eps[eps_idx].obuf.we.eq(data_recv_put_delayed & ~debug_packet_detected),
             eps[eps_idx].obuf.din.eq(usb_core.data_recv_payload),
             # [In Endpoint]Device->Host pathway
             usb_core.data_send_have.eq(debug_data_ready_mux),
