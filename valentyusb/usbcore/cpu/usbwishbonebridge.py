@@ -70,21 +70,25 @@ class USBWishboneBridge(Module):
             self.n_debug_in_progress.eq(1),
             If(usb_core.data_recv_put,
                 If(usb_core.tok == PID.SETUP,
-                    # If we get a SETUP packet with a "Vendor" type
-                    # going to this device, treat that as a DEBUG packet.
-                    If(usb_core.data_recv_payload[0:7] == 0x40,
-                        cmd_ce.eq(1),
-                        NextState("RECEIVE_ADDRESS"),
+                    If(usb_core.endp == 0,
+                        # If we get a SETUP packet with a "Vendor" type
+                        # going to this device, treat that as a DEBUG packet.
+                        If(usb_core.data_recv_payload[0:7] == 0x40,
+                            cmd_ce.eq(1),
+                            NextState("RECEIVE_ADDRESS"),
+                        ).Else(
+                            # Wait for the end of the packet, to avoid
+                            # messing with normal USB operation
+                            NextState("WAIT_PKT_END"),
+                        ),
+                        byte_counter_reset.eq(1),
                     )
-                    # Otherwise, wait for the end of the packet, to avoid
-                    # messing with normal USB operation
-                    .Else(
-                        NextState("WAIT_PKT_END"),
-                    ),
-                    byte_counter_reset.eq(1),
                 )
             )
         )
+
+        # The target address comes as the wValue and wIndex in the SETUP
+        # packet.  Once we get that data, we're ready to do the operation.
         fsm.act("RECEIVE_ADDRESS",
             If(usb_core.data_recv_put,
                 byte_counter_ce.eq(1),
@@ -163,7 +167,13 @@ class USBWishboneBridge(Module):
             )
         )
 
+        fsm.act("SEND_DATA_WAIT_END",
+            If(usb_core.end,
+                NextState("SEND_DATA"),
+            ),
+        )
         fsm.act("SEND_DATA_WAIT_START",
+            byte_counter_reset.eq(1),
             If(usb_core.start,
                 NextState("SEND_DATA"),
             ),
@@ -171,14 +181,21 @@ class USBWishboneBridge(Module):
         self.comb += \
             chooser(data, byte_counter, self.sink_data, n=4, reverse=False)
         fsm.act("SEND_DATA",
-            # Keep sink_valid high during the packet, which indicates we have data
-            # to send.  This also causes an "ACK" to be transmitted.
-            self.sink_valid.eq(1),
-            If(usb_core.data_send_get,
-                byte_counter_ce.eq(1),
-            ),
-            If(byte_counter == 4,
-                NextState("WAIT_SEND_ACK_START")
+            If(usb_core.endp == 0,
+                # Keep sink_valid high during the packet, which indicates we have data
+                # to send.  This also causes an "ACK" to be transmitted.
+                self.sink_valid.eq(1),
+                If(usb_core.data_send_get,
+                    byte_counter_ce.eq(1),
+                ),
+                If(byte_counter == 4,
+                    NextState("WAIT_SEND_ACK_START")
+                ),
+                If(usb_core.end,
+                    NextState("WAIT_SEND_ACK_START")
+                )
+            ).Else(
+                NextState("SEND_DATA_WAIT_START"),
             )
         )
 
@@ -191,9 +208,13 @@ class USBWishboneBridge(Module):
             )
         )
         fsm.act("WAIT_PKT_END_DBG",
-            self.send_ack.eq(1),
-            If(usb_core.end,
-                NextState("IDLE"),
+            If(usb_core.endp == 0,
+                self.send_ack.eq(1),
+                If(usb_core.end,
+                    NextState("IDLE"),
+                )
+            ).Else(
+                NextState("WAIT_SEND_ACK_START")
             )
         )
 
@@ -204,7 +225,7 @@ class USBWishboneBridge(Module):
             )
         )
 
-        timer = WaitTimer(clk_freq//100)
+        timer = WaitTimer(clk_freq//1000)
         self.submodules += timer
         self.comb += [
             fsm.reset.eq(timer.done),
