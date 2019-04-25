@@ -115,11 +115,12 @@ class EndpointOut(Endpoint):
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
             fifo.AsyncFIFOBuffered(width=8, depth=128))
 
+        self.drain_buffer = Signal()
         self.obuf_head = CSR(8)
         self.obuf_empty = CSRStatus(1)
         self.comb += [
             self.obuf_head.w.eq(self.obuf.dout),
-            self.obuf.re.eq(self.obuf_head.re),
+            self.obuf.re.eq(self.obuf_head.re | self.drain_buffer),
             self.obuf_empty.status[0].eq(~self.obuf.readable),
         ]
         self.ibuf = self.fake
@@ -199,6 +200,7 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             if endp & EndpointType.OUT:
                 exec("self.submodules.ep_%s_out = ep = EndpointOut()" % i)
                 oep = getattr(self, "ep_%s_out" % i)
+                self.comb += oep.drain_buffer.eq(~iobuf.usb_pullup)
                 ems.append(oep.ev)
             else:
                 oep = EndpointNone()
@@ -271,7 +273,7 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             # [In Endpoint]Device->Host pathway
             usb_core.data_send_have.eq(debug_data_ready_mux),
             usb_core.data_send_payload.eq(debug_data_mux),
-            eps[eps_idx].ibuf.re.eq(usb_core.data_send_get & ~debug_packet_detected),
+            eps[eps_idx].ibuf.re.eq((usb_core.data_send_get & ~debug_packet_detected) | ~iobuf.usb_pullup),
         ]
 
         self.sync += [
