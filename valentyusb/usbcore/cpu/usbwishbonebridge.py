@@ -11,7 +11,7 @@ from ..pid import PID, PIDTypes
 
 class USBWishboneBridge(Module):
 
-    def __init__(self, usb_core, clk_freq=12000000):
+    def __init__(self, usb_core, clk_freq=12000000, magic_packet=0x43):
         self.wishbone = wishbone.Interface()
 
         # # #
@@ -73,7 +73,7 @@ class USBWishboneBridge(Module):
                     If(usb_core.endp == 0,
                         # If we get a SETUP packet with a "Vendor" type
                         # going to this device, treat that as a DEBUG packet.
-                        If(usb_core.data_recv_payload[0:7] == 0x40,
+                        If(usb_core.data_recv_payload[0:7] == magic_packet,
                             cmd_ce.eq(1),
                             NextState("RECEIVE_ADDRESS"),
                         ).Else(
