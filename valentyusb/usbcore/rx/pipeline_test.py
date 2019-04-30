@@ -96,7 +96,7 @@ class TestRxPipeline(BaseUsbTestCase):
     def test_usb2_sof_stuffed_mid(self):
         return self.pkt_decode_test(
             dict(
-                value    = "11 00000001 10100101 11111111 00111100 __111",
+                value    = "11 00000001 10100101 11111011 10011110 __111",
                 data     = [b("10100101"), b("11111111"), b("00111100")],
                 pkt_good = True,
             ), "USB2 SOF Stuffed Middle")

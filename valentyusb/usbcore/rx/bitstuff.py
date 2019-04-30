@@ -25,8 +25,13 @@ class RxBitstuffRemover(Module):
 
     Input Ports
     ------------
+    i_valid : Signal(1)
+        Qualifier for all of the input signals.  Indicates one bit of valid
+        data is present on the inputs.
+
     i_data : Signal(1)
         Decoded data bit from USB bus.
+        Qualified by valid.
 
     Output Ports
     ------------
@@ -45,6 +50,7 @@ class RxBitstuffRemover(Module):
     """
 
     def __init__(self):
+        self.i_valid = Signal()
         self.i_data = Signal()
 
         # This state machine recognizes sequences of 6 bits and drops the 7th
@@ -57,19 +63,23 @@ class RxBitstuffRemover(Module):
 
         for i in range(6):
             stuff.act("D%d" % i,
-                If(self.i_data,
-                    # Receiving '1' increments the bitstuff counter.
-                    NextState("D%d" % (i + 1))
-                ).Else(
-                    # Receiving '0' resets the bitstuff counter.
-                    NextState("D0")
+                If(self.i_valid,
+                    If(self.i_data,
+                        # Receiving '1' increments the bitstuff counter.
+                        NextState("D%d" % (i + 1))
+                    ).Else(
+                        # Receiving '0' resets the bitstuff counter.
+                        NextState("D0")
+                    )
                 ),
             )
 
         stuff.act("D6",
-            drop_bit.eq(1),
-            # Reset the bitstuff counter, drop the data.
-            NextState("D0")
+            If(self.i_valid,
+                drop_bit.eq(1),
+                # Reset the bitstuff counter, drop the data.
+                NextState("D0")
+            )
         )
 
         # pass all of the outputs through a pipe stage
@@ -79,6 +89,6 @@ class RxBitstuffRemover(Module):
 
         self.sync += [
             self.o_data.eq(self.i_data),
-            self.o_stall.eq(drop_bit),
-            self.o_error.eq(drop_bit & self.i_data),
+            self.o_stall.eq(drop_bit | ~self.i_valid),
+            self.o_error.eq(drop_bit & self.i_data & self.i_valid),
         ]

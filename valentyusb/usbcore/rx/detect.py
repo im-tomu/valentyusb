@@ -39,8 +39,13 @@ class RxPacketDetect(Module):
 
     Input Ports
     ------------
+    i_valid : Signal(1)
+        Qualifier for all of the input signals.  Indicates one bit of valid
+        data is present on the inputs.
+
     i_data : Signal(1)
         Decoded data bit from USB bus.
+        Qualified by valid.
 
     Output Ports
     ------------
@@ -52,6 +57,7 @@ class RxPacketDetect(Module):
     """
 
     def __init__(self):
+        self.i_valid = Signal()
         self.i_data = Signal()
 
         self.submodules.pkt = pkt = FSM()
@@ -61,20 +67,24 @@ class RxPacketDetect(Module):
 
         for i in range(5):
             pkt.act("D%d" % i,
-                If(self.i_data,
-                    # Receiving '1' or SE0 early resets the packet start counter.
-                    NextState("D0")
-                ).Else(
-                    # Receiving '0' increments the packet start counter.
-                    NextState("D%d" % (i + 1))
+                If(self.i_valid,
+                    If(self.i_data,
+                        # Receiving '1' or SE0 early resets the packet start counter.
+                        NextState("D0")
+                    ).Else(
+                        # Receiving '0' increments the packet start counter.
+                        NextState("D%d" % (i + 1))
+                    )
                 )
             )
 
         pkt.act("D5",
             # once we get a '1', the packet is active
-            If(self.i_data,
-                pkt_start.eq(1),
-                NextState("PKT_ACTIVE")
+            If(self.i_valid,
+                If(self.i_data,
+                    pkt_start.eq(1),
+                    NextState("PKT_ACTIVE")
+                )
             )
         )
 

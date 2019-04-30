@@ -53,18 +53,11 @@ class RxPipeline(Module):
         # Cross the data from the 48MHz domain to the 12MHz domain
         bit_dat = Signal()
         bit_se0 = Signal()
+        bit_valid = Signal()
 #        self.comb += [
 #            bit_dat.eq(nrzi.o_data),
 #            bit_se0.eq(nrzi.o_se0),
 #        ]
-
-        fifo_idle = Signal(4)
-        fifo_delay = Signal(4)
-        fifo_filling = Signal()
-
-        self.sync.usb_48 += If(nrzi.o_valid,
-            If(nrzi.o_data, If(~fifo_idle[3], fifo_idle.eq(fifo_idle + 1))).Else(fifo_idle.eq(0))
-        )
 
         fifo = genlib.fifo.AsyncFIFO(2, 8)
         self.submodules.fifo = fifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(fifo)
@@ -72,18 +65,12 @@ class RxPipeline(Module):
         self.comb += [
             fifo.din[0].eq(nrzi.o_data),
             fifo.din[1].eq(nrzi.o_se0),
-            fifo.we.eq(nrzi.o_valid & (~fifo_idle[3] | ~nrzi.o_data)),
+            fifo.we.eq(nrzi.o_valid),
             bit_dat.eq(fifo.dout[0]),
             bit_se0.eq(fifo.dout[1]),
-            fifo.re.eq(fifo_delay[2]),
-            fifo_filling.eq(~fifo_delay[2]),
+            bit_valid.eq(fifo.readable),
+            fifo.re.eq(1),
         ]
-
-        self.sync.usb_12 += If(fifo.readable,
-            fifo_delay.eq(fifo_delay + fifo_filling),
-        ).Else(
-            fifo_delay.eq(0)
-        )
 
 
         # The packet detector resets the reset of the pipeline.
@@ -93,21 +80,19 @@ class RxPipeline(Module):
         self.comb += [
             self.o_pkt_start.eq(detect.o_pkt_start),
             detect.i_data.eq(bit_dat),
+            detect.i_valid.eq(bit_valid),
             reset.eq(~detect.o_pkt_active),
-            detect.reset.eq(bit_se0 | self.reset),
+            detect.reset.eq((bit_se0 & bit_valid) | self.reset),
         ]
 
-        last_stall = Signal()
-        last_bit_dat = Signal()
-        last_put = Signal()
-        last_data = Signal(8)
         last_reset = Signal()
         last_se0 = Signal()
 
         bitstuff = RxBitstuffRemover()
         self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
         self.comb += [
-            bitstuff.reset.eq(last_reset),
+            bitstuff.reset.eq((bit_se0 & bit_valid) | self.reset),
+            bitstuff.i_valid.eq(bit_valid),
             bitstuff.i_data.eq(bit_dat),
         ]
 
@@ -116,13 +101,13 @@ class RxPipeline(Module):
         self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
         self.comb += [
             shifter.reset.eq(last_reset),
-            shifter.i_data.eq(last_bit_dat | bitstuff.o_stall),
-            shifter.ce.eq(~bitstuff.o_stall),
+            shifter.i_data.eq(bitstuff.o_data),
+            shifter.i_valid.eq(~bitstuff.o_stall),
         ]
 
         self.comb += [
-            self.o_data_strobe.eq(last_put & ~last_stall),
-            self.o_data_payload.eq(last_data),
+            self.o_data_strobe.eq(shifter.o_put),
+            self.o_data_payload.eq(shifter.o_data[::-1]),
         ]
 
         # Packet ended signal
@@ -135,10 +120,6 @@ class RxPipeline(Module):
             ).Else(
                 self.o_pkt_end.eq(0),
             ),
-            last_stall.eq(bitstuff.o_stall),
-            last_bit_dat.eq(bit_dat),
-            last_put.eq(shifter.o_put),
-            last_data.eq(shifter.o_data[::-1]),
             last_reset.eq(reset),
             last_se0.eq(bit_se0),
         ]
