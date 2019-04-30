@@ -186,6 +186,7 @@ class CommonUsbTestCase:
 
     def send_ack(self):
         yield from self.send_handshake(PID.ACK)
+        yield from self.idle(64)
 
     def send_nak(self):
         yield from self.send_handshake(PID.NAK)
