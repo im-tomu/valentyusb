@@ -203,8 +203,11 @@ class USBWishboneBridge(Module):
         # send an "IN" request.  Acknowledge that by setting
         # self.send_ack, without putting anything in self.sink_data.
         fsm.act("WAIT_SEND_ACK_START",
-            If(usb_core.start,
-                NextState("WAIT_PKT_END_DBG"),
+            If(usb_core.endp == 0,
+                self.send_ack.eq(1),
+                If(usb_core.start,
+                    NextState("WAIT_PKT_END_DBG"),
+                )
             )
         )
         fsm.act("WAIT_PKT_END_DBG",
