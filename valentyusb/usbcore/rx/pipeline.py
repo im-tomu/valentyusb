@@ -50,6 +50,23 @@ class RxPipeline(Module):
             nrzi.i_se0.eq(clock_data_recovery.line_state_se0),
         ]
 
+        # RX idle/active detection
+        rx_act = Signal(1)
+        rx_valid = Signal(1)
+        self.sync.usb_48 += [
+            # 'K' state -> start of or within packet
+            If(clock_data_recovery.line_state_dk,
+                rx_act.eq(1),
+            # se0 -> end of packet
+            ).Elif(nrzi.o_se0,
+                rx_act.eq(0),
+            ),
+        ]
+        self.comb += [
+            rx_valid.eq(nrzi.o_valid & rx_act),
+        ]
+
+
         # Cross the data from the 48MHz domain to the 12MHz domain
         bit_dat = Signal()
         bit_se0 = Signal()
@@ -65,7 +82,7 @@ class RxPipeline(Module):
         self.comb += [
             fifo.din[0].eq(nrzi.o_data),
             fifo.din[1].eq(nrzi.o_se0),
-            fifo.we.eq(nrzi.o_valid),
+            fifo.we.eq(rx_valid),
             bit_dat.eq(fifo.dout[0]),
             bit_se0.eq(fifo.dout[1]),
             bit_valid.eq(fifo.readable),
