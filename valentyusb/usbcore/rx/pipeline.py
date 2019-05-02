@@ -68,11 +68,11 @@ class RxPipeline(Module):
                     rx_start.eq(1),
                 ),
             # se0 -> end of packet
-            ).Elif(nrzi.o_se0,
-                rx_act.eq(0),
+            ).Elif(clock_data_recovery.line_state_se0,
                 rx_wait_end.eq(1),
             ),
             If(rx_wait_end & shift_out,
+                rx_act.eq(0),
                 rx_end.eq(1),
             ),
         ]
@@ -111,6 +111,8 @@ class RxPipeline(Module):
             shifter.reset.eq(last_reset),
             shifter.i_data.eq(bitstuff.o_data),
             shifter.i_valid.eq(~bitstuff.o_stall),
+        ]
+        self.sync.usb_48 += [
             shift_out.eq(shifter.o_put),
         ]
 
