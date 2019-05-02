@@ -85,7 +85,7 @@ class RxBitstuffRemover(Module):
         # pass all of the outputs through a pipe stage
         self.o_data = Signal()
         self.o_error = Signal()
-        self.o_stall = Signal()
+        self.o_stall = Signal(reset=1)
 
         self.sync += [
             self.o_data.eq(self.i_data),

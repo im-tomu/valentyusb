@@ -50,52 +50,23 @@ class RxPipeline(Module):
             nrzi.i_se0.eq(clock_data_recovery.line_state_se0),
         ]
 
-        # RX idle/active detection
-        rx_start = Signal()
-        rx_act = Signal()
-        rx_wait_end = Signal()
-        rx_end = Signal()
-        shift_out = Signal()
-        rx_valid = Signal()
-        self.sync.usb_48 += [
-            rx_start.eq(0),
-            rx_end.eq(0),
-            # 'K' state -> start of or within packet
-            If(clock_data_recovery.line_state_dk,
-                rx_act.eq(1),
-                rx_wait_end.eq(0),
-                If(~rx_act,
-                    rx_start.eq(1),
-                ),
-            # se0 -> end of packet
-            ).Elif(clock_data_recovery.line_state_se0,
-                rx_wait_end.eq(1),
-            ),
-            If(rx_wait_end & shift_out,
-                rx_act.eq(0),
-                rx_end.eq(1),
-            ),
-        ]
-        self.comb += [
-            rx_valid.eq(nrzi.o_valid & rx_act),
-        ]
-
         # The packet detector resets the reset of the pipeline.
         reset = Signal()
         detect = RxPacketDetect()
         self.submodules.detect = detect = ClockDomainsRenamer("usb_48")(detect)
         self.comb += [
+            detect.i_se0.eq(nrzi.o_se0),
             detect.i_data.eq(nrzi.o_data),
-            detect.i_valid.eq(rx_valid),
+            detect.i_valid.eq(nrzi.o_valid),
             reset.eq(~detect.o_pkt_active),
-            detect.reset.eq((nrzi.o_se0 & rx_valid) | self.reset),
+            detect.reset.eq(self.reset),
         ]
 
         bitstuff = RxBitstuffRemover()
         self.submodules.bitstuff = ClockDomainsRenamer("usb_48")(bitstuff)
         self.comb += [
-            bitstuff.reset.eq((nrzi.o_se0 & rx_valid) | self.reset),
-            bitstuff.i_valid.eq(rx_valid),
+            bitstuff.reset.eq(~detect.o_pkt_active | self.reset),
+            bitstuff.i_valid.eq(nrzi.o_valid),
             bitstuff.i_data.eq(nrzi.o_data),
         ]
 
@@ -110,10 +81,7 @@ class RxPipeline(Module):
         self.comb += [
             shifter.reset.eq(last_reset),
             shifter.i_data.eq(bitstuff.o_data),
-            shifter.i_valid.eq(~bitstuff.o_stall),
-        ]
-        self.sync.usb_48 += [
-            shift_out.eq(shifter.o_put),
+            shifter.i_valid.eq(~bitstuff.o_stall & detect.o_pkt_active),
         ]
 
         # Cross the data from the 48MHz domain to the 12MHz domain
@@ -135,9 +103,9 @@ class RxPipeline(Module):
         self.submodules.flagsFifo = flagsFifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(flagsFifo)
 
         self.comb += [
-            flagsFifo.din[1].eq(rx_start),
-            flagsFifo.din[0].eq(rx_end),
-            flagsFifo.we.eq(rx_start | rx_end),
+            flagsFifo.din[1].eq(detect.o_pkt_start),
+            flagsFifo.din[0].eq(detect.o_pkt_end),
+            flagsFifo.we.eq(detect.o_pkt_start | detect.o_pkt_end),
             flag_start.eq(flagsFifo.dout[1]),
             flag_end.eq(flagsFifo.dout[0]),
             flag_valid.eq(flagsFifo.readable),
