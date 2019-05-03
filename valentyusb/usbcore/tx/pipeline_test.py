@@ -74,7 +74,8 @@ class TestTxPipeline(BaseUsbTestCase):
             return usb['p'][2:], usb['n'][2:]
 
         def stim(value, data, oe):
-            expected_usbp, expected_usbn = diff('J'*(2*4)+nrzi(value)+'J'*(4*4))
+#            expected_usbp, expected_usbn = diff('J'*(2*4)+nrzi(value)+'J'*(4*4))
+            expected_usbp, expected_usbn = diff('J'*(1*4)+nrzi(value)+'J'*(5*4))
             assert len(expected_usbp) == len(expected_usbn)
             actual_usbp, actual_usbn = yield from send(data, oe)
             self.assertSequenceEqual(expected_usbp, actual_usbp[PAD:len(expected_usbp)+PAD])
@@ -91,7 +92,8 @@ class TestTxPipeline(BaseUsbTestCase):
         self.pkt_decode_test(
             # Passed
             dict(
-                data  = [b("10000001"), b("10100101"), b("10000110"), b("11000010")],
+                #data  = [b("10000001"), b("10100101"), b("10000110"), b("11000010")],
+                data  = [b("10100101"), b("10000110"), b("11000010")],
                 oe    = "00 11111111 11111111 11111111 11111111 000000",
                 #se0  = "00 00000000 00000000 00000000 00000000 110000",
                 #           SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
@@ -118,7 +120,8 @@ class TestTxPipeline(BaseUsbTestCase):
         self.pkt_decode_test(
             # Passed
             dict(
-                data  = [b("00000001"), b("10100100"), b("10000110"), b("11000010")],
+                #data  = [b("00000001"), b("10100100"), b("10000110"), b("11000010")],
+                data  = [b("10100100"), b("10000110"), b("11000010")],
                 oe    = "00 11111111 11111111 11111111 11111111 000000",
                 #se0  = "00 00000000 00000000 00000000 00000000 110000",
                 #           SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
@@ -128,7 +131,8 @@ class TestTxPipeline(BaseUsbTestCase):
     def test_usb2_sof_token_bad_crc5(self):
         self.pkt_decode_test(
             dict(
-                data  = [b("00000001"), b("10100101"), b("10000110"), b("11000011")],
+                #data  = [b("00000001"), b("10100101"), b("10000110"), b("11000011")],
+                data  = [b("10100101"), b("10000110"), b("11000011")],
                 oe    = "00 11111111 11111111 11111111 11111111 000000",
                 #se0  = "00 00000000 00000000 00000000 00000000 110000",
                 #           SSSSSSSS PPPPPPPP AAAAAAAE EEECCCCC 00
@@ -138,7 +142,8 @@ class TestTxPipeline(BaseUsbTestCase):
     def test_usb2_ack_handshake(self):
         self.pkt_decode_test(
             dict(
-                data  = [b("00000001"), b("01001011")],
+                #data  = [b("00000001"), b("01001011")],
+                data  = [b("01001011")],
                 oe    = "00 11111111 11111111 000000",
                 #se0  = "00 00000000 00000000 110000",
                 #           SSSSSSSS PPPPPPPP 00
@@ -148,7 +153,8 @@ class TestTxPipeline(BaseUsbTestCase):
     def test_usb2_ack_handshake_pid_error(self):
         self.pkt_decode_test(
             dict(
-                data  = [b("00000001"), b("01001111")],
+                #data  = [b("00000001"), b("01001111")],
+                data  = [b("01001111")],
                 oe    = "00 11111111 11111111 000000",
                 #se0  = "00 00000000 00000000 110000",
                 #           SSSSSSSS PPPPPPPP 00
@@ -175,7 +181,7 @@ class TestTxPipeline(BaseUsbTestCase):
         self.pkt_decode_test(
             dict(
                 data  = [
-                    b("00000001"),                                  # Sync
+                    #b("00000001"),                                  # Sync
                     b("11000011"),                                  # PID
                     0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, # Data payload
                     0xdd, 0x94,                                     # CRC16
@@ -213,7 +219,7 @@ class TestTxPipeline(BaseUsbTestCase):
         self.pkt_decode_test(
             dict(
                 data  = [
-                    b("00000001"),                                  # Sync
+                    #b("00000001"),                                  # Sync
                     b("11000011"),                                  # PID
                     0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 0x00, # Data payload
                     0xdd, 0xd4,                                     # CRC16
