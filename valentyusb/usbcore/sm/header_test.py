@@ -22,14 +22,12 @@ class TestPacketHeaderDecode(BaseUsbTestCase):
         run_simulation(
             dut, stim(dut),
             vcd_name=self.make_vcd_name(),
-            clocks={"sys": 12, "usb_48": 48, "usb_12": 192},
+            clocks={"sys": 24, "usb_48": 96, "usb_12": 384},
         )
 
-    def recv_packet(self, dut, bits, tick):
-        if not tick:
-            def tick():
-                if False:
-                    yield
+    def recv_packet(self, dut, bits):
+        def tick(dut):
+            return not (yield dut.o_decoded)
 
         for i in range(len(bits)):
             b = bits[i]
@@ -48,16 +46,21 @@ class TestPacketHeaderDecode(BaseUsbTestCase):
             else:
                 assert False, "Unknown value: %s" % v
 
+            # four 48MHz cycles = 1 bit time
             for t in range(0, 4):
-                continue_sim = yield from tick(dut)
                 yield
 
-        MAX_ITER=10000
-        for i in range(0, MAX_ITER):
             continue_sim = yield from tick(dut)
             if not continue_sim:
                 break
-            yield
+
+        MAX_ITER=10000
+        if continue_sim:
+            for i in range(0, MAX_ITER):
+                continue_sim = yield from tick(dut)
+                if not continue_sim:
+                    break
+                yield
         self.assertFalse(continue_sim)
         self.assertLess(i, MAX_ITER-1)
 
@@ -66,17 +69,10 @@ class TestPacketHeaderDecode(BaseUsbTestCase):
             for i in range(100):
                 yield
 
-            def tick(dut):
-                return not (yield dut.o_decoded)
-
             yield from self.recv_packet(
                 dut,
                 packet,
-                tick,
             )
-
-            for i in range(100):
-                yield
 
             decoded = yield dut.o_decoded
             self.assertTrue(decoded)
@@ -89,6 +85,10 @@ class TestPacketHeaderDecode(BaseUsbTestCase):
 
             actual_endp = yield dut.o_endp
             self.assertEqual(expected_endp, actual_endp)
+
+            for i in range(100):
+                yield
+
         self.sim(stim)
 
     def check_token(self, expected_pid, expected_addr, expected_endp):
