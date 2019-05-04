@@ -181,7 +181,12 @@ class MemInterface(Module, AutoCSR):
         # ]
 
         self.sync.usb_12 += [
-            If(usb_core.data_recv_put, self.obuf_ptr.eq(self.obuf_ptr + 1)),
+            self.arm.we.eq(0),
+            self.sta.we.eq(0),
+            self.dtb.we.eq(0),
+            If(usb_core.data_recv_put,
+                self.obuf_ptr.eq(self.obuf_ptr + 1)
+            ),
 
             # If the EP0 needs resetting, then clear the EP0 IN and OUT bits, which
             # are stored in the lower two bits of the three control registers.
@@ -192,27 +197,25 @@ class MemInterface(Module, AutoCSR):
                 If(usb_core.tok == PID.SETUP,
                     self.update_ctrl.eq(1),
                     self.update_dtb.eq(1),
-                    self.dtb.dat_w.eq(self.dtb.storage & ~0b11),
-                    self.sta.dat_w.eq(self.sta.storage & ~0b11),
                     self.arm.dat_w.eq(self.arm.storage & ~0b11),
+                    self.sta.dat_w.eq(self.sta.storage & ~0b11),
+                    self.dtb.dat_w.eq(self.dtb.storage & ~0b11),
                 ),
-            ).Elif(self.update_ctrl,
+            ).Elif(usb_core.commit,
+                self.update_ctrl.eq(1),
+                self.update_dtb.eq(1),
+                self.arm.dat_w.eq((self.arm.storage & ~(1 << eps_idx))),
+                self.sta.dat_w.eq((self.sta.storage & ~(1 << eps_idx))),
+                self.dtb.dat_w.eq((self.dtb.storage ^ (1 << eps_idx))),
+            ),
+            If(self.update_ctrl,
                 self.update_ctrl.eq(0),
                 self.arm.we.eq(1),
                 self.sta.we.eq(1),
-            ).Elif(usb_core.commit,
-                self.update_dtb.eq(1),
-                self.dtb.dat_w.eq((self.dtb.storage ^ (1 << eps_idx))),
-                self.arm.dat_w.eq((self.arm.storage & ~(1 << eps_idx))),
-                self.sta.dat_w.eq((self.sta.storage & ~(1 << eps_idx))),
-                self.update_ctrl.eq(1),
-            ).Elif(self.update_dtb,
+            ),
+            If(self.update_dtb,
                 self.update_dtb.eq(0),
                 self.dtb.we.eq(1),
-            ).Else(
-                self.arm.we.eq(0),
-                self.sta.we.eq(0),
-                self.dtb.we.eq(0),
             )
         ]
 
