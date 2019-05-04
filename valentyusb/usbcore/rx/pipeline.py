@@ -50,16 +50,16 @@ class RxPipeline(Module):
             nrzi.i_se0.eq(clock_data_recovery.line_state_se0),
         ]
 
-        # The packet detector resets the reset of the pipeline.
+        # The packet detector asserts the reset of the pipeline.
         reset = Signal()
         detect = RxPacketDetect()
         self.submodules.detect = detect = ClockDomainsRenamer("usb_48")(detect)
         self.comb += [
+            detect.reset.eq(self.reset),
+            detect.i_valid.eq(nrzi.o_valid),
             detect.i_se0.eq(nrzi.o_se0),
             detect.i_data.eq(nrzi.o_data),
-            detect.i_valid.eq(nrzi.o_valid),
             reset.eq(~detect.o_pkt_active),
-            detect.reset.eq(self.reset),
         ]
 
         bitstuff = RxBitstuffRemover()
@@ -88,7 +88,7 @@ class RxPipeline(Module):
         flag_start = Signal()
         flag_end = Signal()
         flag_valid = Signal()
-        payloadFifo = genlib.fifo.AsyncFIFO(8, 4)
+        payloadFifo = genlib.fifo.AsyncFIFO(8, 2)
         self.submodules.payloadFifo = payloadFifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(payloadFifo)
 
         self.comb += [
