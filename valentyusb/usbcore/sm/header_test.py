@@ -22,12 +22,14 @@ class TestPacketHeaderDecode(BaseUsbTestCase):
         run_simulation(
             dut, stim(dut),
             vcd_name=self.make_vcd_name(),
-            clocks={"sys": 24, "usb_48": 96, "usb_12": 384},
+            clocks={"sys": 12, "usb_48": 48, "usb_12": 192},
         )
 
-    def recv_packet(self, dut, bits):
-        def tick(dut):
-            return not (yield dut.o_decoded)
+    def recv_packet(self, dut, bits, tick):
+        if not tick:
+            def tick():
+                if False:
+                    yield
 
         for i in range(len(bits)):
             b = bits[i]
@@ -69,9 +71,13 @@ class TestPacketHeaderDecode(BaseUsbTestCase):
             for i in range(100):
                 yield
 
+            def tick(dut):
+                return not (yield dut.o_decoded)
+
             yield from self.recv_packet(
                 dut,
                 packet,
+                tick,
             )
 
             decoded = yield dut.o_decoded

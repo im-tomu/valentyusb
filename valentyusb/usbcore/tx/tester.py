@@ -107,7 +107,6 @@ def create_tester(dut_type, **def_args):
                     j += 1
 
                 for output_signal in self.outputs.keys():
-                    print("len: %s, j: %s" % (len(actual_output[output_signal]), j))
                     assert len(actual_output[output_signal]) == j
 
                     actual_value = yield self.outputs[output_signal]
@@ -124,7 +123,7 @@ def create_tester(dut_type, **def_args):
                         details += " %s\n" % (output_signal, )
                         details += "\n"
                         details += "              Actual: %s\n" % (actual_output[output_signal])
-#                        details += "            Expected: %s\n" % (test_args[output_signal])
+                        details += "            Expected: %s\n" % (test_args[output_signal])
                         details += "                      " + (" " * j) + "^\n"
                         details += to_waveform(actual_output)
                     self.assertEqual(expected_value, actual_value, msg = ("%s:%s:%d" % (name, output_signal, j)) + details)
