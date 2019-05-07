@@ -51,63 +51,36 @@ class TxSerialCrcGenerator(Module):
 
     """
     def __init__(self, width, polynomial, initial):
-#        self.i_data = Signal()
-#
-#        crc = Signal(width, reset=initial)
-#        crc_invert = Signal(1)
-#
-#        self.comb += [
-#            crc_invert.eq(self.i_data ^ crc[width - 1])
-#        ]
-#
-#        for i in range(width):
-#            rhs_data = None
-#            if i == 0:
-#                rhs_data = crc_invert
-#            else:
-#                if (polynomial >> i) & 1:
-#                    rhs_data = crc[i - 1] ^ crc_invert
-#                else:
-#                    rhs_data = crc[i - 1]
-#
-#            self.sync += [
-#                crc[i].eq(rhs_data)
-#            ]
-#
-#        self.o_crc = Signal(width)
-#
-#        for i in range(width):
-#            self.comb += [
-#                self.o_crc[i].eq(1 ^ crc[width - i - 1]),
-#            ]
+
         self.i_data = Signal()
 
         crc = Signal(width, reset=initial)
+        crc_invert = Signal(1)
 
-        feedback = crc[width-1]
+        self.comb += [
+            crc_invert.eq(self.i_data ^ crc[width - 1])
+        ]
 
         for i in range(width):
+            rhs_data = None
             if i == 0:
-                rhs = self.i_data
+                rhs_data = crc_invert
             else:
-                rhs = crc[i - 1]
+                if (polynomial >> i) & 1:
+                    rhs_data = crc[i - 1] ^ crc_invert
+                else:
+                    rhs_data = crc[i - 1]
 
-            if (polynomial & (1 << i)):
-                self.sync += [
-                    crc[i].eq(rhs ^ feedback)
-                ]
-            else:
-                self.sync += [
-                    crc[i].eq(rhs)
-                ]
+            self.sync += [
+                crc[i].eq(rhs_data)
+            ]
 
         self.o_crc = Signal(width)
-        self.comb += [
-            self.o_crc.eq(~crc[::-1])
-#            self.o_crc.eq(crc[::-1])
-#            self.o_crc.eq(~crc)
-#            self.o_crc.eq(crc)
-        ]
+
+        for i in range(width):
+            self.comb += [
+                self.o_crc[i].eq(1 ^ crc[width - i - 1]),
+            ]
 
 
 def bytes_to_int(d):
