@@ -176,6 +176,9 @@ class MemInterface(Module, AutoCSR):
         self.update_dtb = Signal()
         self.update_ctrl = Signal()
         self.should_check_ep0 = Signal()
+        #self.obuf_full = Signal()
+        #self.ibuf_empty = Signal()
+
         # self.comb += [
         #     self.usb_ep0_reset.eq(usb_core.start & (usb_core.tok == PID.SETUP))
         # ]
@@ -202,10 +205,11 @@ class MemInterface(Module, AutoCSR):
                     self.dtb.dat_w.eq(self.dtb.storage & ~0b11),
                 ),
             ).Elif(usb_core.commit,
+                #self.update_ctrl.eq((self.obuf_full & ~eps_idx[0]) | (self.ibuf_empty & eps_idx[0])),
                 self.update_ctrl.eq(1),
                 self.update_dtb.eq(1),
                 self.arm.dat_w.eq((self.arm.storage & ~(1 << eps_idx))),
-                self.sta.dat_w.eq((self.sta.storage & ~(1 << eps_idx))),
+                self.sta.dat_w.eq(self.sta.storage),
                 self.dtb.dat_w.eq((self.dtb.storage ^ (1 << eps_idx))),
             ),
             If(self.update_ctrl,
@@ -218,6 +222,15 @@ class MemInterface(Module, AutoCSR):
                 self.dtb.we.eq(1),
             )
         ]
+
+        #self.diff_addr = Signal(ptr_width)
+        #self.comb += [
+        #    self.diff_addr.eq(self.oport_rd.adr - self.oport_wr.adr),
+        #    # check if there are at least 64 Bytes (== FS max packet size) left in the out buffer
+        #    self.obuf_full.eq((self.diff_addr != 0) & (self.diff_addr <= 64)),
+        #    #self.obuf_full.eq(  (self.diff_addr[7::] == 0) &
+        #    #                    (self.diff_addr[0:7] != 0)),
+        #]
 
         # Input pathway
         # -----------------------
