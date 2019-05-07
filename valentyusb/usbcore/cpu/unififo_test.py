@@ -254,6 +254,9 @@ class TestUsbUniFifo(
                     yield from self.next_state("SEND_DATA")
                 else:
                     yield from self.next_state("SEND_HAND")
+            elif pid == PID.SOF:
+                # ignore SOF packets
+                self.clear_pending(addr)
             else:
                 assert False, pid
 
@@ -266,14 +269,20 @@ class TestUsbUniFifo(
             self.ep_print(self.ep.addr, "RECV_DATA: %r", [hex(b) for b in pkt_data])
             pid = decode_pid(pkt_data)
             self.ep_print(self.ep.addr, "RECV_DATA pid:%s data:%r", pid, pkt_data)
+            if pid == PID.SOF:
+                # ignore SOF packets
+                addr = self.ep.addr
+                #addr = int(pkt_data[8:8+7][::-1], 2)
+                self.clear_pending(addr)
+            else:
 
-            if self.handshake == EndpointResponse.ACK:
-                self.assertIsNone(self.ep.data)
-                self.assertIn(encode_pid(pid), (encode_pid(PID.DATA0), encode_pid(PID.DATA1)))
-                self.assertSequenceEqual(pkt_data[-2:], crc16(pkt_data[1:-2]))
-                self.ep.data = pkt_data[1:-2]
+                if self.handshake == EndpointResponse.ACK:
+                    self.assertIsNone(self.ep.data)
+                    self.assertIn(encode_pid(pid), (encode_pid(PID.DATA0), encode_pid(PID.DATA1)))
+                    self.assertSequenceEqual(pkt_data[-2:], crc16(pkt_data[1:-2]))
+                    self.ep.data = pkt_data[1:-2]
 
-            yield from self.next_state("SEND_HAND")
+                yield from self.next_state("SEND_HAND")
 
         elif self.state == "SEND_HAND":
             self.assertIsNotNone(self.ep)
