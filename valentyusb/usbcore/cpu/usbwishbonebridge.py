@@ -205,7 +205,10 @@ class USBWishboneBridge(Module):
         fsm.act("WAIT_SEND_ACK_START",
             If(usb_core.endp == 0,
                 self.send_ack.eq(1),
-                If(usb_core.start,
+                If(usb_core.retry,
+                    byte_counter_reset.eq(1),
+                    NextState("SEND_DATA"),
+                ).Elif(usb_core.start,
                     NextState("WAIT_PKT_END_DBG"),
                 )
             )
