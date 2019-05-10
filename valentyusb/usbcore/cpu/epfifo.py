@@ -249,8 +249,8 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         self.comb += [
             # This needs to be correct *before* token is finished, everything
             # else uses registered outputs.
-            usb_core.sta.eq((eps[eps_idx].response == EndpointResponse.STALL) & ~debug_sink_data_ready),
-            usb_core.arm.eq((eps[eps_idx].response == EndpointResponse.ACK) | debug_ack_response),
+            usb_core.sta.eq(((eps[eps_idx].response == EndpointResponse.STALL) & ~debug_packet_detected) & ~debug_sink_data_ready),
+            usb_core.arm.eq(((eps[eps_idx].response == EndpointResponse.ACK) & ~debug_packet_detected) | debug_ack_response),
             usb_core.dtb.eq(eps[eps_idx].dtb.storage | debug_packet_detected),
 
             # Control signals
