@@ -76,6 +76,7 @@ class UsbTransfer(Module):
         self.start  = Signal()     # Asserted when a transfer is starting
         self.setup  = Signal()     # Asserted when a transfer is a setup
         self.commit = Signal()     # Asserted when a transfer succeeds
+        self.retry  = Signal()     # Asserted when the host sends an IN without an ACK
         self.abort  = Signal()     # Asserted when a transfer fails
         self.end    = Signal()     # Asserted when transfer ends
         self.error  = Signal()     # Asserted when in the ERROR state
@@ -224,9 +225,11 @@ class UsbTransfer(Module):
         transfer.act("WAIT_HAND",
             If(rxstate.o_decoded,
                 self.commit.eq(1),
-                # Host can't reject?
-                If((rxstate.o_pid & PIDTypes.TYPE_MASK) == PIDTypes.HANDSHAKE,
+                If(rxstate.o_pid == PID.ACK,
                     NextState("WAIT_TOKEN"),
+                ).Elif(rxstate.o_pid == PID.IN,
+                    self.retry.eq(1),
+                    NextState("SEND_DATA"),
                 ).Else(
                     NextState("ERROR"),
                 )
