@@ -45,9 +45,15 @@ class TestPerEndpointFifoInterface(
     def setUp(self):
         CommonTestMultiClockDomain.setUp(self, ("usb_12", "usb_48"))
 
+        # Only enable "debug" mode for tests with "debug" in their name
+        if "debug" in self._testMethodName:
+            debug = True
+        else:
+            debug = False
+
         self.iobuf = FakeIoBuf()
         self.endpoints = [EndpointType.BIDIR, EndpointType.IN, EndpointType.BIDIR]
-        self.dut = PerEndpointFifoInterface(self.iobuf, self.endpoints)
+        self.dut = PerEndpointFifoInterface(self.iobuf, self.endpoints, debug=debug)
 
         self.packet_h2d = Signal(1)
         self.packet_d2h = Signal(1)
