@@ -50,95 +50,79 @@ class RxPipeline(Module):
             nrzi.i_se0.eq(clock_data_recovery.line_state_se0),
         ]
 
-        # Cross the data from the 48MHz domain to the 12MHz domain
-        bit_dat = Signal()
-        bit_se0 = Signal()
-#        self.comb += [
-#            bit_dat.eq(nrzi.o_data),
-#            bit_se0.eq(nrzi.o_se0),
-#        ]
-
-        fifo_idle = Signal(4)
-        fifo_delay = Signal(4)
-        fifo_filling = Signal()
-
-        self.sync.usb_48 += If(nrzi.o_valid,
-            If(nrzi.o_data, If(~fifo_idle[3], fifo_idle.eq(fifo_idle + 1))).Else(fifo_idle.eq(0))
-        )
-
-        fifo = genlib.fifo.AsyncFIFO(2, 8)
-        self.submodules.fifo = fifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(fifo)
-
-        self.comb += [
-            fifo.din[0].eq(nrzi.o_data),
-            fifo.din[1].eq(nrzi.o_se0),
-            fifo.we.eq(nrzi.o_valid & (~fifo_idle[3] | ~nrzi.o_data)),
-            bit_dat.eq(fifo.dout[0]),
-            bit_se0.eq(fifo.dout[1]),
-            fifo.re.eq(fifo_delay[2]),
-            fifo_filling.eq(~fifo_delay[2]),
-        ]
-
-        self.sync.usb_12 += If(fifo.readable,
-            fifo_delay.eq(fifo_delay + fifo_filling),
-        ).Else(
-            fifo_delay.eq(0)
-        )
-
-
         # The packet detector resets the reset of the pipeline.
         reset = Signal()
         detect = RxPacketDetect()
-        self.submodules.detect = detect = ClockDomainsRenamer("usb_12")(detect)
+        self.submodules.detect = detect = ClockDomainsRenamer("usb_48")(detect)
         self.comb += [
-            self.o_pkt_start.eq(detect.o_pkt_start),
-            detect.i_data.eq(bit_dat),
+            detect.i_se0.eq(nrzi.o_se0),
+            detect.i_data.eq(nrzi.o_data),
+            detect.i_valid.eq(nrzi.o_valid),
             reset.eq(~detect.o_pkt_active),
-            detect.reset.eq(bit_se0 | self.reset),
+            detect.reset.eq(self.reset),
         ]
 
-        last_stall = Signal()
-        last_bit_dat = Signal()
-        last_put = Signal()
-        last_data = Signal(8)
-        last_reset = Signal()
-        last_se0 = Signal()
-
         bitstuff = RxBitstuffRemover()
-        self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
+        self.submodules.bitstuff = ClockDomainsRenamer("usb_48")(bitstuff)
         self.comb += [
-            bitstuff.reset.eq(last_reset),
-            bitstuff.i_data.eq(bit_dat),
+            bitstuff.reset.eq(~detect.o_pkt_active | self.reset),
+            bitstuff.i_valid.eq(nrzi.o_valid),
+            bitstuff.i_data.eq(nrzi.o_data),
+        ]
+
+        last_reset = Signal()
+        self.sync.usb_48 += [
+            last_reset.eq(reset),
         ]
 
         # 1bit->8bit (1byte) serial to parallel conversion
         shifter = RxShifter(width=8)
-        self.submodules.shifter = shifter = ClockDomainsRenamer("usb_12")(shifter)
+        self.submodules.shifter = shifter = ClockDomainsRenamer("usb_48")(shifter)
         self.comb += [
             shifter.reset.eq(last_reset),
-            shifter.i_data.eq(last_bit_dat | bitstuff.o_stall),
-            shifter.ce.eq(~bitstuff.o_stall),
+            shifter.i_data.eq(bitstuff.o_data),
+            shifter.i_valid.eq(~bitstuff.o_stall & detect.o_pkt_active),
         ]
+
+        # Cross the data from the 48MHz domain to the 12MHz domain
+        flag_start = Signal()
+        flag_end = Signal()
+        flag_valid = Signal()
+        payloadFifo = genlib.fifo.AsyncFIFO(8, 4)
+        self.submodules.payloadFifo = payloadFifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(payloadFifo)
 
         self.comb += [
-            self.o_data_strobe.eq(last_put & ~last_stall),
-            self.o_data_payload.eq(last_data),
+            payloadFifo.din.eq(shifter.o_data[::-1]),
+            payloadFifo.we.eq(shifter.o_put),
+            self.o_data_payload.eq(payloadFifo.dout),
+            self.o_data_strobe.eq(payloadFifo.readable),
+            payloadFifo.re.eq(1),
         ]
 
-        # Packet ended signal
+        flagsFifo = genlib.fifo.AsyncFIFO(2, 2)
+        self.submodules.flagsFifo = flagsFifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(flagsFifo)
+
+        self.comb += [
+            flagsFifo.din[1].eq(detect.o_pkt_start),
+            flagsFifo.din[0].eq(detect.o_pkt_end),
+            flagsFifo.we.eq(detect.o_pkt_start | detect.o_pkt_end),
+            flag_start.eq(flagsFifo.dout[1]),
+            flag_end.eq(flagsFifo.dout[0]),
+            flag_valid.eq(flagsFifo.readable),
+            flagsFifo.re.eq(1),
+        ]
+
+        # Packet flag signals (in 12MHz domain)
+        self.comb += [
+            self.o_pkt_start.eq(flag_start & flag_valid),
+            self.o_pkt_end.eq(flag_end & flag_valid),
+        ]
+
         self.sync.usb_12 += [
             If(self.o_pkt_start,
                 self.o_pkt_in_progress.eq(1),
-            ).Elif(last_se0 & self.o_pkt_in_progress,
-                self.o_pkt_end.eq(1),
+            ).Elif(self.o_pkt_end,
                 self.o_pkt_in_progress.eq(0),
-            ).Else(
-                self.o_pkt_end.eq(0),
             ),
-            last_stall.eq(bitstuff.o_stall),
-            last_bit_dat.eq(bit_dat),
-            last_put.eq(shifter.o_put),
-            last_data.eq(shifter.o_data[::-1]),
-            last_reset.eq(reset),
-            last_se0.eq(bit_se0),
         ]
+

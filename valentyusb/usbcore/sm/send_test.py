@@ -108,13 +108,13 @@ class CommonTxPacketSendTestCase:
         end = usb['p'].rfind('0')+1+N
         usb_p = usb['p'][start:end]
         usb_n = usb['n'][start:end]
-        print()
-        print("---- ", self.id(), " ----", sep="")
-        print(usb['p'])
-        print(' '*(start-1), usb_p)
-        print(' '*(start-1), usb_n)
-        print(usb['n'])
-        print("-----", len(self.id())*"-", "-----", sep="")
+#        print()
+#        print("---- ", self.id(), " ----", sep="")
+#        print(usb['p'])
+#        print(' '*(start-1), usb_p)
+#        print(' '*(start-1), usb_n)
+#        print(usb['n'])
+#        print("-----", len(self.id())*"-", "-----", sep="")
         return usb_p, usb_n
 
     def test_ack(self):
@@ -165,7 +165,7 @@ class CommonTxPacketSendTestCase:
         ])
 
 
-class TestTxPacketSendNoCrc(CommonTxPacketSendTestCase, unittest.TestCase):
+class TestTxPacketSendNoCrc(BaseUsbTestCase, CommonTxPacketSendTestCase):
     maxDiff=None
 
     def sim(self, pid, data=None):
@@ -187,7 +187,7 @@ class TestTxPacketSendNoCrc(CommonTxPacketSendTestCase, unittest.TestCase):
         )
 
 
-class TestTxPacketSendAutoCrc(CommonTxPacketSendTestCase, unittest.TestCase):
+class TestTxPacketSendAutoCrc(BaseUsbTestCase, CommonTxPacketSendTestCase):
     maxDiff=None
 
     def sim(self, pid, data=None):

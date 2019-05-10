@@ -65,15 +65,15 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
         def stim(glitch=-1):
             out_seq = ""
             clock = 0
-            for bit in seq + "0":
-                for i in range(4):
-                    if clock != glitch:
-                        yield usbp_raw.eq({'j':1,'k':0,'0':0,'1':1}[bit])
-                    yield usbn_raw.eq({'j':0,'k':1,'0':0,'1':1}[bit])
-                    yield
-                    clock += 1
-                    out_seq += yield from get_output()
-            self.assertEqual(out_seq, "j" + seq)
+            while len(out_seq) < len(seq):
+                bit = (seq + "0")[clock >> 2]
+                if clock != glitch:
+                    yield usbp_raw.eq({'j':1,'k':0,'0':0,'1':1}[bit])
+                yield usbn_raw.eq({'j':0,'k':1,'0':0,'1':1}[bit])
+                yield
+                clock += 1
+                out_seq += yield from get_output()
+            self.assertEqual(out_seq, seq)
 
 
         if short_test:
@@ -91,7 +91,7 @@ class TestRxClockDataRecovery(BaseUsbTestCase):
                 )
 
         else:
-            for glitch in range(0, 32, 8):
+            for glitch in range(0, 32, 1):
                 with self.subTest(seq=seq, glitch=glitch):
                     usbp_raw = Signal()
                     usbn_raw = Signal()

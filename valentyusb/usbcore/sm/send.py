@@ -29,8 +29,7 @@ class TxPacketSend(Module):
         self.o_data_ack = Signal()
 
         o_oe12 = Signal()
-        # self.specials += cdc.MultiReg(tx.o_oe, o_oe12, odomain="usb_12", n=2)
-        self.comb += [o_oe12.eq(tx.o_oe)]
+        self.specials += cdc.MultiReg(tx.o_oe, o_oe12, odomain="usb_12", n=1)
 
         pid = Signal(4)
 
