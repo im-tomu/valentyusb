@@ -237,7 +237,8 @@ class PerEndpointFifoInterface(Module, AutoCSR):
 
         # Wire up debug signals if required
         if debug:
-            self.submodules.debug_bridge = USBWishboneBridge(self.usb_core)
+            debug_bridge = USBWishboneBridge(self.usb_core)
+            self.submodules.debug_bridge = ClockDomainsRenamer("usb_12")(debug_bridge)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
                 debug_sink_data.eq(self.debug_bridge.sink_data),
