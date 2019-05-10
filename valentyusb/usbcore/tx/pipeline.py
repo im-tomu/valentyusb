@@ -127,11 +127,20 @@ class TxPipeline(Module):
 
         tx_pipeline_fsm.act('SEND_DATA',
             If(~self.i_oe & shifter.o_empty & ~bitstuff.o_stall,
-                NextState('IDLE'),
-                NextValue(state_gray, 0b10),
+                If(bitstuff.o_will_stall,
+                    NextState('STUFF_LAST_BIT')
+                ).Else(
+                    NextValue(state_gray, 0b10),
+                    NextState('IDLE'),
+                )
             ).Else(
                 NextValue(state_gray, 0b11),
             ),
+        )
+
+        tx_pipeline_fsm.act('STUFF_LAST_BIT',
+            NextValue(state_gray, 0b10),
+            NextState('IDLE'),
         )
 
         # 48MHz domain
