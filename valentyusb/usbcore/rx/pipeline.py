@@ -88,7 +88,7 @@ class RxPipeline(Module):
         flag_start = Signal()
         flag_end = Signal()
         flag_valid = Signal()
-        payloadFifo = genlib.fifo.AsyncFIFO(8, 4)
+        payloadFifo = genlib.fifo.AsyncFIFO(8, 2)
         self.submodules.payloadFifo = payloadFifo = ClockDomainsRenamer({"write":"usb_48", "read":"usb_12"})(payloadFifo)
 
         self.comb += [
