@@ -234,11 +234,12 @@ class UsbTransfer(Module):
         )
         transfer.act("SEND_HAND",
             txstate.i_pid.eq(response_pid),
-            # Do some pipelining.  Transmit the last byte of data
-            # here as part of the handshake process.
-            If(response_pid == PID.ACK,
-                self.data_recv_put.eq(rx.o_data_strobe),
-            ),
+            # TODO: Why should there be rx data forwarded during ACK?
+            ## Do some pipelining.  Transmit the last byte of data
+            ## here as part of the handshake process.
+            #If(response_pid == PID.ACK,
+            #    self.data_recv_put.eq(rx.o_data_strobe),
+            #),
             If(txstate.o_pkt_end,
                 self.setup.eq(self.tok == PID.SETUP),
                 If(response_pid == PID.ACK,
