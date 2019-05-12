@@ -196,6 +196,10 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             data_recv_payload_delayed.eq(usb_core.data_recv_payload),
         ]
 
+        # Add a signal to EP0OUT to drain it when we get a SETUP packet
+        # if it's not empty.
+        setup_do_drain = Signal()
+
         # Endpoint controls
         ems = []
         eps = []
@@ -204,7 +208,10 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             if endp & EndpointType.OUT:
                 exec("self.submodules.ep_%s_out = ep = EndpointOut()" % i)
                 oep = getattr(self, "ep_%s_out" % i)
-                self.comb += oep.drain_buffer.eq(~iobuf.usb_pullup)
+                if i == 0:
+                    self.comb += oep.drain_buffer.eq(~iobuf.usb_pullup | setup_do_drain)
+                else:
+                    self.comb += oep.drain_buffer.eq(~iobuf.usb_pullup)
                 ems.append(oep.ev)
             else:
                 oep = EndpointNone()
@@ -237,6 +244,27 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         self.comb += [
             eps[ep0out_addr].reset.eq(usb_core.setup & ~debug_packet_detected),
             eps[ep0in_addr].reset.eq(usb_core.setup & ~debug_packet_detected),
+        ]
+
+        # If we get a SETUP packet, drain the EP0OUT FIFO.
+        # This works around a problem where there are two SETUP sequences
+        # back-to-back.  Without this, the two-byte CRC from the previous
+        # OUT packet will get added to the front of the subsequent DATA
+        # packet if the buffer isn't drained quickly enough.
+        # To work around this, assert `setup_do_drain` until the buffer
+        # is no longer readable.
+        last_start = Signal()
+        self.sync += [
+            last_start.eq(usb_core.start),
+            If(~debug_packet_detected,
+                If(last_start,
+                    If(usb_core.tok == PID.SETUP,
+                        setup_do_drain.eq(1),
+                    )
+                ).Elif(setup_do_drain & ~eps[ep0out_addr].obuf.readable,
+                    setup_do_drain.eq(0),
+                )
+            )
         ]
 
         # Wire up debug signals if required
