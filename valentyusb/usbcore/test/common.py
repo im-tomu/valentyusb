@@ -718,6 +718,31 @@ class CommonUsbTestCase:
             )
         self.run_sim(stim)
 
+    def test_control_transfer_in_out(self):
+        def stim():
+            yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
+            yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
+            yield from self.tick_usb12()
+
+            yield from self.control_transfer_in(
+                20,
+                # Get device descriptor
+                [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 00],
+                # 18 byte descriptor, max packet size 8 bytes
+                [0x12, 0x01, 0x10, 0x02, 0x02, 0x00, 0x00, 0x40,
+                 0x09, 0x12, 0xB1, 0x70, 0x01, 0x01, 0x01, 0x02,
+                 00, 0x01],
+            )
+
+            yield from self.control_transfer_out(
+                20,
+                # Set address (to 11)
+                [0x00, 0x05, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00],
+                # 18 byte descriptor, max packet size 8 bytes
+                [],
+            )
+        self.run_sim(stim)
+
     def test_control_transfer_out_nak_data(self):
         def stim():
             addr = 20
