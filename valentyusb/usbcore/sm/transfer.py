@@ -76,6 +76,7 @@ class UsbTransfer(Module):
         self.start  = Signal()     # Asserted when a transfer is starting
         self.setup  = Signal()     # Asserted when a transfer is a setup
         self.commit = Signal()     # Asserted when a transfer succeeds
+        self.retry  = Signal()     # Asserted when the host sends an IN without an ACK
         self.abort  = Signal()     # Asserted when a transfer fails
         self.end    = Signal()     # Asserted when transfer ends
         self.error  = Signal()     # Asserted when in the ERROR state
@@ -194,6 +195,9 @@ class UsbTransfer(Module):
         )
 
         transfer.act("RECV_DATA",
+            # If we've indicated that we'll accept the data, put it into
+            # `data_recv_payload` and strobe `data_recv_put` every time
+            # a full byte comes in.
             If(response_pid == PID.ACK,
                 self.data_recv_put.eq(rx.o_data_strobe),
             ),
@@ -224,9 +228,11 @@ class UsbTransfer(Module):
         transfer.act("WAIT_HAND",
             If(rxstate.o_decoded,
                 self.commit.eq(1),
-                # Host can't reject?
-                If((rxstate.o_pid & PIDTypes.TYPE_MASK) == PIDTypes.HANDSHAKE,
+                If(rxstate.o_pid == PID.ACK,
                     NextState("WAIT_TOKEN"),
+                ).Elif(rxstate.o_pid == PID.IN,
+                    self.retry.eq(1),
+                    NextState("SEND_DATA"),
                 ).Else(
                     NextState("ERROR"),
                 )
@@ -234,12 +240,6 @@ class UsbTransfer(Module):
         )
         transfer.act("SEND_HAND",
             txstate.i_pid.eq(response_pid),
-            # TODO: Why should there be rx data forwarded during ACK?
-            ## Do some pipelining.  Transmit the last byte of data
-            ## here as part of the handshake process.
-            #If(response_pid == PID.ACK,
-            #    self.data_recv_put.eq(rx.o_data_strobe),
-            #),
             If(txstate.o_pkt_end,
                 self.setup.eq(self.tok == PID.SETUP),
                 If(response_pid == PID.ACK,

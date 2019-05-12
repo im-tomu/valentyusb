@@ -11,7 +11,7 @@ from ..pid import PID, PIDTypes
 
 class USBWishboneBridge(Module):
 
-    def __init__(self, usb_core, clk_freq=12000000):
+    def __init__(self, usb_core, clk_freq=12000000, magic_packet=0x43):
         self.wishbone = wishbone.Interface()
 
         # # #
@@ -73,15 +73,15 @@ class USBWishboneBridge(Module):
                     If(usb_core.endp == 0,
                         # If we get a SETUP packet with a "Vendor" type
                         # going to this device, treat that as a DEBUG packet.
-                        If(usb_core.data_recv_payload[0:7] == 0x40,
-                            cmd_ce.eq(1),
+                        cmd_ce.eq(1),
+                        byte_counter_reset.eq(1),
+                        If(usb_core.data_recv_payload[0:7] == magic_packet,
                             NextState("RECEIVE_ADDRESS"),
                         ).Else(
                             # Wait for the end of the packet, to avoid
                             # messing with normal USB operation
                             NextState("WAIT_PKT_END"),
                         ),
-                        byte_counter_reset.eq(1),
                     )
                 )
             )
@@ -116,16 +116,19 @@ class USBWishboneBridge(Module):
             # Set the "ACK" bit to 1, so we acknowledge the packet
             # once it comes in, and so that we're in a position to
             # receive data.
-            self.send_ack.eq(1),
-            If(usb_core.data_recv_put,
-                rx_data_ce.eq(1),
-                byte_counter_ce.eq(1),
-                If(byte_counter == 3,
-                    NextState("WAIT_RECEIVE_DATA_END"),
-                    byte_counter_reset.eq(1)
-                ).Elif(usb_core.end,
-                    NextState("WRITE_DATA"),
-                    byte_counter_reset.eq(1)
+            If(usb_core.endp == 0,
+                self.send_ack.eq(1),
+                If(usb_core.data_recv_put,
+                    rx_data_ce.eq(1),
+                    byte_counter_ce.eq(1),
+                    If(byte_counter == 3,
+                        NextState("WAIT_RECEIVE_DATA_END"),
+                        byte_counter_reset.eq(1)
+                    ).Elif(usb_core.end,
+                        # NextState("WAIT_SEND_ACK_START"),
+                        NextState("WRITE_DATA"),
+                        byte_counter_reset.eq(1)
+                    )
                 )
             )
         )
@@ -134,6 +137,7 @@ class USBWishboneBridge(Module):
             # Wait for the end of the USB packet, if
             # it hasn't come already.
             If(usb_core.end,
+                # NextState("WAIT_SEND_ACK_START")
                 NextState("WRITE_DATA")
             )
         )
@@ -167,11 +171,6 @@ class USBWishboneBridge(Module):
             )
         )
 
-        fsm.act("SEND_DATA_WAIT_END",
-            If(usb_core.end,
-                NextState("SEND_DATA"),
-            ),
-        )
         fsm.act("SEND_DATA_WAIT_START",
             byte_counter_reset.eq(1),
             If(usb_core.start,
@@ -203,18 +202,20 @@ class USBWishboneBridge(Module):
         # send an "IN" request.  Acknowledge that by setting
         # self.send_ack, without putting anything in self.sink_data.
         fsm.act("WAIT_SEND_ACK_START",
-            If(usb_core.start,
-                NextState("WAIT_PKT_END_DBG"),
+            If(usb_core.endp == 0,
+                self.send_ack.eq(1),
+                If(usb_core.retry,
+                    byte_counter_reset.eq(1),
+                    NextState("SEND_DATA"),
+                ).Elif(usb_core.start,
+                    NextState("WAIT_PKT_END_DBG"),
+                )
             )
         )
         fsm.act("WAIT_PKT_END_DBG",
-            If(usb_core.endp == 0,
-                self.send_ack.eq(1),
-                If(usb_core.end,
-                    NextState("IDLE"),
-                )
-            ).Else(
-                NextState("WAIT_SEND_ACK_START")
+            self.send_ack.eq(1),
+            If(usb_core.end,
+                NextState("IDLE"),
             )
         )
 
@@ -224,10 +225,3 @@ class USBWishboneBridge(Module):
                 NextState("IDLE"),
             )
         )
-
-        timer = WaitTimer(clk_freq//1000)
-        self.submodules += timer
-        self.comb += [
-            fsm.reset.eq(timer.done),
-            timer.wait.eq(~fsm.ongoing("IDLE"))
-        ]

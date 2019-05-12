@@ -46,11 +46,15 @@ class TxBitstuffer(Module):
     def __init__(self):
         self.i_data = Signal()
 
+        self.o_stall = Signal(1)
+        self.o_will_stall = Signal(1)
+        self.o_data = Signal(1)
+
         self.submodules.stuff = stuff = FSM()
 
         stuff_bit = Signal(1)
 
-        for i in range(6):
+        for i in range(5):
             stuff.act("D%d" % i,
                 If(self.i_data,
                     # Receiving '1' increments the bitstuff counter.
@@ -61,6 +65,19 @@ class TxBitstuffer(Module):
                 )
             )
 
+        stuff.act("D5",
+            If(self.i_data,
+                # There's a '1', so indicate we might stall on the next loop.
+                self.o_will_stall.eq(1),
+
+                # Receiving '1' increments the bitstuff counter.
+                NextState("D6")
+            ).Else(
+                # Receiving '0' resets the bitstuff counter.
+                NextState("D0")
+            )
+        )
+
         stuff.act("D6",
             # stuff a bit
             stuff_bit.eq(1),
@@ -68,9 +85,6 @@ class TxBitstuffer(Module):
             # Reset the bitstuff counter
             NextState("D0")
         )
-
-        self.o_stall = Signal(1)
-        self.o_data = Signal(1)
 
         self.comb += [
             self.o_stall.eq(stuff_bit)

@@ -115,11 +115,12 @@ class EndpointOut(Endpoint):
         self.submodules.obuf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
             fifo.AsyncFIFOBuffered(width=8, depth=128))
 
+        self.drain_buffer = Signal()
         self.obuf_head = CSR(8)
         self.obuf_empty = CSRStatus(1)
         self.comb += [
             self.obuf_head.w.eq(self.obuf.dout),
-            self.obuf.re.eq(self.obuf_head.re),
+            self.obuf.re.eq(self.obuf_head.re | self.drain_buffer),
             self.obuf_empty.status[0].eq(~self.obuf.readable),
         ]
         self.ibuf = self.fake
@@ -194,6 +195,10 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             data_recv_payload_delayed.eq(usb_core.data_recv_payload),
         ]
 
+        # Add a signal to EP0OUT to drain it when we get a SETUP packet
+        # if it's not empty.
+        setup_do_drain = Signal()
+
         # Endpoint controls
         ems = []
         eps = []
@@ -202,6 +207,10 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             if endp & EndpointType.OUT:
                 exec("self.submodules.ep_%s_out = ep = EndpointOut()" % i)
                 oep = getattr(self, "ep_%s_out" % i)
+                if i == 0:
+                    self.comb += oep.drain_buffer.eq(~iobuf.usb_pullup | setup_do_drain)
+                else:
+                    self.comb += oep.drain_buffer.eq(~iobuf.usb_pullup)
                 ems.append(oep.ev)
             else:
                 oep = EndpointNone()
@@ -236,9 +245,31 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             eps[ep0in_addr].reset.eq(usb_core.setup & ~debug_packet_detected),
         ]
 
+        # If we get a SETUP packet, drain the EP0OUT FIFO.
+        # This works around a problem where there are two SETUP sequences
+        # back-to-back.  Without this, the two-byte CRC from the previous
+        # OUT packet will get added to the front of the subsequent DATA
+        # packet if the buffer isn't drained quickly enough.
+        # To work around this, assert `setup_do_drain` until the buffer
+        # is no longer readable.
+        last_start = Signal()
+        self.sync += [
+            last_start.eq(usb_core.start),
+            If(~debug_packet_detected,
+                If(last_start,
+                    If(usb_core.tok == PID.SETUP,
+                        setup_do_drain.eq(1),
+                    )
+                ).Elif(setup_do_drain & ~eps[ep0out_addr].obuf.readable,
+                    setup_do_drain.eq(0),
+                )
+            )
+        ]
+
         # Wire up debug signals if required
         if debug:
-            self.submodules.debug_bridge = USBWishboneBridge(self.usb_core)
+            debug_bridge = USBWishboneBridge(self.usb_core)
+            self.submodules.debug_bridge = ClockDomainsRenamer("usb_12")(debug_bridge)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
                 debug_sink_data.eq(self.debug_bridge.sink_data),
@@ -249,8 +280,8 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         self.comb += [
             # This needs to be correct *before* token is finished, everything
             # else uses registered outputs.
-            usb_core.sta.eq((eps[eps_idx].response == EndpointResponse.STALL) & ~debug_sink_data_ready),
-            usb_core.arm.eq((eps[eps_idx].response == EndpointResponse.ACK) | debug_ack_response),
+            usb_core.sta.eq(((eps[eps_idx].response == EndpointResponse.STALL) & ~debug_packet_detected) & ~debug_sink_data_ready),
+            usb_core.arm.eq(((eps[eps_idx].response == EndpointResponse.ACK) & ~debug_packet_detected) | debug_ack_response),
             usb_core.dtb.eq(eps[eps_idx].dtb.storage | debug_packet_detected),
 
             # Control signals
@@ -274,11 +305,19 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             # [In Endpoint]Device->Host pathway
             usb_core.data_send_have.eq(debug_data_ready_mux),
             usb_core.data_send_payload.eq(debug_data_mux),
-            eps[eps_idx].ibuf.re.eq(usb_core.data_send_get & ~debug_packet_detected),
+            eps[eps_idx].ibuf.re.eq((usb_core.data_send_get & ~debug_packet_detected) | ~iobuf.usb_pullup),
         ]
 
+        # self.error_count = CSRStatus(7)
+        # error_count = Signal(7)
+        # self.comb += self.error_count.status.eq(error_count)
         self.sync += [
             If(usb_core.commit & ~debug_packet_detected,
                 eps[eps_idx].last_tok.status.eq(usb_core.tok[2:]),
+            ),
+            # Reset the transfer state machine if it gets into an error
+            If(usb_core.error,
+                # error_count.eq(error_count + 1),
+                usb_core.reset.eq(1),
             ),
         ]
