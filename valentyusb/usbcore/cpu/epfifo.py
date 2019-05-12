@@ -185,10 +185,9 @@ class PerEndpointFifoInterface(Module, AutoCSR):
         debug_sink_data_ready = Signal()
         debug_ack_response = Signal()
 
-        # Delay the "put" signal by one cycle, to allow the 
-        # debug system to inhibit this write.
-        # In practice, this doesn't impact our latency at all
-        # as this signal runs at a rate of ~1 MHz.
+        # Delay the "put" signal (and corresponding data) by one cycle, to allow
+        # the debug system to inhibit this write.  In practice, this doesn't
+        # impact our latency at all as this signal runs at a rate of ~1 MHz.
         data_recv_put_delayed = Signal()
         data_recv_payload_delayed = Signal(8)
         self.sync += [
