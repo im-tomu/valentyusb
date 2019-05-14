@@ -258,7 +258,9 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             If(~debug_packet_detected,
                 If(last_start,
                     If(usb_core.tok == PID.SETUP,
-                        setup_do_drain.eq(1),
+                        If(~debug_packet_detected,
+                            setup_do_drain.eq(1),
+                        )
                     )
                 ).Elif(setup_do_drain & ~eps[ep0out_addr].obuf.readable,
                     setup_do_drain.eq(0),
