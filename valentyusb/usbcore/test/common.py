@@ -948,27 +948,34 @@ class CommonUsbTestCase:
             addr = 28
             setup_data = [0x43, 0x00, 0x04, 0x00, 0x0f, 0xf0, 0x04, 0x00]
 
+            ep0in_addr = EndpointType.epaddr(0, EndpointType.IN)
+            ep1in_addr = EndpointType.epaddr(1, EndpointType.IN)
+            ep0out_addr = EndpointType.epaddr(0, EndpointType.OUT)
+
             # Force Wishbone to acknowledge the packet
             yield self.dut.debug_bridge.wishbone.ack.eq(1)
-            yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
-            yield from self.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
+            yield from self.clear_pending(ep0out_addr)
+            yield from self.clear_pending(ep0in_addr)
+            yield from self.clear_pending(ep1in_addr)
             yield from self.tick_usb12()
 
-            epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
-            epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
-
             # Setup stage
-            yield from self.send_token_packet(PID.SETUP, addr, epaddr_out)
+            yield from self.send_token_packet(PID.SETUP, addr, ep0out_addr)
             yield from self.send_data_packet(PID.DATA0, setup_data)
             yield from self.expect_ack()
 
             # Data stage
-            yield from self.send_token_packet(PID.OUT, addr, epaddr_out)
+            yield from self.send_token_packet(PID.OUT, addr, ep0out_addr)
             yield from self.send_data_packet(PID.DATA1, [0, 0, 0, 0])
             yield from self.expect_ack()
 
+            # Status stage (wrong endopint)
+            yield from self.send_token_packet(PID.IN, addr, ep1in_addr)
+            yield from self.expect_nak()
+            yield from self.send_nak()
+
             # Status stage
-            yield from self.send_token_packet(PID.IN, addr, epaddr_in)
+            yield from self.send_token_packet(PID.IN, addr, ep0in_addr)
             yield from self.expect_data_packet(PID.DATA1, [])
             yield from self.send_ack()
 
