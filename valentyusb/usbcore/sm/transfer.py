@@ -72,6 +72,7 @@ class UsbTransfer(Module):
         self.tok    = Signal(4)    # Contains the transfer token type
         self.addr   = Signal(7)
         self.endp   = Signal(4)
+        self.poll_response = Signal()
 
         self.start  = Signal()     # Asserted when a transfer is starting
         self.setup  = Signal()     # Asserted when a transfer is a setup
@@ -145,6 +146,7 @@ class UsbTransfer(Module):
 
         response_pid = Signal(4)
         transfer.act("POLL_RESPONSE",
+            self.poll_response.eq(1),
             If(self.rdy,
                 # Work out the response
                 If(self.tok == PID.SETUP,
