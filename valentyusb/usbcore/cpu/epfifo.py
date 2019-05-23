@@ -322,4 +322,9 @@ class PerEndpointFifoInterface(Module, AutoCSR):
                 # error_count.eq(error_count + 1),
                 usb_core.reset.eq(1),
             ),
+            If(usb_core.poll_response,
+                usb_core.rdy.eq(1),
+            ).Else(
+                usb_core.rdy.eq(0),
+            ),
         ]
