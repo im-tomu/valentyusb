@@ -94,6 +94,8 @@ class RxPipeline(Module):
         self.comb += [
             payloadFifo.din.eq(shifter.o_data[::-1]),
             payloadFifo.we.eq(shifter.o_put),
+        ]
+        self.sync.usb_12 += [
             self.o_data_payload.eq(payloadFifo.dout),
             self.o_data_strobe.eq(payloadFifo.readable),
             payloadFifo.re.eq(1),
