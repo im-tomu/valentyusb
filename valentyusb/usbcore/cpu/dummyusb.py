@@ -36,15 +36,14 @@ class DummyUsb(Module):
         # Allocate 64 bytes of transmit buffer, the only allowed size
         # for USB FS.
         usb_device_descriptor = [
-            0x12, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x40,
+            0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40,
             0x09, 0x12, 0xf0, 0x5b, 0x01, 0x01, 0x01, 0x02,
             0x00, 0x01
         ]
         usb_config_descriptor = [
-            0x09, 0x02, 0x1b, 0x00, 0x01, 0x01, 0x01, 0x80,
-            0x32, 0x09, 0x04, 0x00, 0x00, 0x00, 0xfe, 0x01,
-            0x02, 0x02, 0x09, 0x21, 0x0d, 0x10, 0x27, 0x00,
-            0x04, 0x01, 0x01
+            0x09, 0x02, 0x12, 0x00, 0x01, 0x01, 0x01, 0x80,
+            0x32, 0x09, 0x04, 0x00, 0x00, 0x00, 0xfe, 0x00,
+            0x00, 0x02
         ]
         usb_string0_descriptor = [
             0x04, 0x03, 0x09, 0x04,
@@ -54,12 +53,31 @@ class DummyUsb(Module):
             0x73, 0x00, 0x6e, 0x00, 0x00, 0x00,
         ]
         usb_string2_descriptor = [
-            0x20, 0x03, 0x46, 0x00, 0x6f, 0x00, 0x6d, 0x00,
+            0x1a, 0x03, 0x46, 0x00, 0x6f, 0x00, 0x6d, 0x00,
             0x75, 0x00, 0x20, 0x00, 0x42, 0x00, 0x72, 0x00,
             0x69, 0x00, 0x64, 0x00, 0x67, 0x00, 0x65, 0x00,
             0x00, 0x00,
         ]
-        memory_contents = usb_device_descriptor + usb_config_descriptor + usb_string0_descriptor + usb_string1_descriptor + usb_string2_descriptor
+        usb_bos_descriptor = [
+            0x05, 0x0f, 0x1d, 0x00, 0x01, 0x18, 0x10, 0x05,
+            0x00, 0x38, 0xb6, 0x08, 0x34, 0xa9, 0x09, 0xa0,
+            0x47, 0x8b, 0xfd, 0xa0, 0x76, 0x88, 0x15, 0xb6,
+            0x65, 0x00, 0x01, 0x02, 0x01,
+        ]
+        usb_ms_compat_id_descriptor = [
+            0x28, 0x00, 0x00, 0x00, 0x00, 0x01, 0x04, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x57, 0x49, 0x4e, 0x55, 0x53, 0x42,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]
+        usb_device_status_report = [
+            0x00, 0x00,
+        ]
+        memory_contents = usb_device_descriptor + usb_config_descriptor \
+                        + usb_string0_descriptor + usb_string1_descriptor \
+                        + usb_string2_descriptor + usb_bos_descriptor \
+                        + usb_ms_compat_id_descriptor + usb_device_status_report
         out_buffer = self.specials.out_buffer = Memory(8, len(memory_contents), init=memory_contents)
         descriptor_bytes_remaining = Signal(6) # Maximum number of bytes in USB is 64
         self.specials.out_buffer_rd = out_buffer_rd = out_buffer.get_port(write_capable=False, clock_domain="usb_12")
@@ -73,7 +91,7 @@ class DummyUsb(Module):
         have_response = self.have_response = Signal()
 
         # Needs to be able to index Memory
-        response_addr = Signal(7)
+        response_addr = Signal(9)
         response_len = Signal(7)
         response_ack = Signal()
 
@@ -190,7 +208,31 @@ class DummyUsb(Module):
                             ).Else(
                                 response_len.eq(wLength),
                             ),
+                        ).Elif(wValue == 0x0f00,
+                            response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string1_descriptor) + len(usb_string2_descriptor)),
+                            If(wLength > len(usb_bos_descriptor),
+                                response_len.eq(len(usb_bos_descriptor)),
+                            ).Else(
+                                response_len.eq(wLength),
+                            ),
+                        ).Elif(wValue == 0x0f00,
+                            response_ack.eq(1),
                         ),
+                    ).Elif(bRequest == 0x00,
+                        response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string1_descriptor) + len(usb_string2_descriptor) + len(usb_bos_descriptor) + len(usb_ms_compat_id_descriptor)),
+                        If(wLength > len(usb_device_status_report),
+                            response_len.eq(len(usb_device_status_report)),
+                        ).Else(
+                            response_len.eq(wLength),
+                        ),
+                    ),
+                # MS Extended Compat ID OS Feature
+                ).Elif(bmRequestType == 0xc0,
+                    response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string1_descriptor) + len(usb_string2_descriptor) + len(usb_bos_descriptor)),
+                    If(wLength > len(usb_ms_compat_id_descriptor),
+                        response_len.eq(len(usb_ms_compat_id_descriptor)),
+                    ).Else(
+                        response_len.eq(wLength),
                     ),
                 # Set Address / Configuration
                 ).Elif(bmRequestType == 0x00,
