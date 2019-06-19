@@ -4,8 +4,6 @@ import unittest
 
 from migen import *
 
-from litex.soc.cores.gpio import GPIOOut
-
 from ..endpoint import *
 from ..io import FakeIoBuf
 from ..pid import PIDTypes
@@ -67,7 +65,6 @@ class UsbTransfer(Module):
             iobuf.usb_p_tx.eq(tx.o_usbp),
             iobuf.usb_n_tx.eq(tx.o_usbn),
         ]
-        self.submodules.pullup = GPIOOut(iobuf.usb_pullup)
 
         self.tok    = Signal(4)    # Contains the transfer token type
         self.addr   = Signal(7)
