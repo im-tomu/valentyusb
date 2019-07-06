@@ -1,6 +1,6 @@
-# VanetyUSB
+# ValentyUSB
 
-USB Full-Speed core written in migen/LiteX.  This core has been tested and is known to work on various incarnations of Fomu.  It requires you to have a 48 MHz clock and a 12 MHz clock.
+USB Full-Speed core written in Migen/LiteX.  This core has been tested and is known to work on various incarnations of Fomu.  It requires you to have a 48 MHz clock and a 12 MHz clock.
 
 ## Usage
 
