@@ -17,7 +17,7 @@ from ..utils.packet import *
 
 class UsbTransfer(Module):
     def __init__(self, iobuf, auto_crc=True):
-        self.submodules.iobuf = iobuf
+        self.submodules.iobuf = ClockDomainsRenamer("usb_48")(iobuf)
 
         self.submodules.tx = tx = TxPipeline()
         self.submodules.txstate = txstate = TxPacketSend(tx, auto_crc=auto_crc)
