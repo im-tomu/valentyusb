@@ -40,13 +40,19 @@ class IoBuf(Module):
         #### Mux the USB +/- pair with the TX and RX paths
         #######################################################################
         #######################################################################
+        usb_p_t_i_flop = Signal(3)
+        usb_n_t_i_flop = Signal(3)
+        self.sync += [
+            usb_p_t_i_flop.eq(Cat(usb_p_t.i, usb_p_t_i_flop[0], usb_p_t_i_flop[1])),
+            usb_n_t_i_flop.eq(Cat(usb_n_t.i, usb_n_t_i_flop[0], usb_n_t_i_flop[1])),
+        ]
         self.comb += [
             If(self.usb_tx_en,
                 self.usb_p_rx.eq(0b1),
                 self.usb_n_rx.eq(0b0),
             ).Else(
-                self.usb_p_rx.eq(usb_p_t.i),
-                self.usb_n_rx.eq(usb_n_t.i),
+                self.usb_p_rx.eq(usb_p_t_i_flop[2]),
+                self.usb_n_rx.eq(usb_n_t_i_flop[2]),
             ),
             usb_p_t.oe.eq(self.usb_tx_en),
             usb_n_t.oe.eq(self.usb_tx_en),
