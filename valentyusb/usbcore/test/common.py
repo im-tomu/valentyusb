@@ -108,6 +108,9 @@ class CommonUsbTestCase:
     def expect_data(self, epaddr, data):
         raise NotImplementedError
 
+    def expect_setup(self, epaddr, data):
+        self.expect_data(epaddr, data)
+
     def dtb(self, epaddr):
         raise NotImplementedError
 
@@ -292,7 +295,7 @@ class CommonUsbTestCase:
         yield from self.send_token_packet(PID.SETUP, addr, epaddr_out)
         yield from self.send_data_packet(PID.DATA0, data)
         yield from self.expect_ack()
-        yield from self.expect_data(epaddr_out, data)
+        yield from self.expect_setup(epaddr_out, data)
         yield from self.clear_pending(epaddr_out)
 
         # Check nothing pending at the end
