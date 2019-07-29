@@ -54,7 +54,7 @@ from .usbwishbonebridge import USBWishboneBridge
 ### SETUP packets must always respond with ACK.  Sometimes, they are followed
 ### by DATA packets, but not always.
 class SetupHandler(Module, AutoCSR):
-    def __init__(self, usb_core, eps_idx):
+    def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.error = ev.EventSourcePulse()
         self.ev.submodules.packet = ev.EventSourcePulse()
@@ -63,14 +63,12 @@ class SetupHandler(Module, AutoCSR):
 
         self.data_recv_payload = Signal()
         self.data_recv_put = Signal()
-        self.debug_packet = Signal()
 
-        self.submodules.data = setup_data_buf = ResetInserter()(ClockDomainsRenamer("usb_12")(fifo.SyncFIFOBuffered(width=8, depth=8)))
-
+        self.submodules.data = buf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=10)))
         #w {
         #w   "reg_definition": {
         #w       "reg_name": "DATA",
-        #w       "reg_description": "Data from the last SETUP packet.  It will be at most 8 bytes long.  This is a FIFO; use `DATA_ACK` to advance the queue.",
+        #w       "reg_description": "Data from the last SETUP packet.  It will be 10 bytes long, because it will include the CRC16.  This is a FIFO; use `DATA_ACK` to advance the queue.",
         #w       "reg": [
         #w           { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The next byte of SETUP data" }
         #w       ]
@@ -113,29 +111,36 @@ class SetupHandler(Module, AutoCSR):
         epno = Signal(5)
 
         # Wire up the `STATUS` register
-        self.comb += self.status.status.eq(Cat(setup_data_buf.readable, epno))
+        self.comb += self.status.status.eq(Cat(buf.readable, epno))
 
         # Wire up the "SETUP" endpoint.
         self.comb += [
             # Set the FIFO output to be the current buffer HEAD
-            self.data.w.eq(setup_data_buf.dout),
+            self.data.w.eq(buf.dout),
 
-            # Advance the FIFO when anything is written to the FIFO
-            setup_data_buf.re.eq(self.data.re),
+            # Advance the FIFO when anything is written to the control bit
+            buf.re.eq(self.ctrl.re & self.ctrl.storage[0]),
+
             If(usb_core.tok == PID.SETUP,
-                setup_data_buf.reset.eq(usb_core.rdy),
-                setup_data_buf.din.eq(self.data_recv_payload),
-                setup_data_buf.we.eq(self.data_recv_put & ~self.debug_packet),
+                buf.din.eq(self.data_recv_payload),
+                buf.we.eq(self.data_recv_put),
                 self.ev.packet.trigger.eq(usb_core.commit),
             )
         ]
 
         # When we get the start of a SETUP packet, update the `epno` value.
-        self.sync += [
-            If(usb_core.tok == PID.SETUP,
-                If(usb_core.rdy,
-                    epno.eq(eps_idx),
+        check_reset = Signal()
+        self.sync.usb_12 += [
+            check_reset.eq(usb_core.start),
+            If(check_reset,
+                If(usb_core.tok == PID.SETUP,
+                    epno.eq(usb_core.endp),
+                    buf.reset.eq(1),
+                ).Else(
+                    buf.reset.eq(0),
                 )
+            ).Else(
+                buf.reset.eq(0),
             )
         ]
 
@@ -147,7 +152,7 @@ class InHandler(Module, AutoCSR):
     Raises packet IRQ when packet has been sent.
     CPU writes to the head CSR to push data onto the FIFO.
     """
-    def __init__(self, usb_core, eps_idx):
+    def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.error = ev.EventSourcePulse()
         self.ev.submodules.packet = ev.EventSourcePulse()
@@ -157,7 +162,7 @@ class InHandler(Module, AutoCSR):
 
         dtb = Signal(16)
 
-        self.submodules.data_buf = data = ClockDomainsRenamer("usb_12")(fifo.SyncFIFOBuffered(width=8, depth=128))
+        self.submodules.data_buf = data = fifo.SyncFIFOBuffered(width=8, depth=128)
 
         #w {
         #w   "reg_definition": {
@@ -188,12 +193,12 @@ class InHandler(Module, AutoCSR):
         #w       "reg_name": "EP",
         #w       "reg_description": "After writing data to the `data` register, update this register with the destination endpoint number.  Writing to this register queues the packet for transmission.",
         #w       "reg": [
-        #w           { "name": "EP",   "bits": 5, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." }
-        #w           {                 "bits": 3 }
+        #w           { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." }
+        #w           {                 "bits": 4 }
         #w       ]
         #w   }
         #w }
-        self.epno = CSRStorage(5)
+        self.epno = CSRStorage(4)
 
         xxxx_readable = Signal()
         self.specials.crc_readable = cdc.MultiReg(data.readable, xxxx_readable)
@@ -228,7 +233,7 @@ class InHandler(Module, AutoCSR):
                 Cat(~xxxx_readable, ~queued)
             ),
 
-            self.dtb.eq(dtb >> (eps_idx & 0xf)),
+            self.dtb.eq(dtb >> usb_core.endp),
 
             self.data_out.eq(data.dout),
             self.data_out_have.eq(data.readable),
@@ -253,25 +258,15 @@ class InHandler(Module, AutoCSR):
         ]
 
 class OutHandler(Module, AutoCSR):
-    def __init__(self, usb_core, eps_idx):
+    def __init__(self, usb_core):
 # EPOUT - Data from the host to this device
-# epout_data_read: Read the contents of the last transaction on the EP0
-# epout_data_ack: Write a "1" here to advance the data_read fifo
-# epout_last_tok: Bits 2 and 3 of the last token, from the following table:
-#    USB_PID_OUT   = 0
-#    USB_PID_SOF   = 1
-#    USB_PID_IN    = 2
-#    USB_PID_SETUP = 3
-# epout_epno: Which endpoint contained the last data
-# epout_queued: A response is queued and has yet to be acknowledged by the host
-#
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.error = ev.EventSourcePulse()
         self.ev.submodules.packet = ev.EventSourcePulse()
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
 
-        self.submodules.data_buf = buf = ClockDomainsRenamer("usb_12")(fifo.SyncFIFOBuffered(width=8, depth=128))
+        self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=128)
 
         #w {
         #w   "reg_definition": {
@@ -290,13 +285,13 @@ class OutHandler(Module, AutoCSR):
         #w       "reg_description": "Status about the contents of the OUT endpoint.",
         #w       "reg": [
         #w           { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-        #w           { "name": "EPNO",  "bits": 5, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
+        #w           { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
         #w           { "name": "IDLE",  "bits": 1, "attr": "RO", "description": "`1` if the packet has finished receiving." },
-        #w           {                  "bits": 1 }
+        #w           {                  "bits": 2 }
         #w       ]
         #w   }
         #w }
-        self.status = CSRStatus(7)
+        self.status = CSRStatus(6)
 
         #w {
         #w   "reg_definition": {
@@ -318,7 +313,7 @@ class OutHandler(Module, AutoCSR):
         self.response = Signal()
         self.comb += self.response.eq(~(buf.readable | (self.ctrl.storage[1]>>1)))
 
-        epno = Signal(5)
+        epno = Signal(4)
         is_idle = Signal()
 
         # Connect the buffer to the USB system
@@ -398,15 +393,15 @@ class TriEndpointInterface(Module, AutoCSR):
         ems = []
         trigger_all = []
 
-        self.submodules.setup = setup_handler = SetupHandler(usb_core, self.eps_idx)
+        self.submodules.setup = setup_handler = ClockDomainsRenamer("usb_12")(SetupHandler(usb_core))
         ems.append(setup_handler.ev)
         trigger_all.append(setup_handler.trigger.eq(1)),
 
-        self.submodules.epin = in_handler = InHandler(usb_core, self.eps_idx)
+        self.submodules.epin = in_handler = ClockDomainsRenamer("usb_12")(InHandler(usb_core))
         ems.append(in_handler.ev)
         trigger_all.append(in_handler.trigger.eq(1)),
 
-        self.submodules.epout = out_handler = OutHandler(usb_core, self.eps_idx)
+        self.submodules.epout = out_handler = ClockDomainsRenamer("usb_12")(OutHandler(usb_core))
         ems.append(out_handler.ev)
         trigger_all.append(out_handler.trigger.eq(1)),
 
