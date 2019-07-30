@@ -61,7 +61,7 @@ class SetupHandler(Module, AutoCSR):
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
 
-        self.data_recv_payload = Signal()
+        self.data_recv_payload = Signal(8)
         self.data_recv_put = Signal()
 
         self.submodules.data = buf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=10)))
