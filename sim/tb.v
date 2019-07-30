@@ -17,6 +17,7 @@ module tb(
 	input wishbone_we,
 	input [2:0] wishbone_cti,
 	input [1:0] wishbone_bte,
+	input [4095:0] test_name,
 	output wishbone_err
 );
 
