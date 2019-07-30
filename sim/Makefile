@@ -41,9 +41,17 @@ WPWD=$(shell pwd)
 PYTHONPATH := $(PWD)/..:$(PYTHONPATH)
 endif
 
-VERILOG_SOURCES = $(WPWD)/dut.v
-TOPLEVEL = dut
+VERILOG_SOURCES = $(WPWD)/dut.v $(WPWD)/tb.v
+TOPLEVEL = tb
 MODULE = test_eptri
+
+CUSTOM_COMPILE_DEPS = $(PWD)/dut.v
 
 include $(shell cocotb-config --makefiles)/Makefile.inc
 include $(shell cocotb-config --makefiles)/Makefile.sim
+
+$(PWD)/dut.v: ../cocotb-simulate.py
+	cd ..
+	PYTHONPATH=../../litex:../../migen:../../litedram python3 ../cocotb-simulate.py
+	mv build/gateware/dut.v .
+

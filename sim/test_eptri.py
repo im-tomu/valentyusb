@@ -2,13 +2,17 @@
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge
-from cocotb.result import TestFailure, ReturnValue
+from cocotb.result import TestFailure, TestSuccess, ReturnValue
 
 from valentyusb.usbcore.utils.packet import *
 from valentyusb.usbcore.endpoint import *
 from valentyusb.usbcore.pid import *
 
-USB_PULLUP_OUT=0XE0004800
+from wishbone import WishboneMaster, WBOp
+
+import logging
+
+USB_PULLUP_OUT=0xe0004800
 USB_SETUP_EV_STATUS=0XE0004804
 USB_SETUP_EV_PENDING=0XE0004808
 USB_SETUP_EV_ENABLE=0XE000480C
@@ -28,32 +32,6 @@ USB_EPOUT_DATA=0XE0004840
 USB_EPOUT_STATUS=0XE0004844
 USB_EPOUT_CTRL=0XE0004848
 USB_ENABLE=0XE000484C
-
-@cocotb.coroutine
-def wishbone_write(dut, addr, value):
-    dut.wishbone_adr = addr>>2
-    dut.wishbone_dat_w = value
-    dut.wishbone_sel = 7
-    dut.wishbone_cyc = 1
-    dut.wishbone_stb = 1
-    dut.wishbone_we = 1
-
-    dut._log.info("ack: {}".format(dut.wishbone_ack))
-
-    while int(dut.wishbone_ack.value) != 1:
-        yield RisingEdge(dut.clk48)
-    raise ReturnValue(0)
-
-@cocotb.coroutine
-def wishbone_read(dut, addr):
-    dut.wishbone_adr = addr>>2
-    dut.wishbone_sel = 7
-    dut.wishbone_cyc = 1
-    dut.wishbone_stb = 1
-    dut.wishbone_we = 0
-    while int(dut.wishbone_ack) != 1:
-        yield RisingEdge(dut.clk48)
-    raise ReturnValue(int(dut.wishbone_dat_r.value))
 
 def init(dut):
     cocotb.fork(Clock(dut.clk48, int(20.83), 'ns').start())
@@ -215,21 +193,26 @@ def transaction_setup(dut, addr, data):
 
 @cocotb.test()
 def iobuf_validate(dut):
+    """Sanity test that the Wishbone bus actually works"""
+    wb = WishboneMaster(dut, "wishbone", dut.clk12, timeout=20)
     init(dut)
-    
-    val = yield wishbone_read(dut, USB_PULLUP_OUT)
+    wb.log.setLevel(logging.DEBUG)
+
+    val = yield wb.read(USB_PULLUP_OUT)
+    dut._log.info("Value at start: {}".format(val))
     if dut.usb_pullup != 0:
         raise TestFailure("USB pullup is not zero")
 
-    yield wishbone_write(dut, USB_PULLUP_OUT, 1)
+    yield wb.write(USB_PULLUP_OUT, 0xffffffff)
     yield RisingEdge(dut.clk48)
 
-    val = yield wishbone_read(dut, USB_PULLUP_OUT)
+    val = yield wb.read(USB_PULLUP_OUT)
     dut._log.info("Memory value: {}".format(val))
     if val != 1:
         raise TestFailure("USB pullup is not set!")
+    raise TestSuccess("iobuf validated")
 
-@cocotb.test()
+# @cocotb.test()
 def test_control_setup(dut):
     init(dut)
     #   012345   0123
