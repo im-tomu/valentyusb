@@ -53,6 +53,7 @@ _io = [
         Subsignal("d_p", Pins(1)),
         Subsignal("d_n", Pins(1)),
         Subsignal("pullup", Pins(1)),
+        Subsignal("tx_en", Pins(1)),
     ),
     ("clk", 0,
         Subsignal("clk48", Pins(1)),
@@ -146,6 +147,7 @@ class BaseSoC(SoCCore):
         # Add USB pads
         usb_pads = platform.request("usb")
         usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
+        self.comb += usb_pads.tx_en.eq(usb_iobuf.usb_tx_en)
         self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf)
 
         class _WishboneBridge(Module):
