@@ -1,4 +1,4 @@
-# Simple tests for an adder module
+# Tests for the Fomu Tri-Endpoint
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge

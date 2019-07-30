@@ -43,7 +43,7 @@ endif
 
 VERILOG_SOURCES = $(WPWD)/dut.v $(WPWD)/tb.v
 TOPLEVEL = tb
-MODULE = test_eptri
+MODULE = test-eptri
 
 CUSTOM_COMPILE_DEPS = $(PWD)/dut.v
 
