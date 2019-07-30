@@ -240,15 +240,18 @@ class InHandler(Module, AutoCSR):
             data.re.eq(self.data_out_advance),
         ]
 
+        started = Signal()
         self.sync += [
+            started.eq(usb_core.start),
+
             # When the user updates the `epno` register, enable writing.
             If(self.epno.re,
                 queued.eq(1)
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(usb_core.commit,
-                If(usb_core.tok == self.epno.storage,
+            .Elif(started,
+                If(usb_core.endp == self.epno.storage,
                     queued.eq(0),
 
                     # Toggle the "DTB" line
@@ -311,7 +314,7 @@ class OutHandler(Module, AutoCSR):
         #  - 1 - NAK
         # Send a NAK if the buffer contains data, or if "ENABLE" has not been set.
         self.response = Signal()
-        self.comb += self.response.eq(~(buf.readable | (self.ctrl.storage[1]>>1)))
+        self.comb += self.response.eq((buf.readable) | (self.ctrl.storage[1]))
 
         epno = Signal(4)
         is_idle = Signal()
