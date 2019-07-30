@@ -11,84 +11,121 @@ from valentyusb.usbcore.pid import *
 from wishbone import WishboneMaster, WBOp
 
 import logging
+import csv
 
-USB_PULLUP_OUT=0xe0004800
-USB_SETUP_EV_STATUS=0XE0004804
-USB_SETUP_EV_PENDING=0XE0004808
-USB_SETUP_EV_ENABLE=0XE000480C
-USB_SETUP_DATA=0XE0004810
-USB_SETUP_STATUS=0XE0004814
-USB_SETUP_CTRL=0XE0004818
-USB_EPIN_EV_STATUS=0XE000481C
-USB_EPIN_EV_PENDING=0XE0004820
-USB_EPIN_EV_ENABLE=0XE0004824
-USB_EPIN_DATA=0XE0004828
-USB_EPIN_STATUS=0XE000482C
-USB_EPIN_EPNO=0XE0004830
-USB_EPOUT_EV_STATUS=0XE0004834
-USB_EPOUT_EV_PENDING=0XE0004838
-USB_EPOUT_EV_ENABLE=0XE000483C
-USB_EPOUT_DATA=0XE0004840
-USB_EPOUT_STATUS=0XE0004844
-USB_EPOUT_CTRL=0XE0004848
-USB_ENABLE=0XE000484C
+class UsbTest:
+    def __init__(self, dut):
+        self.dut = dut
+        self.csrs = dict()
+        with open("csr.csv", newline='') as csr_csv_file:
+            csr_csv = csv.reader(csr_csv_file)
+            # csr_register format: csr_register, name, address, size, rw/ro
+            for row in csr_csv:
+                if row[0] == 'csr_register':
+                    self.csrs[row[1]] = int(row[2], base=0)
+        cocotb.fork(Clock(dut.clk48, int(20.83), 'ns').start())
+        self.wb = WishboneMaster(dut, "wishbone", dut.clk12, timeout=20)
 
-def init(dut):
-    cocotb.fork(Clock(dut.clk48, int(20.83), 'ns').start())
+    @cocotb.coroutine
+    def write(self, addr, val):
+        yield self.wb.write(addr, val)
 
-# Host->Device
-@cocotb.coroutine
-def _send_packet(dut, packet):
-    """Send a USB packet."""
-    packet = wrap_packet(packet)
-    # self.assertEqual('J', packet[-1], "Packet didn't end in J: "+packet)
+    @cocotb.coroutine
+    def read(self, addr):
+        value = yield self.wb.read(addr)
+        raise ReturnValue(value)
 
-    # # FIXME: Horrible hack...
-    # # Wait for 4 idle clock cycles before sending the packet..
-    # yield from self.idle(4)
+    # Host->Device
+    @cocotb.coroutine
+    def _send_packet(self, packet):
+        """Send a USB packet."""
+        packet = wrap_packet(packet)
+        # self.assertEqual('J', packet[-1], "Packet didn't end in J: "+packet)
 
-    # yield self.packet_h2d.eq(1)
-    for v in packet:
-        # tx_en = yield self.usb_tx_en
-        # assert not tx_en, "Currently transmitting!"
+        # # FIXME: Horrible hack...
+        # # Wait for 4 idle clock cycles before sending the packet..
+        # yield from self.idle(4)
 
-        if v == '0' or v == '_':
-            # SE0 - both lines pulled low
-            dut.usb_d_p = 0
-            dut.usb_d_n = 0
-        elif v == '1':
-            # SE1 - illegal, should never occur
-            dut.usb_d_p = 1
-            dut.usb_d_n = 1
-        elif v == '-' or v == 'I':
-            # Idle
-            dut.usb_d_p = 1
-            dut.usb_d_n = 0
-        elif v == 'J':
-            dut.usb_d_p = 1
-            dut.usb_d_n = 0
-        elif v == 'K':
-            dut.usb_d_p = 0
-            dut.usb_d_n = 1
-        else:
-            assert False, "Unknown value: %s" % v
-        yield RisingEdge(dut.clk48)
-        yield RisingEdge(dut.clk48)
-        yield RisingEdge(dut.clk48)
-        yield RisingEdge(dut.clk48)
-    raise ReturnValue(0)
+        # yield self.packet_h2d.eq(1)
+        for v in packet:
+            # tx_en = yield self.usb_tx_en
+            # assert not tx_en, "Currently transmitting!"
 
-@cocotb.coroutine
-def send_token_packet(dut, pid, addr, epaddr):
-    epnum = EndpointType.epnum(epaddr)
-    yield _send_packet(dut, token_packet(pid, addr, epnum))
-    raise ReturnValue(0)
+            if v == '0' or v == '_':
+                # SE0 - both lines pulled low
+                self.dut.usb_d_p = 0
+                self.dut.usb_d_n = 0
+            elif v == '1':
+                # SE1 - illegal, should never occur
+                self.dut.usb_d_p = 1
+                self.dut.usb_d_n = 1
+            elif v == '-' or v == 'I':
+                # Idle
+                self.dut.usb_d_p = 1
+                self.dut.usb_d_n = 0
+            elif v == 'J':
+                self.dut.usb_d_p = 1
+                self.dut.usb_d_n = 0
+            elif v == 'K':
+                self.dut.usb_d_p = 0
+                self.dut.usb_d_n = 1
+            else:
+                raise TestFailure("Unknown value: %s" % v)
+            yield RisingEdge(self.dut.clk48)
+        raise ReturnValue(0)
 
-@cocotb.coroutine
-def send_data_packet(dut, pid, data):
-    assert pid in (PID.DATA0, PID.DATA1), pid
-    yield _send_packet(dut, data_packet(pid, data))
-    raise ReturnValue(0)
+    @cocotb.coroutine
+    def send_token_packet(self, pid, addr, epaddr):
+        epnum = EndpointType.epnum(epaddr)
+        yield self._send_packet(token_packet(pid, addr, epnum))
+
+    @cocotb.coroutine
+    def send_data_packet(self, pid, data):
+        assert pid in (PID.DATA0, PID.DATA1), pid
+        yield self._send_packet(data_packet(pid, data))
+
+    @cocotb.coroutine
+    def expect_setup(self, epaddr, expected_data):
+        actual_data = []
+        for i in range(48):
+            self.dut._log.info("Loop {}".format(i))
+            yield self.write(self.csrs['usb_setup_ctrl'], 1)
+            status = yield self.read(self.csrs['usb_setup_status'])
+            have = status & 1
+            if not have:
+                break
+            v = yield self.read(self.csrs['usb_setup_data'])
+            actual_data.append(v)
+            yield RisingEdge(self.dut.clk48)
+
+        if len(actual_data) < 2:
+            raise TestFailure("data {} was short".format(actual_data))
+        actual_data, actual_crc16 = actual_data[:-2], actual_data[-2:]
+
+        ep_print(epaddr, "Got: %r (expected: %r)", actual_data, expected_data)
+        # self.assertSequenceEqual(expected_data, actual_data)
+        # self.assertSequenceEqual(crc16(expected_data), actual_crc16)
+
+    @cocotb.coroutine
+    def transaction_setup(self, addr, data):
+        epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+        epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+
+        yield self.send_token_packet(PID.SETUP, addr, epaddr_out)
+        yield self.send_data_packet(PID.DATA0, data)
+        yield self.expect_setup(epaddr_out, data)
+        # yield from self.clear_pending(epaddr_out)
+
+        # # Check nothing pending at the end
+        # self.assertFalse((yield from self.pending(epaddr_out)))
+
+        # # Check the token is set correctly
+        # yield from self.expect_last_tok(epaddr_out, 0b11)
+
+        # # Check the in/out endpoint is reset to NAK
+        # self.assertEqual((yield from self.response(epaddr_out)), EndpointResponse.NAK)
+        # self.assertEqual((yield from self.response(epaddr_in)), EndpointResponse.NAK)
+
 
 # Device->Host
 @cocotb.coroutine
@@ -147,74 +184,29 @@ def ep_print(epaddr, msg, *args):
         EndpointType.epdir(epaddr).name,
         msg) % args)
 
-@cocotb.coroutine
-def expect_setup(dut, epaddr, expected_data):
-    actual_data = []
-    for i in range(48):
-        dut._log.info("Loop {}".format(i))
-        yield wishbone_write(dut, USB_SETUP_CTRL, 1)
-        status = yield wishbone_read(dut, USB_SETUP_STATUS)
-        have = status & 1
-        if not have:
-            break
-        v = yield wishbone_read(dut, USB_SETUP_DATA)
-        actual_data.append(v)
-        yield RisingEdge(dut.clk48)
-
-    if len(actual_data) < 2:
-        dut.raise_error("data {} was short", actual_data)
-    actual_data, actual_crc16 = actual_data[:-2], actual_data[-2:]
-
-    ep_print(epaddr, "Got: %r (expected: %r)", actual_data, expected_data)
-    raise ReturnValue(0)
-    # self.assertSequenceEqual(expected_data, actual_data)
-    # self.assertSequenceEqual(crc16(expected_data), actual_crc16)
-
-@cocotb.coroutine
-def transaction_setup(dut, addr, data):
-    epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
-    epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
-
-    yield send_token_packet(dut, PID.SETUP, addr, epaddr_out)
-    yield send_data_packet(dut, PID.DATA0, data)
-    yield expect_setup(dut, epaddr_out, data)
-    raise ReturnValue(0)
-    # yield from self.clear_pending(epaddr_out)
-
-    # # Check nothing pending at the end
-    # self.assertFalse((yield from self.pending(epaddr_out)))
-
-    # # Check the token is set correctly
-    # yield from self.expect_last_tok(epaddr_out, 0b11)
-
-    # # Check the in/out endpoint is reset to NAK
-    # self.assertEqual((yield from self.response(epaddr_out)), EndpointResponse.NAK)
-    # self.assertEqual((yield from self.response(epaddr_in)), EndpointResponse.NAK)
-
 @cocotb.test()
 def iobuf_validate(dut):
     """Sanity test that the Wishbone bus actually works"""
-    wb = WishboneMaster(dut, "wishbone", dut.clk12, timeout=20)
-    init(dut)
-    wb.log.setLevel(logging.DEBUG)
+    harness = UsbTest(dut)
+    harness.wb.log.setLevel(logging.DEBUG)
 
-    val = yield wb.read(USB_PULLUP_OUT)
+    USB_PULLUP_OUT = harness.csrs['usb_pullup_out']
+    val = yield harness.read(USB_PULLUP_OUT)
     dut._log.info("Value at start: {}".format(val))
     if dut.usb_pullup != 0:
         raise TestFailure("USB pullup is not zero")
 
-    yield wb.write(USB_PULLUP_OUT, 0xffffffff)
-    yield RisingEdge(dut.clk48)
+    yield harness.write(USB_PULLUP_OUT, 1)
 
-    val = yield wb.read(USB_PULLUP_OUT)
+    val = yield harness.read(USB_PULLUP_OUT)
     dut._log.info("Memory value: {}".format(val))
     if val != 1:
         raise TestFailure("USB pullup is not set!")
     raise TestSuccess("iobuf validated")
 
-# @cocotb.test()
+@cocotb.test()
 def test_control_setup(dut):
-    init(dut)
+    harness = UsbTest(dut)
     #   012345   0123
     # 0b011100 0b1000
-    yield transaction_setup(dut, 28, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
+    yield harness.transaction_setup(28, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
