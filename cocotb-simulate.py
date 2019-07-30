@@ -58,7 +58,7 @@ _io = [
     ("clk", 0,
         Subsignal("clk48", Pins(1)),
         Subsignal("clk12", Pins(1)),
-    )
+    ),
 ]
 
 _connectors = []

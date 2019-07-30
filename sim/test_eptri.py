@@ -27,6 +27,16 @@ class UsbTest:
         cocotb.fork(Clock(dut.clk48, int(20.83), 'ns').start())
         self.wb = WishboneMaster(dut, "wishbone", dut.clk12, timeout=20)
 
+        # Set the signal "test_name" to match this test
+        import inspect
+        tn = cocotb.binary.BinaryValue(value=None, n_bits=4096)
+        tn.buff = inspect.stack()[1][3]
+        self.dut.test_name = tn
+
+    @cocotb.coroutine
+    def reset(self):
+        yield self.disconnect()
+
     @cocotb.coroutine
     def write(self, addr, val):
         yield self.wb.write(addr, val)
@@ -40,6 +50,11 @@ class UsbTest:
     def connect(self):
         USB_PULLUP_OUT = self.csrs['usb_pullup_out']
         yield self.write(USB_PULLUP_OUT, 1)
+
+    @cocotb.coroutine
+    def disconnect(self):
+        USB_PULLUP_OUT = self.csrs['usb_pullup_out']
+        yield self.write(USB_PULLUP_OUT, 0)
 
     def assertEqual(self, a, b, msg):
         if a != b:
@@ -270,13 +285,13 @@ class UsbTest:
 def iobuf_validate(dut):
     """Sanity test that the Wishbone bus actually works"""
     harness = UsbTest(dut)
-    # harness.wb.log.setLevel(logging.DEBUG)
+    yield harness.reset()
 
     USB_PULLUP_OUT = harness.csrs['usb_pullup_out']
     val = yield harness.read(USB_PULLUP_OUT)
     dut._log.info("Value at start: {}".format(val))
     if dut.usb_pullup != 0:
-        raise TestFailure("USB pullup is not zero")
+        raise TestFailure("USB pullup didn't start at zero")
 
     yield harness.write(USB_PULLUP_OUT, 1)
 
@@ -289,6 +304,7 @@ def iobuf_validate(dut):
 @cocotb.test()
 def test_control_setup(dut):
     harness = UsbTest(dut)
+    yield harness.reset()
     yield harness.connect()
     #   012345   0123
     # 0b011100 0b1000
@@ -297,8 +313,9 @@ def test_control_setup(dut):
 @cocotb.test()
 def test_control_transfer_out(dut):
     harness = UsbTest(dut)
-    yield harness.connect()
+    yield harness.reset()
 
+    yield harness.connect()
     yield harness.control_transfer_out(
         20,
         # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
