@@ -6,7 +6,7 @@
 LX_DEPENDENCIES = []
 
 # Import lxbuildenv to integrate the deps/ directory
-import lxbuildenv
+#import lxbuildenv
 
 # Disable pylint's E1101, which breaks completely on migen
 #pylint:disable=E1101
@@ -53,16 +53,18 @@ _io = [
         Subsignal("d_p", Pins(1)),
         Subsignal("d_n", Pins(1)),
         Subsignal("pullup", Pins(1)),
-        IOStandard("LVCMOS33")
     ),
-    ("clk48", 0, Pins(1), IOStandard("LVCMOS33"))
+    ("clk", 0,
+        Subsignal("clk48", Pins(1)),
+        Subsignal("clk12", Pins(1)),
+    )
 ]
 
 _connectors = []
 
 class _CRG(Module):
     def __init__(self, platform):
-        clk48_raw = platform.request("clk48")
+        clk = platform.request("clk")
         clk12 = Signal()
 
         self.clock_domains.cd_sys = ClockDomain()
@@ -74,7 +76,8 @@ class _CRG(Module):
         # platform.add_period_constraint(self.cd_usb_12.clk, 1e9/12e6)
         # platform.add_period_constraint(clk48_raw, 1e9/48e6)
 
-        clk48 = clk48_raw
+        clk48 = clk.clk48
+        self.comb += clk.clk12.eq(clk12)
 
         self.comb += self.cd_usb_48.clk.eq(clk48)
 
@@ -162,7 +165,7 @@ def main():
     platform = Platform()
     soc = BaseSoC(platform, cpu_type=None, cpu_variant=None,
                             output_dir=output_dir)
-    builder = Builder(soc, output_dir=output_dir, csr_csv="test/csr.csv", compile_software=False)
+    builder = Builder(soc, output_dir=output_dir, csr_csv="csr.csv", compile_software=False)
     vns = builder.build(run=False)
     soc.do_exit(vns)
 
