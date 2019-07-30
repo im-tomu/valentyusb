@@ -574,14 +574,15 @@ class TriEndpointInterface(Module, AutoCSR):
         #     eps[eps_idx].ibuf.re.eq((usb_core.data_send_get & ~debug_packet_detected) | ~iobuf.usb_pullup),
         # ]
 
-        # self.sync += [
+        error_count = Signal(8)
+        self.sync += [
         #     If(usb_core.commit & ~debug_packet_detected,
         #         eps[eps_idx].last_tok.status.eq(usb_core.tok[2:]),
         #     ),
 
-        #     # Reset the transfer state machine if it gets into an error
-        #     If(usb_core.error,
-        #         # error_count.eq(error_count + 1),
-        #         usb_core.reset.eq(1),
-        #     ),
-        # ]
+            # Reset the transfer state machine if it gets into an error
+            If(usb_core.error,
+                error_count.eq(error_count + 1),
+                usb_core.reset.eq(1),
+            ),
+        ]
