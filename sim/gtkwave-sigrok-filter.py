@@ -233,6 +233,7 @@ def main(argv0, *args):
 	decoders = get_decoders_infos(args)
 	fh_in  = sys.stdin
 	fh_out = sys.stdout
+	fh_err = sys.stderr
 	with tempfile.NamedTemporaryFile() as fh_temp:
 		# Repeat ...
 		while True:
@@ -291,7 +292,7 @@ def main(argv0, *args):
 			# Output
 			first = True
 
-			for k in data.keys():
+			for k in sorted(data.keys()):
 				if not first:
 					fh_out.write("$next\n")
 				first = False
@@ -313,4 +314,9 @@ def main(argv0, *args):
 
 
 if __name__ == '__main__':
-	sys.exit(main(*sys.argv))
+	try:
+		sys.exit(main(*sys.argv))
+	except Exception as e:
+		sys.stderr.write("Exception occurred: {}\n".format(e))
+		sys.stdout.write("$finish\n")
+		sys.exit(1)
