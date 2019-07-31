@@ -34,7 +34,7 @@ class UsbTest:
             for row in csr_csv:
                 if row[0] == 'csr_register':
                     self.csrs[row[1]] = int(row[2], base=0)
-        cocotb.fork(Clock(dut.clk48, int(20.83), 'ns').start())
+        cocotb.fork(Clock(dut.clk48, 20800, 'ps').start())
         self.wb = WishboneMaster(dut, "wishbone", dut.clk12, timeout=20)
 
         # Set the signal "test_name" to match this test
