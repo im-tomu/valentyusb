@@ -1,4 +1,4 @@
-`timescale 1ps / 1ps
+`timescale 100ps / 100ps
 
 module tb(
 	input clk48,
