@@ -1,5 +1,66 @@
 #!/usr/bin/env python3
 
+"""
+gtkwave-sigrok-filter.py
+
+Use as a 'Transaction Filter Process' in gtkwave to apply signal
+
+Usage:
+ - Group input signals in gtkwave with F4
+ - Apply this script as a 'Transaction Filter Process' (Right click / Data Format)
+   (note that sometime options don't work and you have to create a wrapper
+    shell script calling this python file with options you want)
+ - To get more decoding rows, add blank traces right below the first decoded
+   trace.
+
+Options:
+ - All options given to this script are passes as is to sigrok-cli, so
+   refer to sigrok-cli doc for how to use protocol decoders
+ - Examples:
+
+Wrapper script for USB full speed decoding :
+
+```
+#!/bin/bash
+exec `dirname $0`/gtkwave-sigrok-filter.py -P usb_signalling:signalling=full-speed,usb_packet:signalling=full-speed
+```
+
+Wrapper script for SPI decoding :
+
+```
+#!/bin/bash
+exec `dirname $0`/gtkwave-sigrok-filter.py -P spi
+```
+
+
+Copyright (C) 2019 Sylvain Munaut
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The views and conclusions contained in the software and documentation are those
+of the authors and should not be interpreted as representing official policies,
+either expressed or implied, of anyone.
+"""
+
 import subprocess
 import sys
 import tempfile
@@ -9,7 +70,6 @@ import re
 
 COLORS = [
 	"alice blue",
-	"antique white",
 	"aquamarine",
 	"azure",
 	"beige",
@@ -46,10 +106,8 @@ COLORS = [
 	"deep sky blue",
 	"dodger blue",
 	"firebrick",
-	"floral white",
 	"forest green",
 	"gainsboro",
-	"ghost white",
 	"gold",
 	"goldenrod",
 	"green",
@@ -93,7 +151,6 @@ COLORS = [
 	"mint cream",
 	"misty rose",
 	"moccasin",
-	"navajo white",
 	"navy",
 	"navy blue",
 	"old lace",
@@ -133,15 +190,13 @@ COLORS = [
 	"violet",
 	"violet red",
 	"wheat",
-	"white",
-	"white smoke",
 	"yellow",
 	"yellow green",
 ]
 
 def pick_color():
 	return COLORS[random.randrange(0, len(COLORS)-1)]
-	
+
 
 def get_decoders_infos(args):
 	# Return value
@@ -170,7 +225,7 @@ def get_decoders_infos(args):
 			for cn in m.group(3).split(','):
 				cur[0][cn.strip()] = (m.group(1), pick_color())
 			cur[1][m.group(1)] = m.group(2)
-	
+
 	return rv
 
 
