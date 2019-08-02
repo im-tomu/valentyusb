@@ -1,3 +1,10 @@
+# Add the signal indicating the test name,
+# and mark it as "ASCII"
+gtkwave::addSignalsFromList "test_name"
+gtkwave::/Edit/Highlight_All
+gtkwave::/Edit/Data_Format/ASCII
+
+# Add the USB decoder line
 set usb_sig [ list tb.usb_d_n tb.usb_d_p ]
 gtkwave::addSignalsFromList $usb_sig
 gtkwave::highlightSignalsFromList $usb_sig
