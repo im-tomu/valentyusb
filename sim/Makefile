@@ -50,8 +50,8 @@ CUSTOM_COMPILE_DEPS = $(PWD)/dut.v
 include $(shell cocotb-config --makefiles)/Makefile.inc
 include $(shell cocotb-config --makefiles)/Makefile.sim
 
-$(PWD)/dut.v: ../cocotb-simulate.py ../valentyusb/usbcore/cpu/eptri.py
+$(PWD)/dut.v: cocotb-simulate.py ../valentyusb/usbcore/cpu/eptri.py
 	cd ..
-	PYTHONPATH=../../litex:../../migen:../../litedram python3 ../cocotb-simulate.py
+	PYTHONPATH=../../litex:../../migen:../../litedram python3 cocotb-simulate.py
 	mv build/gateware/dut.v .
 
