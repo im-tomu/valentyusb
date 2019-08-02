@@ -1,0 +1,7 @@
+set usb_sig [ list tb.usb_d_n tb.usb_d_p ]
+gtkwave::addSignalsFromList $usb_sig
+gtkwave::highlightSignalsFromList $usb_sig
+gtkwave::/Edit/Combine_Down "usb_decoded"
+gtkwave::highlightSignalsFromList "usb_decoded"
+gtkwave::setCurrentTranslateTransProc ./dec-usb.sh
+gtkwave::installTransFilter 1
