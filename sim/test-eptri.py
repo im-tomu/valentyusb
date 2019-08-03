@@ -45,7 +45,13 @@ class UsbTest:
 
     @cocotb.coroutine
     def reset(self):
+        self.dut.reset = 1
+        yield RisingEdge(self.dut.clk12)
+        self.dut.reset = 0
+        yield RisingEdge(self.dut.clk12)
+
         yield self.disconnect()
+
         # Enable endpoint 0
         yield self.write(self.csrs['usb_enable']+0, 0xff)
         yield self.write(self.csrs['usb_enable']+4, 0xff)

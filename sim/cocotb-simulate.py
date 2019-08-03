@@ -59,6 +59,7 @@ _io = [
         Subsignal("clk48", Pins(1)),
         Subsignal("clk12", Pins(1)),
     ),
+    ("reset", 0, Pins(1)),
 ]
 
 _connectors = []
@@ -66,6 +67,8 @@ _connectors = []
 class _CRG(Module):
     def __init__(self, platform):
         clk = platform.request("clk")
+        rst = platform.request("reset")
+
         clk12 = Signal()
 
         self.clock_domains.cd_sys = ClockDomain()
@@ -89,6 +92,12 @@ class _CRG(Module):
 
         self.comb += self.cd_sys.clk.eq(clk12)
         self.comb += self.cd_usb_12.clk.eq(clk12)
+
+        self.comb += [
+            ResetSignal("sys").eq(rst),
+            ResetSignal("usb_12").eq(rst),
+            ResetSignal("usb_48").eq(rst),
+        ]
 
 class Platform(SimPlatform):
     def __init__(self, toolchain="verilator"):
