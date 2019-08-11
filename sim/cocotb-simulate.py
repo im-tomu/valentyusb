@@ -74,19 +74,16 @@ class _CRG(Module):
         self.clock_domains.cd_sys = ClockDomain()
         self.clock_domains.cd_usb_12 = ClockDomain()
         self.clock_domains.cd_usb_48 = ClockDomain()
-
-        # platform.add_period_constraint(self.cd_usb_48.clk, 1e9/48e6)
-        # platform.add_period_constraint(self.cd_sys.clk, 1e9/12e6)
-        # platform.add_period_constraint(self.cd_usb_12.clk, 1e9/12e6)
-        # platform.add_period_constraint(clk48_raw, 1e9/48e6)
+        self.clock_domains.cd_usb_48_to_12 = ClockDomain()
 
         clk48 = clk.clk48
         self.comb += clk.clk12.eq(clk12)
 
         self.comb += self.cd_usb_48.clk.eq(clk48)
+        self.comb += self.cd_usb_48_to_12.clk.eq(clk48)
 
         clk12_counter = Signal(2)
-        self.sync.usb_48 += clk12_counter.eq(clk12_counter + 1)
+        self.sync.usb_48_to_12 += clk12_counter.eq(clk12_counter + 1)
 
         self.comb += clk12.eq(clk12_counter[1])
 
