@@ -239,10 +239,13 @@ class InHandler(Module, AutoCSR):
         # Pulse this to advance the data output
         self.data_out_advance = Signal()
 
+        # Pulse this to reset the DTB value
+        self.dtb_reset = Signal()
+
         self.comb += [
             # We will respond with "ACK" if the register matches the current endpoint umber
             If(usb_core.endp == self.epno.storage,
-                self.response.eq(~queued)
+                self.response.eq(queued)
             ).Else(
                 self.response.eq(1)
             ),
@@ -257,11 +260,14 @@ class InHandler(Module, AutoCSR):
             self.data_out.eq(data.dout),
             self.data_out_have.eq(data.readable),
             data.re.eq(self.data_out_advance),
+            data.we.eq(self.data.re),
+            data.din.eq(self.data.storage),
         ]
 
-        started = Signal()
+        ended = Signal()
+        next_dtb = Signal()
         self.sync += [
-            started.eq(usb_core.start),
+            ended.eq(usb_core.end),
 
             # When the user updates the `epno` register, enable writing.
             If(self.epno.re,
@@ -269,14 +275,15 @@ class InHandler(Module, AutoCSR):
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(started,
+            .Elif(ended,
                 If(usb_core.endp == self.epno.storage,
                     queued.eq(0),
 
                     # Toggle the "DTB" line
-                    dtb.eq(dtb ^ (1 << self.epno.storage)),
+                    next_dtb.eq(dtb ^ (1 << self.epno.storage)),
                 )
-            )
+            ),
+            dtb.eq(self.dtb_reset | next_dtb),
         ]
 
 class OutHandler(Module, AutoCSR):
@@ -450,13 +457,57 @@ class TriEndpointInterface(Module, AutoCSR):
 
         self.submodules.stage = stage = FSM()
 
+        # If the SETUP stage should have data, this will be 1
+        setup_data_stage = Signal()
+
+        # Which of the 10 SETUP bytes (8 + CRC16) we're currently looking at
+        setup_data_byte = Signal(4)
+        setup_data_byte_ce = Signal()
+        setup_data_byte_rst = Signal()
+
+        # 1 if it's an IN packet, 0 if it's an OUT
+        setup_is_in = Signal()
+
+        self.sync += [
+            If(setup_data_byte_rst,
+                setup_data_byte.eq(0),
+                setup_is_in.eq(0),
+                setup_data_stage.eq(0),
+            ).Elif(setup_data_byte_ce,
+                setup_data_byte.eq(setup_data_byte + 1),
+                If(setup_data_byte == 0,
+                    If(usb_core.data_recv_payload[7],
+                        setup_is_in.eq(1),
+                    )
+                ).Elif(setup_data_byte == 6,
+                    If(usb_core.data_recv_payload,
+                        setup_data_stage.eq(1)
+                    )
+                ).Elif(setup_data_byte == 7,
+                    If(usb_core.data_recv_payload,
+                        setup_data_stage.eq(1)
+                    )
+                ),
+            )
+        ]
+
         stage.act("IDLE",
+            setup_data_byte_rst.eq(1),
+
+            If(usb_core.start,
+                NextState("WAIT_TOK")
+            )
+        )
+
+        stage.act("WAIT_TOK",
             If(usb_core.tok == PID.SETUP,
                 NextState("SETUP"),
             ).Elif(usb_core.tok == PID.IN,
                 NextState("IN"),
             ).Elif(usb_core.tok == PID.OUT,
                 NextState("OUT"),
+            ).Elif(usb_core.tok == PID.SOF,
+                NextState("IDLE"),
             )
         )
 
@@ -464,6 +515,8 @@ class TriEndpointInterface(Module, AutoCSR):
             # SETUP packet
             setup_handler.data_recv_payload.eq(data_recv_payload_delayed),
             setup_handler.data_recv_put.eq(data_recv_put_delayed),
+
+            in_handler.dtb_reset.eq(1),
 
             # We aren't allowed to STALL a SETUP packet
             usb_core.sta.eq(0),
@@ -474,22 +527,101 @@ class TriEndpointInterface(Module, AutoCSR):
             setup_handler.trigger.eq(usb_core.commit),
 
             # If the transfer size is nonzero, proceed to handle data packets
+            If(usb_core.data_recv_put,
+                setup_data_byte_ce.eq(1),
+            ),
+
+            If(usb_core.end,
+                If(setup_is_in,
+                    If(setup_data_stage,
+                        NextState("CONTROL_IN"),
+                    ).Else(
+                        NextState("WAIT_CONTROL_ACK_IN"),
+                    )
+                ).Else(
+                    If(setup_data_stage,
+                        NextState("CONTROL_OUT"),
+                    ).Else(
+                        NextState("WAIT_CONTROL_ACK_OUT"),
+                    )
+                )
+            )
+        )
+
+        stage.act("CONTROL_IN",
+            If(usb_core.endp == 0,
+                If(usb_core.tok == PID.IN,
+                    usb_core.data_send_have.eq(in_handler.data_out_have),
+                    usb_core.data_send_payload.eq(in_handler.data_out),
+                    in_handler.data_out_advance.eq(usb_core.data_send_get),
+
+                    usb_core.sta.eq(should_stall),
+                    usb_core.arm.eq(in_handler.response | should_stall),
+                    usb_core.dtb.eq(~in_handler.dtb),
+                    in_handler.trigger.eq(usb_core.commit),
+
+                ).Elif(usb_core.tok == PID.OUT,
+                    usb_core.sta.eq(0),
+                    usb_core.arm.eq(1),
+                    # After an IN transfer, the host sends an OUT
+                    # packet.  We must ACK this and then return to IDLE.
+                    NextState("WAIT_DONE"),
+                )
+            )
+        )
+
+        stage.act("CONTROL_OUT",
+            If(usb_core.endp == 0,
+                If(usb_core.tok == PID.OUT,
+                    out_handler.data_recv_payload.eq(data_recv_payload_delayed),
+                    out_handler.data_recv_put.eq(data_recv_put_delayed),
+                    usb_core.sta.eq(should_stall),
+                    usb_core.arm.eq(out_handler.response | should_stall),
+                    out_handler.trigger.eq(usb_core.commit),
+                ).Elif(usb_core.tok == PID.IN,
+                    usb_core.sta.eq(0),
+                    usb_core.arm.eq(1),
+                    NextState("WAIT_DONE"),
+                )
+            ),
+        )
+
+        stage.act("WAIT_CONTROL_ACK_IN",
+            usb_core.sta.eq(0),
+            usb_core.arm.eq(1),
+            usb_core.dtb.eq(1),
+            If(usb_core.end,
+                NextState("IDLE")
+            ),
+        )
+
+        stage.act("WAIT_CONTROL_ACK_OUT",
+            usb_core.sta.eq(0),
+            usb_core.arm.eq(1),
+            usb_core.dtb.eq(1),
+            If(usb_core.end,
+                NextState("IDLE")
+            ),
         )
 
         stage.act("IN",
-            # # IN packet (device-to-host)
-            usb_core.data_send_have.eq(in_handler.data_out),
-            usb_core.data_send_payload.eq(in_handler.data_out_have),
+            # If(usb_core.tok == PID.IN,
+                # # IN packet (device-to-host)
+                usb_core.data_send_have.eq(in_handler.data_out_have),
+                usb_core.data_send_payload.eq(in_handler.data_out),
+                in_handler.data_out_advance.eq(usb_core.data_send_get),
 
-            usb_core.sta.eq(should_stall),
-            usb_core.arm.eq(in_handler.response | should_stall),
-            in_handler.trigger.eq(usb_core.commit),
+                usb_core.sta.eq(should_stall),
+                usb_core.arm.eq(in_handler.response | should_stall),
+                usb_core.dtb.eq(~in_handler.dtb),
+                in_handler.trigger.eq(usb_core.commit),
 
-            # After an IN transfer, the host sends an OUT
-            # packet.  We must ACK this and then return to IDLE.
-            If(usb_core.tok == PID.OUT,
-                NextState("WAIT_DONE"),
-            ),
+                # After an IN transfer, the host sends an OUT
+                # packet.  We must ACK this and then return to IDLE.
+                If(usb_core.end,
+                    NextState("WAIT_DONE"),
+                ),
+            # ),
         )
 
         stage.act("OUT",
@@ -502,7 +634,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
             # After an OUT transfer, the host sends an IN
             # packet.  We must ACK this and then return to IDLE.
-            If(usb_core.tok == PID.IN,
+            If(usb_core.end,
                 NextState("WAIT_DONE"),
             ),
         )
