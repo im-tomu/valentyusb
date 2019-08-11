@@ -45,10 +45,14 @@ class UsbTest:
 
     @cocotb.coroutine
     def reset(self):
+
         self.dut.reset = 1
         yield RisingEdge(self.dut.clk12)
         self.dut.reset = 0
         yield RisingEdge(self.dut.clk12)
+
+        self.dut.usb_d_p = 1
+        self.dut.usb_d_n = 0
 
         yield self.disconnect()
 
@@ -198,13 +202,15 @@ class UsbTest:
 
         # Read in the transmission data
         result = ""
-        for i in range(0, 512):
+        for i in range(0, 1024):
             result += current()
             yield RisingEdge(self.dut.clk48)
             if self.dut.usb_tx_en != 1:
                 break
         if tx == 1:
             raise TestFailure("Packet didn't finish, " + msg)
+        self.dut.usb_d_p = 1
+        self.dut.usb_d_n = 0
 
         # Check the packet received matches
         expected = pp_packet(wrap_packet(packet))
@@ -303,7 +309,7 @@ class UsbTest:
         yield xmit.join()
 
     @cocotb.coroutine
-    def transaction_data_out(self, addr, ep, data, chunk_size=8):
+    def transaction_data_out(self, addr, ep, data, chunk_size=64):
         epnum = EndpointType.epnum(ep)
         datax = PID.DATA0
 
@@ -322,24 +328,46 @@ class UsbTest:
                 datax = PID.DATA0
 
     @cocotb.coroutine
-    def transaction_data_in(self, addr, ep, data, chunk_size=8):
+    def transaction_data_in(self, addr, ep, data, chunk_size=64):
         epnum = EndpointType.epnum(ep)
-        datax = PID.DATA0
-        for i, chunk in enumerate(grouper(chunk_size, data, pad=0)):
-            recv = cocotb.fork(self.host_recv(PID.IN, datax, addr, epnum, chunk))
+        datax = PID.DATA1
+        sent_data = 0
+        for i, chunk in enumerate(grouper(chunk_size, data, pad=None)):
+            sent_data = 1
+            # itertools.zip_longest is broken because it requires you to fill in some
+            # value, and doesn't mention anything else in its documentation that would
+            # not require this behavior.
+            # Re-do the array to shrink it down if any None values are discovered.
+            fixed_chunk = []
+            for d in chunk:
+                if d is not None:
+                    fixed_chunk.append(d)
             yield self.send_data(datax, epnum, data)
+            self.dut._log.debug("Actual data we're expecting: {}".format(fixed_chunk))
+            recv = cocotb.fork(self.host_recv(PID.IN, datax, addr, epnum, fixed_chunk))
             yield recv.join()
 
             if datax == PID.DATA0:
                 datax = PID.DATA1
             else:
                 datax = PID.DATA0
+        if not sent_data:
+            recv = cocotb.fork(self.host_recv(PID.IN, datax, addr, epnum, []))
+            yield self.send_data(datax, epnum, data)
+            yield recv.join()
 
     @cocotb.coroutine
     def transaction_status_in(self, addr, ep):
         epnum = EndpointType.epnum(ep)
         assert EndpointType.epdir(ep) == EndpointType.IN
         xmit = cocotb.fork(self.host_send(PID.IN, PID.DATA1, addr, epnum, []))
+        yield xmit.join()
+
+    @cocotb.coroutine
+    def transaction_status_out(self, addr, ep):
+        epnum = EndpointType.epnum(ep)
+        assert EndpointType.epdir(ep) == EndpointType.OUT
+        xmit = cocotb.fork(self.host_send(PID.OUT, PID.DATA1, addr, epnum, []))
         yield xmit.join()
 
     @cocotb.coroutine
@@ -353,13 +381,30 @@ class UsbTest:
 
         # Data stage
         self.dut._log.info("data stage")
-        # yield self.set_response(epaddr_out, EndpointResponse.ACK)
         yield self.transaction_data_out(addr, epaddr_out, descriptor_data)
 
         # Status stage
         self.dut._log.info("status stage")
         # yield self.set_response(epaddr_in, EndpointResponse.ACK)
         yield self.transaction_status_in(addr, epaddr_in)
+
+    @cocotb.coroutine
+    def control_transfer_in(self, addr, setup_data, descriptor_data):
+        epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+        epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+
+        # Setup stage
+        self.dut._log.info("setup stage")
+        yield self.transaction_setup(addr, setup_data)
+
+        # Data stage
+        self.dut._log.info("data stage")
+        yield self.transaction_data_in(addr, epaddr_in, descriptor_data)
+
+        # Status stage
+        self.dut._log.info("status stage")
+        # yield self.set_response(epaddr_in, EndpointResponse.ACK)
+        yield self.transaction_status_out(addr, epaddr_out)
 
 @cocotb.test()
 def iobuf_validate(dut):
@@ -392,12 +437,12 @@ def test_control_setup(dut):
     yield harness.transaction_setup(28, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
 
 @cocotb.test()
-def test_control_transfer_out(dut):
+def test_control_transfer_in(dut):
     harness = UsbTest(dut)
     yield harness.reset()
 
     yield harness.connect()
-    yield harness.control_transfer_out(
+    yield harness.control_transfer_in(
         20,
         # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
         [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00],
@@ -438,7 +483,7 @@ def test_sof_is_ignored(dut):
     epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
     epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
 
-    data = [0, 1, 8, 0, 4, 3, 2, 1]
+    data = [0, 1, 8, 0, 4, 3, 0, 0]
     @cocotb.coroutine
     def send_setup_and_sof():
         # Send SOF packet
@@ -455,11 +500,14 @@ def test_sof_is_ignored(dut):
         # Data stage
         # ------------------------------------------
         # Send DATA packet
-        yield harness.host_send_data_packet(PID.DATA0, data)
+        yield harness.host_send_data_packet(PID.DATA1, data)
         yield harness.host_expect_ack()
 
         # Send another SOF packet
         yield harness.host_send_sof(4)
+
+    # Indicate that we're ready to receive data to EP0
+    # harness.write(harness.csrs['usb_epin_epno'], 0)
 
     xmit = cocotb.fork(send_setup_and_sof())
     yield harness.expect_setup(epaddr_out, data)
@@ -488,8 +536,8 @@ def test_sof_is_ignored(dut):
 
     # # Status stage
     # # ------------------------------------------
-    yield harness.set_response(epaddr_in, EndpointResponse.ACK)
-    yield harness.transaction_status_in(addr, epaddr_in)
+    yield harness.set_response(epaddr_out, EndpointResponse.ACK)
+    yield harness.transaction_status_out(addr, epaddr_out)
 
     # yield from self.check_no_pending(epaddr_in)
 
