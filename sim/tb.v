@@ -25,6 +25,7 @@ module tb(
 dut dut (
 	.clk_clk48(clk48),
 	.clk_clk12(clk12),
+	.reset(reset),
 	.usb_d_p(usb_d_p),
 	.usb_d_n(usb_d_n),
 	.usb_pullup(usb_pullup),
