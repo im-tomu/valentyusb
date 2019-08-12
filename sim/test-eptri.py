@@ -1,7 +1,7 @@
 # Tests for the Fomu Tri-Endpoint
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge
+from cocotb.triggers import RisingEdge, NullTrigger, Timer
 from cocotb.result import TestFailure, TestSuccess, ReturnValue
 
 from valentyusb.usbcore.utils.packet import *
@@ -86,6 +86,10 @@ class UsbTest:
         yield self.write(USB_PULLUP_OUT, 1)
 
     @cocotb.coroutine
+    def clear_pending(self, _ep):
+        yield Timer(0)
+
+    @cocotb.coroutine
     def disconnect(self):
         USB_PULLUP_OUT = self.csrs['usb_pullup_out']
         yield self.write(USB_PULLUP_OUT, 0)
@@ -138,7 +142,8 @@ class UsbTest:
             yield RisingEdge(self.dut.clk48)
 
     @cocotb.coroutine
-    def host_send_token_packet(self, pid, addr, epnum):
+    def host_send_token_packet(self, pid, addr, ep):
+        epnum = EndpointType.epnum(ep)
         yield self._host_send_packet(token_packet(pid, addr, epnum))
 
     @cocotb.coroutine
@@ -252,6 +257,14 @@ class UsbTest:
         yield self.host_expect_packet(data_packet(pid, data), "Expected %s packet with %r" % (pid.name, data))
 
     @cocotb.coroutine
+    def pending(self, ep):
+        if EndpointType.epdir(ep) == EndpointType.IN:
+            val = yield self.read(self.csrs['usb_epin_status'])
+        else:
+            val = yield self.read(self.csrs['usb_epout_status'])
+        raise ReturnValue(val & 1)
+
+    @cocotb.coroutine
     def expect_setup(self, epaddr, expected_data):
         actual_data = []
         # wait for data to appear
@@ -337,7 +350,7 @@ class UsbTest:
     @cocotb.coroutine
     def transaction_data_out(self, addr, ep, data, chunk_size=64, expected=PID.ACK):
         epnum = EndpointType.epnum(ep)
-        datax = PID.DATA0
+        datax = PID.DATA1
 
         # # Set it up so we ACK the final IN packet
         # yield self.write(self.csrs['usb_epin_epno'], 0)
@@ -379,6 +392,12 @@ class UsbTest:
             yield recv.join()
 
     @cocotb.coroutine
+    def set_data(self, ep, data):
+        _epnum = EndpointType.epnum(ep)
+        for b in data:
+            yield self.write(self.csrs['usb_epin_data'], b)
+
+    @cocotb.coroutine
     def transaction_status_in(self, addr, ep):
         epnum = EndpointType.epnum(ep)
         assert EndpointType.epdir(ep) == EndpointType.IN
@@ -398,7 +417,7 @@ class UsbTest:
         epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
 
         if (setup_data[0] & 0x80) == 0x80:
-            raise Exception("setup_data indicated an OUT transfer, but the descriptor indicates an IN transfer")
+            raise Exception("setup_data indicated an IN transfer, but you requested an OUT transfer")
 
         # Setup stage
         self.dut._log.info("setup stage")
@@ -424,7 +443,7 @@ class UsbTest:
         epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
 
         if (setup_data[0] & 0x80) == 0x00:
-            raise Exception("setup_data indicated an OUT transfer, but the descriptor indicates an IN transfer")
+            raise Exception("setup_data indicated an OUT transfer, but you requested an IN transfer")
 
         # Setup stage
         self.dut._log.info("setup stage")
@@ -590,3 +609,191 @@ def test_control_setup_clears_stall(dut):
     # Finally, do one last transfer, which should succeed now
     # that the endpoint is unstalled.
     yield harness.transaction_data_out(addr, epaddr_out, d)
+
+@cocotb.test()
+def test_control_transfer_in_nak_data(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    addr = 22
+    # Get descriptor, Index 0, Type 03, LangId 0000, wLength 64
+    setup_data = [0x80, 0x06, 0x00, 0x03, 0x00, 0x00, 0x40, 0x00]
+    in_data = [0x04, 0x03, 0x09, 0x04]
+
+    epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+    # yield harness.clear_pending(epaddr_in)
+
+    # Setup stage
+    # -----------
+    yield harness.transaction_setup(addr, setup_data)
+
+    # Data stage
+    # -----------
+    yield harness.set_response(epaddr_in, EndpointResponse.NAK)
+    yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+    yield harness.host_expect_nak()
+
+    yield harness.set_data(epaddr_in, in_data)
+    yield harness.set_response(epaddr_in, EndpointResponse.ACK)
+    yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+    yield harness.host_expect_data_packet(PID.DATA1, in_data)
+    yield harness.host_send_ack()
+
+# @cocotb.test()
+# def test_control_transfer_in_nak_status(dut):
+#     harness = UsbTest(dut)
+#     yield harness.reset()
+#     yield harness.connect()
+
+#     addr = 20
+#     setup_data = [0x00, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
+#     out_data = [0x00, 0x01]
+
+#     epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+#     epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+#     yield harness.clear_pending(epaddr_out)
+#     yield harness.clear_pending(epaddr_in)
+
+#     # Setup stage
+#     # -----------
+#     yield harness.transaction_setup(addr, setup_data)
+
+#     # Data stage
+#     # ----------
+#     yield harness.set_response(epaddr_out, EndpointResponse.ACK)
+#     yield harness.transaction_data_out(addr, epaddr_out, out_data)
+
+#     # Status stage
+#     # ----------
+#     yield harness.set_response(epaddr_in, EndpointResponse.NAK)
+
+#     yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+#     yield harness.host_expect_nak()
+
+#     yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+#     yield harness.host_expect_nak()
+
+#     yield harness.set_response(epaddr_in, EndpointResponse.ACK)
+#     yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+#     yield harness.host_expect_data_packet(PID.DATA1, [])
+#     yield harness.host_send_ack()
+#     yield harness.clear_pending(epaddr_in)
+
+
+@cocotb.test()
+def test_control_transfer_in(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
+    yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
+
+    yield harness.control_transfer_in(
+        20,
+        # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
+        [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00],
+        # 12 byte descriptor, max packet size 8 bytes
+        [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0A, 0x0B],
+    )
+
+@cocotb.test()
+def test_control_transfer_in_out(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
+    yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
+
+    yield harness.control_transfer_in(
+        20,
+        # Get device descriptor
+        [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 00],
+        # 18 byte descriptor, max packet size 8 bytes
+        [0x12, 0x01, 0x10, 0x02, 0x02, 0x00, 0x00, 0x40,
+            0x09, 0x12, 0xB1, 0x70, 0x01, 0x01, 0x01, 0x02,
+            00, 0x01],
+    )
+
+    yield harness.control_transfer_out(
+        20,
+        # Set address (to 11)
+        [0x00, 0x05, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00],
+        # 18 byte descriptor, max packet size 8 bytes
+        None,
+    )
+
+# @cocotb.test()
+# def test_control_transfer_out_nak_data(dut):
+#     harness = UsbTest(dut)
+#     yield harness.reset()
+#     yield harness.connect()
+
+#     addr = 20
+#     setup_data = [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00]
+#     out_data = [
+#         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+#         0x08, 0x09, 0x0A, 0x0B,
+#     ]
+
+#     epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+#     yield harness.clear_pending(epaddr_out)
+
+#     # Setup stage
+#     # -----------
+#     yield harness.transaction_setup(addr, setup_data)
+
+#     # Data stage
+#     # ----------
+#     yield harness.set_response(epaddr_out, EndpointResponse.NAK)
+#     yield harness.host_send_token_packet(PID.OUT, addr, epaddr_out)
+#     yield harness.host_send_data_packet(PID.DATA1, out_data)
+#     yield harness.host_expect_nak()
+
+#     yield harness.host_send_token_packet(PID.OUT, addr, epaddr_out)
+#     yield harness.host_send_data_packet(PID.DATA1, out_data)
+#     yield harness.host_expect_nak()
+
+#     #for i in range(200):
+#     #    yield
+
+#     yield harness.set_response(epaddr_out, EndpointResponse.ACK)
+#     yield harness.host_send_token_packet(PID.OUT, addr, epaddr_out)
+#     yield harness.host_send_data_packet(PID.DATA1, out_data)
+#     yield harness.host_expect_ack()
+#     yield harness.host_expect_data(epaddr_out, out_data)
+#     yield harness.clear_pending(epaddr_out)
+
+@cocotb.test()
+def test_in_transfer(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    addr = 28
+    epaddr = EndpointType.epaddr(1, EndpointType.IN)
+
+    d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
+
+    yield harness.clear_pending(epaddr)
+    yield harness.set_response(epaddr, EndpointResponse.NAK)
+
+    yield harness.set_data(epaddr, d[:4])
+    yield harness.set_response(epaddr, EndpointResponse.ACK)
+    yield harness.host_send_token_packet(PID.IN, addr, epaddr)
+    yield harness.host_expect_data_packet(PID.DATA1, d[:4])
+    yield harness.host_send_ack()
+
+    pending = yield harness.pending(epaddr)
+    if pending:
+        raise TestFailure("data was still pending")
+    yield harness.clear_pending(epaddr)
+    yield harness.set_data(epaddr, d[4:])
+    yield harness.set_response(epaddr, EndpointResponse.ACK)
+
+    yield harness.host_send_token_packet(PID.IN, addr, epaddr)
+    yield harness.host_expect_data_packet(PID.DATA0, d[4:])
+    yield harness.host_send_ack()
