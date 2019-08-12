@@ -83,7 +83,8 @@ class SetupHandler(Module, AutoCSR):
         #w       "reg_description": "Status about the most recent SETUP packet, and the state of the FIFO.",
         #w       "reg": [
         #w           { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-        #w           { "name": "EPNO",  "bits": 5, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
+        #w           {                  "bits": 1 },
+        #w           { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
         #w           {                  "bits": 2 }
         #w       ]
         #w   }
@@ -109,10 +110,10 @@ class SetupHandler(Module, AutoCSR):
         self.response = Signal()
         self.comb += self.response.eq(0),
 
-        epno = Signal(5)
+        epno = Signal(4)
 
         # Wire up the `STATUS` register
-        self.comb += self.status.status.eq(Cat(buf.readable, epno))
+        self.comb += self.status.status.eq(Cat(buf.readable, Signal(), epno))
 
         # Wire up the "SETUP" endpoint.
         self.comb += [
@@ -179,7 +180,8 @@ class InHandler(Module, AutoCSR):
         self.trigger = self.ev.packet.trigger
         self.dtb = Signal()
 
-        dtb = Signal(16)
+        # Keep track of the current DTB for each of the 16 endpoints
+        dtbs = Signal(16)
 
         self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=128)
 
@@ -199,7 +201,7 @@ class InHandler(Module, AutoCSR):
         #w       "reg_name": "STATUS",
         #w       "reg_description": "Determine the status of the `IN` pathway.",
         #w       "reg": [
-        #w           { "name": "EMPTY",   "bits": 1, "attr": "RO", "description": "This value is '1' if the FIFO is empty." },
+        #w           { "name": "HAVE",    "bits": 1, "attr": "RO", "description": "This value is '0' if the FIFO is empty." },
         #w           { "name": "IDLE",    "bits": 1, "attr": "RO", "description": "This value is '1' if the packet has finished transmitting." },
         #w           {                    "bits": 6 }
         #w       ]
@@ -220,7 +222,7 @@ class InHandler(Module, AutoCSR):
         self.epno = CSRStorage(4)
 
         xxxx_readable = Signal()
-        self.specials.crc_readable = cdc.MultiReg(buf.readable, xxxx_readable)
+        self.specials.crc_readable = cdc.MultiReg(~buf.readable, xxxx_readable)
 
         # How to respond to requests:
         #  - 0 - ACK
@@ -255,7 +257,7 @@ class InHandler(Module, AutoCSR):
                 Cat(~xxxx_readable, ~queued)
             ),
 
-            self.dtb.eq(dtb >> usb_core.endp),
+            self.dtb.eq(dtbs >> usb_core.endp),
 
             self.data_out.eq(buf.dout),
             self.data_out_have.eq(buf.readable),
@@ -264,28 +266,27 @@ class InHandler(Module, AutoCSR):
             buf.din.eq(self.data.storage),
         ]
 
-        ended = Signal()
-        next_dtb = Signal()
-        self.sync += [
-            ended.eq(usb_core.end),
+        next_dtb = Signal(16)
+        self.comb += [
+            # Toggle the "DTB" line if we transmitted data
+            If(usb_core.arm & ~usb_core.sta,
+                next_dtb.eq(dtbs ^ (1 << self.epno.storage)),
+            ),
+        ]
 
+        self.sync += [
             # When the user updates the `epno` register, enable writing.
             If(self.epno.re,
                 queued.eq(1)
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(ended,
+            .Elif(usb_core.end,
                 If(usb_core.endp == self.epno.storage,
                     queued.eq(0),
-
-                    # Toggle the "DTB" line if we transmitted data
-                    If(usb_core.arm & ~usb_core.sta,
-                        next_dtb.eq(dtb ^ (1 << self.epno.storage)),
-                    ),
-                )
+                ),
+                dtbs.eq(Replicate(self.dtb_reset, 16) | next_dtb),
             ),
-            dtb.eq(self.dtb_reset | next_dtb),
         ]
 
 class OutHandler(Module, AutoCSR):
@@ -316,8 +317,8 @@ class OutHandler(Module, AutoCSR):
         #w       "reg_description": "Status about the contents of the OUT endpoint.",
         #w       "reg": [
         #w           { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-        #w           { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
         #w           { "name": "IDLE",  "bits": 1, "attr": "RO", "description": "`1` if the packet has finished receiving." },
+        #w           { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
         #w           {                  "bits": 2 }
         #w       ]
         #w   }
