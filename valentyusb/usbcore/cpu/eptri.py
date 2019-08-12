@@ -243,7 +243,7 @@ class InHandler(Module, AutoCSR):
         self.dtb_reset = Signal()
 
         self.comb += [
-            # We will respond with "ACK" if the register matches the current endpoint umber
+            # We will respond with "ACK" if the register matches the current endpoint number
             If(usb_core.endp == self.epno.storage,
                 self.response.eq(queued)
             ).Else(
@@ -279,8 +279,10 @@ class InHandler(Module, AutoCSR):
                 If(usb_core.endp == self.epno.storage,
                     queued.eq(0),
 
-                    # Toggle the "DTB" line
-                    next_dtb.eq(dtb ^ (1 << self.epno.storage)),
+                    # Toggle the "DTB" line if we transmitted data
+                    If(usb_core.arm & ~usb_core.sta,
+                        next_dtb.eq(dtb ^ (1 << self.epno.storage)),
+                    ),
                 )
             ),
             dtb.eq(self.dtb_reset | next_dtb),
