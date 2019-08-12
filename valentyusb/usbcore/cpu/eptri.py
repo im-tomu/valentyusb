@@ -181,7 +181,7 @@ class InHandler(Module, AutoCSR):
         self.dtb = Signal()
 
         # Keep track of the current DTB for each of the 16 endpoints
-        dtbs = Signal(16)
+        dtbs = Signal(16, reset=0xffff)
 
         self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=128)
 
@@ -266,14 +266,6 @@ class InHandler(Module, AutoCSR):
             buf.din.eq(self.data.storage),
         ]
 
-        next_dtb = Signal(16)
-        self.comb += [
-            # Toggle the "DTB" line if we transmitted data
-            If(usb_core.arm & ~usb_core.sta,
-                next_dtb.eq(dtbs ^ (1 << self.epno.storage)),
-            ),
-        ]
-
         self.sync += [
             # When the user updates the `epno` register, enable writing.
             If(self.epno.re,
@@ -285,7 +277,10 @@ class InHandler(Module, AutoCSR):
                 If(usb_core.endp == self.epno.storage,
                     queued.eq(0),
                 ),
-                dtbs.eq(Replicate(self.dtb_reset, 16) | next_dtb),
+                # Toggle the "DTB" line if we transmitted data
+                If(usb_core.arm & ~usb_core.sta,
+                    dtbs.eq(Replicate(self.dtb_reset, 16) | (dtbs ^ (1 << self.epno.storage))),
+                ),
             ),
         ]
 
@@ -605,7 +600,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
                     usb_core.sta.eq(should_stall),
                     usb_core.arm.eq(in_handler.response | should_stall),
-                    usb_core.dtb.eq(~in_handler.dtb),
+                    usb_core.dtb.eq(in_handler.dtb),
                     in_handler.trigger.eq(usb_core.commit),
 
                 ).Elif(usb_core.tok == PID.OUT,
@@ -661,7 +656,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
                 usb_core.sta.eq(should_stall),
                 usb_core.arm.eq(in_handler.response | should_stall),
-                usb_core.dtb.eq(~in_handler.dtb),
+                usb_core.dtb.eq(in_handler.dtb),
                 in_handler.trigger.eq(usb_core.commit),
 
                 # After an IN transfer, the host sends an OUT
