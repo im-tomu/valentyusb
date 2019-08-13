@@ -154,7 +154,8 @@ class BaseSoC(SoCCore):
         usb_pads = platform.request("usb")
         usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
         self.comb += usb_pads.tx_en.eq(usb_iobuf.usb_tx_en)
-        self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf)
+        self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf, debug=True)
+        self.add_wb_master(self.usb.debug_bridge.wishbone)
 
         class _WishboneBridge(Module):
             def __init__(self, interface):

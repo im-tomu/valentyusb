@@ -115,7 +115,7 @@ class UsbTest:
 
         # Packet gets multiplied by 4x so we can send using the
         # usb48 clock instead of the usb12 clock.
-        packet = wrap_packet(packet)
+        packet = 'JJJJJJJJ' + wrap_packet(packet)
         self.assertEqual('J', packet[-1], "Packet didn't end in J: "+packet)
 
         for v in packet:
@@ -797,3 +797,139 @@ def test_in_transfer(dut):
     yield harness.host_send_token_packet(PID.IN, addr, epaddr)
     yield harness.host_expect_data_packet(PID.DATA0, d[4:])
     yield harness.host_send_ack()
+
+@cocotb.test()
+def test_in_transfer_stuff_last(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    addr = 28
+    epaddr = EndpointType.epaddr(1, EndpointType.IN)
+
+    d = [0x37, 0x75, 0x00, 0xe0]
+
+    yield harness.clear_pending(epaddr)
+    yield harness.set_response(epaddr, EndpointResponse.NAK)
+
+    yield harness.set_data(epaddr, d)
+    yield harness.set_response(epaddr, EndpointResponse.ACK)
+    yield harness.host_send_token_packet(PID.IN, addr, epaddr)
+    yield harness.host_expect_data_packet(PID.DATA1, d)
+
+@cocotb.test()
+def test_debug_in(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    addr = 28
+    # The "scratch" register defaults to 0x12345678 at boot.
+    reg_addr = harness.csrs['ctrl_scratch']
+    setup_data = [0xc3, 0x00,
+                    (reg_addr >> 0) & 0xff,
+                    (reg_addr >> 8) & 0xff,
+                    (reg_addr >> 16) & 0xff,
+                    (reg_addr >> 24) & 0xff, 0x04, 0x00]
+    epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+    epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+
+    yield harness.transaction_data_in(addr, epaddr_in, [0x2, 0x4, 0x6, 0x8, 0xa], chunk_size=64)
+
+    yield harness.clear_pending(epaddr_out)
+    yield harness.clear_pending(epaddr_in)
+
+    # Setup stage
+    yield harness.host_send_token_packet(PID.SETUP, addr, epaddr_out)
+    yield harness.host_send_data_packet(PID.DATA0, setup_data)
+    yield harness.host_expect_ack()
+
+    # Data stage
+    yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+    yield harness.host_expect_data_packet(PID.DATA1, [0x12, 0, 0, 0])
+    yield harness.host_send_ack()
+
+    # Status stage
+    yield harness.host_send_token_packet(PID.OUT, addr, epaddr_in)
+    yield harness.host_send_data_packet(PID.DATA1, [])
+    yield harness.host_expect_ack()
+
+# @cocotb.test()
+# def test_debug_in_missing_ack(dut):
+#     harness = UsbTest(dut)
+#     yield harness.reset()
+#     yield harness.connect()
+
+#     addr = 28
+#     reg_addr = harness.csrs['ctrl_scratch']
+#     setup_data = [0xc3, 0x00,
+#                     (reg_addr >> 0) & 0xff,
+#                     (reg_addr >> 8) & 0xff,
+#                     (reg_addr >> 16) & 0xff,
+#                     (reg_addr >> 24) & 0xff, 0x04, 0x00]
+#     epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+#     epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+
+#     # Setup stage
+#     yield harness.host_send_token_packet(PID.SETUP, addr, epaddr_out)
+#     yield harness.host_send_data_packet(PID.DATA0, setup_data)
+#     yield harness.host_expect_ack()
+
+#     # Data stage (missing ACK)
+#     yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+#     yield harness.host_expect_data_packet(PID.DATA1, [0x12, 0, 0, 0])
+
+#     # Data stage
+#     yield harness.host_send_token_packet(PID.IN, addr, epaddr_in)
+#     yield harness.host_expect_data_packet(PID.DATA1, [0x12, 0, 0, 0])
+#     yield harness.host_send_ack()
+
+#     # Status stage
+#     yield harness.host_send_token_packet(PID.OUT, addr, epaddr_out)
+#     yield harness.host_send_data_packet(PID.DATA1, [])
+#     yield harness.host_expect_ack()
+
+@cocotb.test()
+def test_debug_out(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    addr = 28
+    reg_addr = harness.csrs['ctrl_scratch']
+    setup_data = [0x43, 0x00,
+                    (reg_addr >> 0) & 0xff,
+                    (reg_addr >> 8) & 0xff,
+                    (reg_addr >> 16) & 0xff,
+                    (reg_addr >> 24) & 0xff, 0x04, 0x00]
+    ep0in_addr = EndpointType.epaddr(0, EndpointType.IN)
+    ep1in_addr = EndpointType.epaddr(1, EndpointType.IN)
+    ep0out_addr = EndpointType.epaddr(0, EndpointType.OUT)
+
+    # Force Wishbone to acknowledge the packet
+    yield harness.clear_pending(ep0out_addr)
+    yield harness.clear_pending(ep0in_addr)
+    yield harness.clear_pending(ep1in_addr)
+
+    # Setup stage
+    yield harness.host_send_token_packet(PID.SETUP, addr, ep0out_addr)
+    yield harness.host_send_data_packet(PID.DATA0, setup_data)
+    yield harness.host_expect_ack()
+
+    # Data stage
+    yield harness.host_send_token_packet(PID.OUT, addr, ep0out_addr)
+    yield harness.host_send_data_packet(PID.DATA1, [0x42, 0, 0, 0])
+    yield harness.host_expect_ack()
+
+    # Status stage (wrong endopint)
+    yield harness.host_send_token_packet(PID.IN, addr, ep1in_addr)
+    yield harness.host_expect_nak()
+
+    # Status stage
+    yield harness.host_send_token_packet(PID.IN, addr, ep0in_addr)
+    yield harness.host_expect_data_packet(PID.DATA1, [])
+    yield harness.host_send_ack()
+
+    new_value = yield harness.read(reg_addr)
+    if new_value != 0x42:
+        raise TestFailure("memory at 0x{:08x} should be 0x{:08x}, but memory value was 0x{:08x}".format(reg_Addr, 0x42, new_value))
