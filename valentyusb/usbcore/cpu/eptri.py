@@ -398,7 +398,7 @@ class TriEndpointInterface(Module, AutoCSR):
         self.comb += [
             self.eps_idx.eq(Cat(usb_core.endp, usb_core.tok == PID.IN)),
         ]
-
+        
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
         debug_data_mux = Signal(8)
@@ -407,15 +407,13 @@ class TriEndpointInterface(Module, AutoCSR):
         debug_sink_data_ready = Signal()
         debug_ack_response = Signal()
 
-        # Delay the "put" signal (and corresponding data) by one cycle, to allow
-        # the debug system to inhibit this write.  In practice, this doesn't
-        # impact our latency at all as this signal runs at a rate of ~1 MHz.
-        data_recv_put_delayed = Signal()
-        data_recv_payload_delayed = Signal(8)
-        self.sync += [
-            data_recv_put_delayed.eq(usb_core.data_recv_put),
-            data_recv_payload_delayed.eq(usb_core.data_recv_payload),
-        ]
+        # Wire up debug signals if required
+        if debug:
+            debug_bridge = USBWishboneBridge(self.usb_core)
+            self.submodules.debug_bridge = ClockDomainsRenamer("usb_12")(debug_bridge)
+            self.comb += [
+                debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
+            ]
 
         ems = []
         trigger_all = []
@@ -550,10 +548,26 @@ class TriEndpointInterface(Module, AutoCSR):
             )
         )
 
+        if debug:
+            stage.act("DEBUG",
+                usb_core.data_send_payload.eq(self.debug_bridge.sink_data),
+                usb_core.data_send_have.eq(self.debug_bridge.sink_valid),
+                usb_core.sta.eq(0),
+                If(usb_core.endp == 0,
+                    usb_core.arm.eq(self.debug_bridge.send_ack | self.debug_bridge.sink_valid),
+                ).Else(
+                    usb_core.arm.eq(0)
+                ),
+                usb_core.dtb.eq(1),
+                If(~debug_packet_detected,
+                    NextState("IDLE")
+                )
+            )
+
         stage.act("SETUP",
             # SETUP packet
-            setup_handler.data_recv_payload.eq(data_recv_payload_delayed),
-            setup_handler.data_recv_put.eq(data_recv_put_delayed),
+            setup_handler.data_recv_payload.eq(usb_core.data_recv_payload),
+            setup_handler.data_recv_put.eq(usb_core.data_recv_put),
 
             in_handler.dtb_reset.eq(1),
 
@@ -568,6 +582,10 @@ class TriEndpointInterface(Module, AutoCSR):
             # If the transfer size is nonzero, proceed to handle data packets
             If(usb_core.data_recv_put,
                 setup_data_byte_ce.eq(1),
+            ),
+
+            If(debug_packet_detected,
+                NextState("DEBUG")
             ),
 
             If(usb_core.end,
@@ -616,8 +634,8 @@ class TriEndpointInterface(Module, AutoCSR):
         stage.act("CONTROL_OUT",
             If(usb_core.endp == 0,
                 If(usb_core.tok == PID.OUT,
-                    out_handler.data_recv_payload.eq(data_recv_payload_delayed),
-                    out_handler.data_recv_put.eq(data_recv_put_delayed),
+                    out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
+                    out_handler.data_recv_put.eq(usb_core.data_recv_put),
                     usb_core.sta.eq(should_stall),
                     usb_core.arm.eq(out_handler.response | should_stall),
                     out_handler.trigger.eq(usb_core.commit),
@@ -669,8 +687,8 @@ class TriEndpointInterface(Module, AutoCSR):
 
         stage.act("OUT",
             # OUT packet (host-to-device)
-            out_handler.data_recv_payload.eq(data_recv_payload_delayed),
-            out_handler.data_recv_put.eq(data_recv_put_delayed),
+            out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
+            out_handler.data_recv_put.eq(usb_core.data_recv_put),
             usb_core.sta.eq(should_stall),
             usb_core.arm.eq(out_handler.response | should_stall),
             out_handler.trigger.eq(usb_core.commit),
@@ -693,16 +711,6 @@ class TriEndpointInterface(Module, AutoCSR):
         self.comb += [
             enable.eq(Cat(self.enable_out0.storage, self.enable_out1.storage, self.enable_in0.storage, self.enable_in1.storage)),
             should_stall.eq(~(enable >> eps_idx)),
-            If(debug_packet_detected,
-                usb_core.data_send_payload.eq(debug_sink_data),
-                usb_core.data_send_have.eq(debug_sink_data_ready),
-                usb_core.sta.eq(~debug_sink_data_ready),
-            ).Else(
-                If(usb_core.tok == PID.SETUP,
-                ).Elif(usb_core.tok == PID.IN,
-                ).Elif(usb_core.tok == PID.OUT,
-                )
-            )
         ]
 
         error_count = Signal(8)
