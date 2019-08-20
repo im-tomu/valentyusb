@@ -74,19 +74,16 @@ class _CRG(Module):
         self.clock_domains.cd_sys = ClockDomain()
         self.clock_domains.cd_usb_12 = ClockDomain()
         self.clock_domains.cd_usb_48 = ClockDomain()
-
-        # platform.add_period_constraint(self.cd_usb_48.clk, 1e9/48e6)
-        # platform.add_period_constraint(self.cd_sys.clk, 1e9/12e6)
-        # platform.add_period_constraint(self.cd_usb_12.clk, 1e9/12e6)
-        # platform.add_period_constraint(clk48_raw, 1e9/48e6)
+        self.clock_domains.cd_usb_48_to_12 = ClockDomain()
 
         clk48 = clk.clk48
         self.comb += clk.clk12.eq(clk12)
 
         self.comb += self.cd_usb_48.clk.eq(clk48)
+        self.comb += self.cd_usb_48_to_12.clk.eq(clk48)
 
         clk12_counter = Signal(2)
-        self.sync.usb_48 += clk12_counter.eq(clk12_counter + 1)
+        self.sync.usb_48_to_12 += clk12_counter.eq(clk12_counter + 1)
 
         self.comb += clk12.eq(clk12_counter[1])
 
@@ -157,7 +154,8 @@ class BaseSoC(SoCCore):
         usb_pads = platform.request("usb")
         usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
         self.comb += usb_pads.tx_en.eq(usb_iobuf.usb_tx_en)
-        self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf)
+        self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf, debug=True)
+        self.add_wb_master(self.usb.debug_bridge.wishbone)
 
         class _WishboneBridge(Module):
             def __init__(self, interface):
@@ -166,10 +164,63 @@ class BaseSoC(SoCCore):
         self.add_cpu(_WishboneBridge(self.platform.request("wishbone")))
         self.add_wb_master(self.cpu.wishbone)
 
+def add_fsm_state_names():
+    """Hack the FSM module to add state names to the output"""
+    from migen.fhdl.visit import NodeTransformer
+    from migen.genlib.fsm import NextState, NextValue, _target_eq
+    from migen.fhdl.bitcontainer import value_bits_sign
+
+    class My_LowerNext(NodeTransformer):
+        def __init__(self, next_state_signal, next_state_name_signal, encoding, aliases):
+            self.next_state_signal = next_state_signal
+            self.next_state_name_signal = next_state_name_signal
+            self.encoding = encoding
+            self.aliases = aliases
+            # (target, next_value_ce, next_value)
+            self.registers = []
+
+        def _get_register_control(self, target):
+            for x in self.registers:
+                if _target_eq(target, x[0]):
+                    return x[1], x[2]
+            raise KeyError
+
+        def visit_unknown(self, node):
+            if isinstance(node, NextState):
+                try:
+                    actual_state = self.aliases[node.state]
+                except KeyError:
+                    actual_state = node.state
+                return [
+                    self.next_state_signal.eq(self.encoding[actual_state]),
+                    self.next_state_name_signal.eq(int.from_bytes(actual_state.encode(), byteorder="big"))
+                ]
+            elif isinstance(node, NextValue):
+                try:
+                    next_value_ce, next_value = self._get_register_control(node.target)
+                except KeyError:
+                    related = node.target if isinstance(node.target, Signal) else None
+                    next_value = Signal(bits_sign=value_bits_sign(node.target), related=related)
+                    next_value_ce = Signal(related=related)
+                    self.registers.append((node.target, next_value_ce, next_value))
+                return next_value.eq(node.value), next_value_ce.eq(1)
+            else:
+                return node
+    import migen.genlib.fsm as fsm
+    def my_lower_controls(self):
+        self.state_name = Signal(len(max(self.encoding,key=len))*8, reset=int.from_bytes(self.reset_state.encode(), byteorder="big"))
+        self.next_state_name = Signal(len(max(self.encoding,key=len))*8, reset=int.from_bytes(self.reset_state.encode(), byteorder="big"))
+        self.comb += self.next_state_name.eq(self.state_name)
+        self.sync += self.state_name.eq(self.next_state_name)
+        return My_LowerNext(self.next_state, self.next_state_name, self.encoding, self.state_aliases)
+    fsm.FSM._lower_controls = my_lower_controls
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Build Fomu Main Gateware")
+        description="Build test file for eptri module")
     args = parser.parse_args()
+
+    add_fsm_state_names()
 
     output_dir = 'build'
 
