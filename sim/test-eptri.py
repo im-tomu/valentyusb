@@ -388,6 +388,7 @@ def test_control_setup(dut):
     yield harness.connect()
     #   012345   0123
     # 0b011100 0b1000
+    yield harness.write(harness.csrs['usb_address'], 28)
     yield harness.transaction_setup(28, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
 
 @cocotb.test()
@@ -407,6 +408,17 @@ def test_control_transfer_out(dut):
 
 @cocotb.test()
 def test_sof_stuffing(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+
+    yield harness.connect()
+    yield harness.host_send_sof(0x04ff)
+    yield harness.host_send_sof(0x0512)
+    yield harness.host_send_sof(0x06e1)
+    yield harness.host_send_sof(0x0519)
+
+@cocotb.test()
+def test_addr_is_correct(dut):
     harness = UsbTest(dut)
     yield harness.reset()
 
