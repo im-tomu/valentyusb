@@ -448,6 +448,19 @@ class TriEndpointInterface(Module, AutoCSR):
         self.enable = CSRStorage(32)
         should_stall = Signal()
 
+        #w {
+        #w   "reg_definition": {
+        #w       "reg_name": "ADDRESS",
+        #w       "reg_description": "Sets the USB device address, to ignore packets going to other devices.",
+        #w       "reg": [
+        #w           { "name": "ADDRESS", "bits": 7, "attr": "WO", "description": "Write the USB address from USB `SET_ADDRESS packets.`" },
+        #w           {                    "bits": 1 }
+        #w       ]
+        #w   }
+        #w }
+        self.address = CSRStorage(7)
+        self.comb += usb_core.addr.eq(self.address.storage)
+
         self.submodules.stage = stage = FSM()
 
         stage.act("IDLE",
