@@ -67,16 +67,16 @@ class UsbTransfer(Module):
             iobuf.usb_n_tx.eq(tx.o_usbn),
         ]
 
-        self.tok    = Signal(4)    # Contains the transfer token type
+        self.tok    = Signal(4)     # Contains the transfer token type
         self.endp   = Signal(4)
 
-        self.start  = Signal()     # Asserted when a transfer is starting
-        self.setup  = Signal()     # Asserted when a transfer is a setup
-        self.commit = Signal()     # Asserted when a transfer succeeds
-        self.retry  = Signal()     # Asserted when the host sends an IN without an ACK
-        self.abort  = Signal()     # Asserted when a transfer fails
-        self.end    = Signal()     # Asserted when transfer ends
-        self.error  = Signal()     # Asserted when in the ERROR state
+        self.start  = Signal()      # Asserted when a transfer is starting
+        self.setup  = Signal()      # Asserted when a transfer is a setup
+        self.commit = Signal()      # Asserted when a transfer succeeds
+        self.retry  = Signal()      # Asserted when the host sends an IN without an ACK
+        self.abort  = Signal()      # Asserted when a transfer fails
+        self.end    = Signal()      # Asserted when transfer ends
+        self.error  = Signal()      # Asserted when in the ERROR state
         self.comb += [
             self.end.eq(self.commit | self.abort),
         ]
