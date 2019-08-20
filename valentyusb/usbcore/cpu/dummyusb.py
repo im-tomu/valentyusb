@@ -35,12 +35,9 @@ class DummyUsb(Module):
         wLength = Signal(16)
         setup_index = Signal(4)
 
-<<<<<<< HEAD
-=======
         address = Signal(7, reset=0)
         self.comb += usb_core.addr.eq(address),
 
->>>>>>> fix-setup
         def make_usbstr(s):
             usbstr = bytearray(2)
             # The first byte is the number of characters in the string.
@@ -229,10 +226,7 @@ class DummyUsb(Module):
                                 response_len.eq(wLength),
                             ),
                         ).Elif(wValue == 0x0302,
-<<<<<<< HEAD
-=======
                             response_ack.eq(1),
->>>>>>> fix-setup
                             response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer)),
                             If(wLength > len(usb_string_product),
                                 response_len.eq(len(usb_string_product)),
@@ -240,10 +234,7 @@ class DummyUsb(Module):
                                 response_len.eq(wLength),
                             ),
                         ).Elif(wValue == 0x0f00,
-<<<<<<< HEAD
-=======
                             response_ack.eq(1),
->>>>>>> fix-setup
                             response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product)),
                             If(wLength > len(usb_bos_descriptor),
                                 response_len.eq(len(usb_bos_descriptor)),
@@ -254,10 +245,7 @@ class DummyUsb(Module):
                             response_ack.eq(1),
                         ),
                     ).Elif(bRequest == 0x00,
-<<<<<<< HEAD
-=======
                         response_ack.eq(1),
->>>>>>> fix-setup
                         response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product) + len(usb_bos_descriptor) + len(usb_ms_compat_id_descriptor)),
                         If(wLength > len(usb_device_status_report),
                             response_len.eq(len(usb_device_status_report)),
@@ -267,10 +255,7 @@ class DummyUsb(Module):
                     ),
                 # MS Extended Compat ID OS Feature
                 ).Elif(bmRequestType == 0xc0,
-<<<<<<< HEAD
-=======
                     response_ack.eq(1),
->>>>>>> fix-setup
                     response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product) + len(usb_bos_descriptor)),
                     If(wLength > len(usb_ms_compat_id_descriptor),
                         response_len.eq(len(usb_ms_compat_id_descriptor)),
