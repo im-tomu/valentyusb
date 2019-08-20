@@ -35,6 +35,12 @@ class DummyUsb(Module):
         wLength = Signal(16)
         setup_index = Signal(4)
 
+<<<<<<< HEAD
+=======
+        address = Signal(7, reset=0)
+        self.comb += usb_core.addr.eq(address),
+
+>>>>>>> fix-setup
         def make_usbstr(s):
             usbstr = bytearray(2)
             # The first byte is the number of characters in the string.
@@ -104,6 +110,10 @@ class DummyUsb(Module):
         response_len = Signal(7)
         response_ack = Signal()
 
+        # Used to respond to Transaction stage
+        transaction_queued = Signal()
+        new_address = Signal(7)
+
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
         debug_data_mux = Signal(8)
@@ -160,6 +170,10 @@ class DummyUsb(Module):
                     setup_index.eq(0),
                     dtb_polarity.eq(1),
                     response_len.eq(0),
+                ).Elif(transaction_queued,
+                    response_ack.eq(1),
+                    transaction_queued.eq(0),
+                    address.eq(new_address),
                 )
             ),
             If(usb_core.tok == PID.SETUP,
@@ -183,6 +197,7 @@ class DummyUsb(Module):
                 If(bmRequestType == 0x80,
                     If(bRequest == 0x06,
                         If(wValue == 0x0100,
+                            response_ack.eq(1),
                             response_addr.eq(0),
                             If(wLength > len(usb_config_descriptor),
                                 response_len.eq(len(usb_device_descriptor)),
@@ -190,6 +205,7 @@ class DummyUsb(Module):
                                 response_len.eq(wLength),
                             ),
                         ).Elif(wValue == 0x0200,
+                            response_ack.eq(1),
                             response_addr.eq(len(usb_device_descriptor)),
                             If(wLength > len(usb_config_descriptor),
                                 response_len.eq(len(usb_config_descriptor)),
@@ -197,6 +213,7 @@ class DummyUsb(Module):
                                 response_len.eq(wLength),
                             ),
                         ).Elif(wValue == 0x0300,
+                            response_ack.eq(1),
                             response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor)),
                             If(wLength > len(usb_string0_descriptor),
                                 response_len.eq(len(usb_string0_descriptor)),
@@ -204,6 +221,7 @@ class DummyUsb(Module):
                                 response_len.eq(wLength),
                             ),
                         ).Elif(wValue == 0x0301,
+                            response_ack.eq(1),
                             response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor)),
                             If(wLength > len(usb_string_manufacturer),
                                 response_len.eq(len(usb_string_manufacturer)),
@@ -211,6 +229,10 @@ class DummyUsb(Module):
                                 response_len.eq(wLength),
                             ),
                         ).Elif(wValue == 0x0302,
+<<<<<<< HEAD
+=======
+                            response_ack.eq(1),
+>>>>>>> fix-setup
                             response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer)),
                             If(wLength > len(usb_string_product),
                                 response_len.eq(len(usb_string_product)),
@@ -218,6 +240,10 @@ class DummyUsb(Module):
                                 response_len.eq(wLength),
                             ),
                         ).Elif(wValue == 0x0f00,
+<<<<<<< HEAD
+=======
+                            response_ack.eq(1),
+>>>>>>> fix-setup
                             response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product)),
                             If(wLength > len(usb_bos_descriptor),
                                 response_len.eq(len(usb_bos_descriptor)),
@@ -228,6 +254,10 @@ class DummyUsb(Module):
                             response_ack.eq(1),
                         ),
                     ).Elif(bRequest == 0x00,
+<<<<<<< HEAD
+=======
+                        response_ack.eq(1),
+>>>>>>> fix-setup
                         response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product) + len(usb_bos_descriptor) + len(usb_ms_compat_id_descriptor)),
                         If(wLength > len(usb_device_status_report),
                             response_len.eq(len(usb_device_status_report)),
@@ -237,6 +267,10 @@ class DummyUsb(Module):
                     ),
                 # MS Extended Compat ID OS Feature
                 ).Elif(bmRequestType == 0xc0,
+<<<<<<< HEAD
+=======
+                    response_ack.eq(1),
+>>>>>>> fix-setup
                     response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product) + len(usb_bos_descriptor)),
                     If(wLength > len(usb_ms_compat_id_descriptor),
                         response_len.eq(len(usb_ms_compat_id_descriptor)),
@@ -246,6 +280,10 @@ class DummyUsb(Module):
                 # Set Address / Configuration
                 ).Elif(bmRequestType == 0x00,
                     response_ack.eq(1),
+                    # Set Address
+                    If(bRequest == 0x05,
+                        new_address.eq(wValue[0:7]),
+                    )
                 ),
             ),
             If(usb_core.data_send_get,
@@ -257,5 +295,6 @@ class DummyUsb(Module):
             ),
             If(self.data_recv_put_delayed,
                 response_ack.eq(0),
+                transaction_queued.eq(1),
             ),
         ]

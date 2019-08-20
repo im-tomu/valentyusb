@@ -310,6 +310,20 @@ class PerEndpointFifoInterface(Module, AutoCSR):
             eps[eps_idx].ibuf.re.eq((usb_core.data_send_get & ~debug_packet_detected) | ~iobuf.usb_pullup),
         ]
 
+
+        #w {
+        #w   "reg_definition": {
+        #w       "reg_name": "ADDRESS",
+        #w       "reg_description": "Sets the USB device address, to ignore packets going to other devices.",
+        #w       "reg": [
+        #w           { "name": "ADDRESS", "bits": 7, "attr": "WO", "description": "Write the USB address from USB `SET_ADDRESS packets.`" },
+        #w           {                    "bits": 1 }
+        #w       ]
+        #w   }
+        #w }
+        self.address = CSRStorage(7)
+        self.comb += usb_core.addr.eq(self.address.storage)
+
         # self.error_count = CSRStatus(7)
         # error_count = Signal(7)
         # self.comb += self.error_count.status.eq(error_count)

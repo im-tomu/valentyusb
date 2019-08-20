@@ -49,10 +49,11 @@ class UsbTransfer(Module):
         # ----------------------
         # The value of these signals are generally dependent on endp, so we
         # need to wait for the rdy signal to use them.
-        self.rdy = Signal(reset=1)
-        self.dtb = Signal()
-        self.arm = Signal()
-        self.sta = Signal()
+        self.rdy  = Signal(reset=1)
+        self.dtb  = Signal()
+        self.arm  = Signal()
+        self.sta  = Signal()
+        self.addr = Signal(7)       # If the address doesn't match, we won't respond
 
         # ----------------------
         # Tristate
@@ -66,17 +67,16 @@ class UsbTransfer(Module):
             iobuf.usb_n_tx.eq(tx.o_usbn),
         ]
 
-        self.tok    = Signal(4)    # Contains the transfer token type
-        self.addr   = Signal(7)
+        self.tok    = Signal(4)     # Contains the transfer token type
         self.endp   = Signal(4)
 
-        self.start  = Signal()     # Asserted when a transfer is starting
-        self.setup  = Signal()     # Asserted when a transfer is a setup
-        self.commit = Signal()     # Asserted when a transfer succeeds
-        self.retry  = Signal()     # Asserted when the host sends an IN without an ACK
-        self.abort  = Signal()     # Asserted when a transfer fails
-        self.end    = Signal()     # Asserted when transfer ends
-        self.error  = Signal()     # Asserted when in the ERROR state
+        self.start  = Signal()      # Asserted when a transfer is starting
+        self.setup  = Signal()      # Asserted when a transfer is a setup
+        self.commit = Signal()      # Asserted when a transfer succeeds
+        self.retry  = Signal()      # Asserted when the host sends an IN without an ACK
+        self.abort  = Signal()      # Asserted when a transfer fails
+        self.end    = Signal()      # Asserted when transfer ends
+        self.error  = Signal()      # Asserted when in the ERROR state
         self.comb += [
             self.end.eq(self.commit | self.abort),
         ]
@@ -133,10 +133,16 @@ class UsbTransfer(Module):
                 #    NextState('ERROR'),
                 #),
                 NextValue(self.tok,  rxstate.o_pid),
-                NextValue(self.addr, rxstate.o_addr),
                 NextValue(self.endp, rxstate.o_endp),
                 self.start.eq(1),
-                NextState("POLL_RESPONSE"),
+
+                # If the address doesn't match, go back and wait for
+                # a new token.
+                If(rxstate.o_addr != self.addr,
+                    NextState("WAIT_TOKEN"),
+                ).Else(
+                    NextState("POLL_RESPONSE"),
+                ),
             ),
         )
 
