@@ -44,7 +44,7 @@ class DummyUsb(Module):
             # Because strings are utf_16_le, each character is two-bytes.
             # That leaves 126 bytes as the maximum length
             assert(len(s) <= 126)
-            usbstr[0] = len(s)*2
+            usbstr[0] = (len(s)*2)+2
             usbstr[1] = 3
             usbstr.extend(bytes(s, 'utf_16_le'))
             return list(usbstr)
