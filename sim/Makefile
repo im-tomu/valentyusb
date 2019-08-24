@@ -51,13 +51,13 @@ CUSTOM_COMPILE_DEPS = $(PWD)/dut.v
 include $(shell cocotb-config --makefiles)/Makefile.inc
 include $(shell cocotb-config --makefiles)/Makefile.sim
 
-#$(PWD)/dut.v: cocotb-eptri.py ../valentyusb/usbcore/cpu/eptri.py
+#$(PWD)/dut.v: generate_verilog.py ../valentyusb/usbcore/cpu/eptri.py
 #	cd ..
-#	PYTHONPATH=../../litex:../../migen:../../litedram:.. python3 cocotb-eptri.py
+#	PYTHONPATH=../../litex:../../migen:../../litedram:.. python3 generate_verilog.py eptri
 #	mv build/gateware/dut.v .
 
-$(PWD)/dut.v: cocotb-dummyusb.py ../valentyusb/usbcore/cpu/dummyusb.py
+$(PWD)/dut.v: generate_verilog.py ../valentyusb/usbcore/cpu/dummyusb.py
 	cd ..
-	PYTHONPATH=../../litex:../../migen:../../litedram:.. python3 cocotb-dummyusb.py
+	PYTHONPATH=../../litex:../../migen:../../litedram:.. python3 generate_verilog.py dummy
 	mv build/gateware/dut.v .
 	mv build/gateware/*.init .
