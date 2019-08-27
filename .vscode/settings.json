@@ -1,5 +1,0 @@
-{
-    "python.jediEnabled": false,
-    "python.linting.pylintEnabled": true,
-    "python.envFile": "${workspaceFolder}/.env"
-}
