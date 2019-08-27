@@ -36,12 +36,10 @@ class TxPacketSend(Module):
         fsm = FSM()
         self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(fsm)
         fsm.act('IDLE',
-            #NextValue(tx.i_oe, self.i_pkt_start),
+            NextValue(tx.i_oe, self.i_pkt_start),
             If(self.i_pkt_start,
                 # If i_pkt_start is set, then send the next packet.
                 # We pre-queue the SYNC byte here to cut down on latency.
-                NextValue(tx.i_oe, 1),
-                NextValue(pid, self.i_pid),
                 NextState('QUEUE_SYNC'),
             ).Else(
                 NextValue(tx.i_oe, 0),
@@ -50,10 +48,10 @@ class TxPacketSend(Module):
 
         # Send the QUEUE_SYNC byte
         fsm.act('QUEUE_SYNC',
-            NextValue(tx.i_oe, 1),
             # The PID might change mid-sync, because we're still figuring
             # out what the response ought to be.
             NextValue(pid, self.i_pid),
+            tx.i_data_payload.eq(1),
             If(tx.o_data_strobe,
                 NextState('QUEUE_PID'),
             ),
