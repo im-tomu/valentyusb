@@ -133,7 +133,7 @@ class BaseSoC(SoCCore):
     }
     interrupt_map.update(SoCCore.interrupt_map)
 
-    def __init__(self, platform, output_dir="build", **kwargs):
+    def __init__(self, platform, output_dir="build", usb_variant='dummy', **kwargs):
         # Disable integrated RAM as we'll add it later
         self.integrated_sram_size = 0
 
@@ -154,7 +154,12 @@ class BaseSoC(SoCCore):
         usb_pads = platform.request("usb")
         usb_iobuf = usbio.IoBuf(usb_pads.d_p, usb_pads.d_n, usb_pads.pullup)
         self.comb += usb_pads.tx_en.eq(usb_iobuf.usb_tx_en)
-        self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf, debug=True)
+        if usb_variant == 'eptri':
+            self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf, debug=True)
+        elif usb_variant == 'dummy':
+            self.submodules.usb = dummyusb.DummyUsb(usb_iobuf, debug=True)
+        else:
+            raise ValueError('Invalid endpoints value. It is currently \'eptri\' and \'dummy\'')
         self.add_wb_master(self.usb.debug_bridge.wishbone)
 
         class _WishboneBridge(Module):
@@ -215,21 +220,34 @@ def add_fsm_state_names():
         return My_LowerNext(self.next_state, self.next_state_name, self.encoding, self.state_aliases)
     fsm.FSM._lower_controls = my_lower_controls
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Build test file for eptri module")
-    args = parser.parse_args()
-
-    add_fsm_state_names()
-
-    output_dir = 'build'
-
+def generate(output_dir, csr_csv, variant):
     platform = Platform()
-    soc = BaseSoC(platform, cpu_type=None, cpu_variant=None,
+    soc = BaseSoC(platform, usb_variant=variant,
+                            cpu_type=None, cpu_variant=None,
                             output_dir=output_dir)
-    builder = Builder(soc, output_dir=output_dir, csr_csv="csr.csv", compile_software=False)
+    builder = Builder(soc, output_dir=output_dir,
+                           csr_csv=csr_csv,
+                           compile_software=False)
     vns = builder.build(run=False)
     soc.do_exit(vns)
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Build test file for dummy or eptri module")
+    parser.add_argument('variant', metavar='VARIANT',
+                                   choices=['dummy', 'eptri'],
+                                   default='dummy',
+                                   help='USB variant. Choices: [%(choices)s] (default: %(default)s)' )
+    parser.add_argument('--dir', metavar='DIRECTORY',
+                                 default='build',
+                                 help='Output directory (defauilt: %(default)s)' )
+    parser.add_argument('--csr', metavar='CSR',
+                                 default='csr.csv',
+                                 help='csr file (default: %(default)s)')
+    args = parser.parse_args()
+    add_fsm_state_names()
+    output_dir = args.dir
+    generate(output_dir, args.csr, args.variant)
 
     print(
 """Simulation build complete.  Output files:
