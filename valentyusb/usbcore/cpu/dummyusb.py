@@ -26,13 +26,17 @@ class DummyUsb(Module):
             self.comb += usb_core.iobuf.usb_pullup.eq(1)
         self.iobuf = usb_core.iobuf
 
-        # SETUP packets contain a DATA segment that is always 8 bytes
-        # (for our purposes)
-        bmRequestType = Signal(8)
-        bRequest = Signal(8)
+        # SETUP packets contain a DATA segment that is always 8 bytes.
+        # However, we're only ever interested in the first 4 bytes, plus
+        # the last byte.
+        usbPacket = Signal(32)
+        wRequestAndType = Signal(16)
         wValue = Signal(16)
-        wIndex = Signal(16)
-        wLength = Signal(16)
+        wLength = Signal(8)
+        self.comb += [
+            wRequestAndType.eq(usbPacket[16:32]),
+            wValue.eq(usbPacket[0:16]),
+        ]
         setup_index = Signal(4)
 
         address = Signal(7, reset=0)
@@ -44,38 +48,58 @@ class DummyUsb(Module):
             # Because strings are utf_16_le, each character is two-bytes.
             # That leaves 126 bytes as the maximum length
             assert(len(s) <= 126)
-            usbstr[0] = len(s)*2
+            usbstr[0] = (len(s)*2)+2
             usbstr[1] = 3
             usbstr.extend(bytes(s, 'utf_16_le'))
             return list(usbstr)
 
-        # Allocate 64 bytes of transmit buffer, the only allowed size
-        # for USB FS.
-        usb_device_descriptor = [
-            0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40,
-            (vid>>0)&0xff, (vid>>8)&0xff,
-            (pid>>0)&0xff, (pid>>8)&0xff,
-            0x01, 0x01, 0x01, 0x02,
-            0x00, 0x01
-        ]
-        usb_config_descriptor = [
-            0x09, 0x02, 0x12, 0x00, 0x01, 0x01, 0x01, 0x80,
-            0x32, 0x09, 0x04, 0x00, 0x00, 0x00, 0xfe, 0x00,
-            0x00, 0x02
-        ]
-        usb_string0_descriptor = [
-            0x04, 0x03, 0x09, 0x04,
-        ]
+        # Start with 0x8006
+        descriptors = {
+            # Config descriptor
+            # 80 06 00 02
+            0x0002: [
+                0x09, 0x02, 0x12, 0x00, 0x01, 0x01, 0x01, 0x80,
+                0x32, 0x09, 0x04, 0x00, 0x00, 0x00, 0xfe, 0x00,
+                0x00, 0x02,
+            ],
 
-        usb_string_manufacturer = make_usbstr(manufacturer)
-        usb_string_product = make_usbstr(product)
+            # Device descriptor
+            # 80 06 00 01
+            0x0001: [
+                0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40,
+                (vid>>0)&0xff, (vid>>8)&0xff,
+                (pid>>0)&0xff, (pid>>8)&0xff,
+                0x01, 0x01, 0x01, 0x02,
+                0x00, 0x01,
+            ],
 
-        usb_bos_descriptor = [
-            0x05, 0x0f, 0x1d, 0x00, 0x01, 0x18, 0x10, 0x05,
-            0x00, 0x38, 0xb6, 0x08, 0x34, 0xa9, 0x09, 0xa0,
-            0x47, 0x8b, 0xfd, 0xa0, 0x76, 0x88, 0x15, 0xb6,
-            0x65, 0x00, 0x01, 0x02, 0x01,
-        ]
+            # String 0
+            0x0003: [
+                0x04, 0x03, 0x09, 0x04,
+            ],
+
+            # String 1 (manufacturer)
+            0x0103: make_usbstr(manufacturer),
+
+            # String 2 (Product)
+            0x0203: make_usbstr(product),
+
+            # BOS descriptor
+            0x000f: [
+                0x05, 0x0f, 0x1d, 0x00, 0x01, 0x18, 0x10, 0x05,
+                0x00, 0x38, 0xb6, 0x08, 0x34, 0xa9, 0x09, 0xa0,
+                0x47, 0x8b, 0xfd, 0xa0, 0x76, 0x88, 0x15, 0xb6,
+                0x65, 0x00, 0x01, 0x02, 0x01,
+            ],
+
+            0xee03: [
+                0x12, 0x03, 0x4d, 0x53, 0x46, 0x54, 0x31, 0x30,
+                0x30, 0x7e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ],
+        }
+
+        # Starts with 0xc07e or 0xc17e
         usb_ms_compat_id_descriptor = [
             0x28, 0x00, 0x00, 0x00, 0x00, 0x01, 0x04, 0x00,
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -83,19 +107,28 @@ class DummyUsb(Module):
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ]
-        usb_device_status_report = [
-            0x00, 0x00,
-        ]
-        memory_contents = usb_device_descriptor + usb_config_descriptor \
-                        + usb_string0_descriptor + usb_string_manufacturer \
-                        + usb_string_product + usb_bos_descriptor \
-                        + usb_ms_compat_id_descriptor + usb_device_status_report
-        out_buffer = self.specials.out_buffer = Memory(8, len(memory_contents), init=memory_contents)
-        descriptor_bytes_remaining = Signal(6) # Maximum number of bytes in USB is 64
-        self.specials.out_buffer_rd = out_buffer_rd = out_buffer.get_port(write_capable=False, clock_domain="usb_12")
 
-        # Indicates DATA1 or DATA0
-        dtb_polarity = Signal()
+        class MemoryContents:
+            def __init__(self):
+                self.contents = [0x00]
+                self.offsets = {}
+                self.lengths = {}
+
+            def add(self, wRequestAndType, wValue, mem):
+                self.offsets[wRequestAndType << 16 | wValue] = len(self.contents)
+                self.lengths[wRequestAndType << 16 | wValue] = len(mem)
+                self.contents = self.contents + mem
+
+        mem = MemoryContents()
+        for key, value in descriptors.items():
+            mem.add(0x8006, key, value)
+
+        mem.add(0xc07e, 0x0000, usb_ms_compat_id_descriptor)
+        mem.add(0x8000, 0x0000, [0, 0]) # Get device status
+        mem.add(0x0009, 0x0100, []) # Set configuration 1
+
+        out_buffer = self.specials.out_buffer = Memory(8, len(mem.contents), init=mem.contents)
+        self.specials.out_buffer_rd = out_buffer_rd = out_buffer.get_port(write_capable=False, clock_domain="usb_12")
 
         last_start = Signal()
 
@@ -104,17 +137,27 @@ class DummyUsb(Module):
 
         # Needs to be able to index Memory
         response_addr = Signal(9)
-        response_len = Signal(7)
+        response_len = Signal(6)
         response_ack = Signal()
+        bytes_remaining = Signal(6)
+        bytes_addr = Signal(9)
+
+        # Respond to various descriptor requests
+        cases = {}
+        for key in mem.offsets:
+            cases[key] = [
+                response_len.eq(mem.lengths[key]),
+                response_addr.eq(mem.offsets[key]),
+            ]
+        self.comb += Case(usbPacket, cases)
 
         # Used to respond to Transaction stage
         transaction_queued = Signal()
         new_address = Signal(7)
+        configuration = Signal(8)
 
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
-        debug_data_mux = Signal(8)
-        debug_data_ready_mux = Signal()
         debug_sink_data = Signal(8)
         debug_sink_data_ready = Signal()
         debug_ack_response = Signal()
@@ -141,32 +184,29 @@ class DummyUsb(Module):
             ]
 
         self.comb += [
-            # This needs to be correct *before* token is finished, everything
-            # else uses registered outputs.
-            usb_core.sta.eq((~(have_response | response_ack) & ~debug_packet_detected) & ~debug_sink_data_ready),
-            usb_core.arm.eq(((have_response | response_ack) & ~debug_packet_detected) | debug_ack_response),
-            usb_core.dtb.eq(dtb_polarity | debug_packet_detected),
-
+            usb_core.dtb.eq(1),
             If(debug_packet_detected,
-                debug_data_mux.eq(debug_sink_data),
-                debug_data_ready_mux.eq(debug_sink_data_ready),
+                usb_core.sta.eq(0),
+                usb_core.arm.eq(debug_ack_response),
+                usb_core.data_send_payload.eq(debug_sink_data),
+                have_response.eq(debug_sink_data_ready),
             ).Else(
-                debug_data_mux.eq(out_buffer_rd.dat_r),
-                debug_data_ready_mux.eq(response_len > 0),
+                usb_core.sta.eq(~(have_response | response_ack)),
+                usb_core.arm.eq(have_response | response_ack),
+                usb_core.data_send_payload.eq(out_buffer_rd.dat_r),
+                have_response.eq(bytes_remaining > 0),
             ),
-            out_buffer_rd.adr.eq(response_addr),
-            usb_core.data_send_have.eq(debug_data_ready_mux),
-            usb_core.data_send_payload.eq(debug_data_mux),
-            have_response.eq(response_len > 0),
+            out_buffer_rd.adr.eq(bytes_addr),
+            usb_core.data_send_have.eq(have_response),
         ]
 
         self.sync += [
+            usb_core.reset.eq(usb_core.error),
             last_start.eq(usb_core.start),
             If(last_start,
                 If(usb_core.tok == PID.SETUP,
                     setup_index.eq(0),
-                    dtb_polarity.eq(1),
-                    response_len.eq(0),
+                    bytes_remaining.eq(0),
                 ).Elif(transaction_queued,
                     response_ack.eq(1),
                     transaction_queued.eq(0),
@@ -175,107 +215,45 @@ class DummyUsb(Module):
             ),
             If(usb_core.tok == PID.SETUP,
                 If(data_recv_put_delayed,
-                    If(setup_index < 8,
-                        setup_index.eq(setup_index + 1),
-                    ),
+                    setup_index.eq(setup_index + 1),
                     Case(setup_index, {
-                        0: bmRequestType.eq(data_recv_payload_delayed),
-                        1: bRequest.eq(data_recv_payload_delayed),
-                        2: wValue.eq(data_recv_payload_delayed),
-                        3: wValue.eq(Cat(wValue[0:8], data_recv_payload_delayed)),
-                        4: wIndex.eq(data_recv_payload_delayed),
-                        5: wIndex.eq(Cat(wIndex[0:8], data_recv_payload_delayed)),
+                        0: usbPacket.eq(Cat(data_recv_payload_delayed, usbPacket[0:24], )),
+                        1: usbPacket.eq(Cat(data_recv_payload_delayed, usbPacket[0:24], )),
+                        2: usbPacket.eq(Cat(data_recv_payload_delayed, usbPacket[0:24], )),
+                        3: usbPacket.eq(Cat(data_recv_payload_delayed, usbPacket[0:24], )),
+                        # 4: wIndex.eq(data_recv_payload_delayed),
+                        # 5: wIndex.eq(Cat(wIndex[0:8], data_recv_payload_delayed)),
                         6: wLength.eq(data_recv_payload_delayed),
-                        7: wLength.eq(Cat(wLength[0:8], data_recv_payload_delayed)),
+                        # 7: wLength.eq(Cat(wLength[0:8], data_recv_payload_delayed)),
                     }),
                 ),
             ),
+
+            # After a SETUP's DATA packet has come in, figure out if we need
+            # to respond to any special requests.
             If(usb_core.setup,
-                If(bmRequestType == 0x80,
-                    If(bRequest == 0x06,
-                        If(wValue == 0x0100,
-                            response_ack.eq(1),
-                            response_addr.eq(0),
-                            If(wLength > len(usb_config_descriptor),
-                                response_len.eq(len(usb_device_descriptor)),
-                            ).Else(
-                                response_len.eq(wLength),
-                            ),
-                        ).Elif(wValue == 0x0200,
-                            response_ack.eq(1),
-                            response_addr.eq(len(usb_device_descriptor)),
-                            If(wLength > len(usb_config_descriptor),
-                                response_len.eq(len(usb_config_descriptor)),
-                            ).Else(
-                                response_len.eq(wLength),
-                            ),
-                        ).Elif(wValue == 0x0300,
-                            response_ack.eq(1),
-                            response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor)),
-                            If(wLength > len(usb_string0_descriptor),
-                                response_len.eq(len(usb_string0_descriptor)),
-                            ).Else(
-                                response_len.eq(wLength),
-                            ),
-                        ).Elif(wValue == 0x0301,
-                            response_ack.eq(1),
-                            response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor)),
-                            If(wLength > len(usb_string_manufacturer),
-                                response_len.eq(len(usb_string_manufacturer)),
-                            ).Else(
-                                response_len.eq(wLength),
-                            ),
-                        ).Elif(wValue == 0x0302,
-                            response_ack.eq(1),
-                            response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer)),
-                            If(wLength > len(usb_string_product),
-                                response_len.eq(len(usb_string_product)),
-                            ).Else(
-                                response_len.eq(wLength),
-                            ),
-                        ).Elif(wValue == 0x0f00,
-                            response_ack.eq(1),
-                            response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product)),
-                            If(wLength > len(usb_bos_descriptor),
-                                response_len.eq(len(usb_bos_descriptor)),
-                            ).Else(
-                                response_len.eq(wLength),
-                            ),
-                        ).Elif(wValue == 0x0f00,
-                            response_ack.eq(1),
-                        ),
-                    ).Elif(bRequest == 0x00,
-                        response_ack.eq(1),
-                        response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product) + len(usb_bos_descriptor) + len(usb_ms_compat_id_descriptor)),
-                        If(wLength > len(usb_device_status_report),
-                            response_len.eq(len(usb_device_status_report)),
-                        ).Else(
-                            response_len.eq(wLength),
-                        ),
-                    ),
-                # MS Extended Compat ID OS Feature
-                ).Elif(bmRequestType == 0xc0,
-                    response_ack.eq(1),
-                    response_addr.eq(len(usb_device_descriptor) + len(usb_config_descriptor) + len(usb_string0_descriptor) + len(usb_string_manufacturer) + len(usb_string_product) + len(usb_bos_descriptor)),
-                    If(wLength > len(usb_ms_compat_id_descriptor),
-                        response_len.eq(len(usb_ms_compat_id_descriptor)),
-                    ).Else(
-                        response_len.eq(wLength),
-                    ),
                 # Set Address / Configuration
-                ).Elif(bmRequestType == 0x00,
-                    response_ack.eq(1),
+                If(wRequestAndType == 0x0005,
                     # Set Address
-                    If(bRequest == 0x05,
-                        new_address.eq(wValue[0:7]),
-                    )
+                    new_address.eq(wValue[8:15]),
+                    response_ack.eq(1),
+                ).Elif(wRequestAndType == 0x0009,
+                    configuration.eq(wValue[8:15]),
+                    response_ack.eq(1),
                 ),
+                If(response_len > wLength,
+                    bytes_remaining.eq(wLength),
+                ).Else(
+                    bytes_remaining.eq(response_len),
+                ),
+                bytes_addr.eq(response_addr),
             ),
+
             If(usb_core.data_send_get,
                 response_ack.eq(1),
-                response_addr.eq(response_addr + 1),
-                If(response_len,
-                    response_len.eq(response_len - 1),
+                bytes_addr.eq(bytes_addr + 1),
+                If(bytes_remaining,
+                    bytes_remaining.eq(bytes_remaining - 1),
                 ),
             ),
             If(self.data_recv_put_delayed,
