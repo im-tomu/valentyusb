@@ -60,6 +60,7 @@ class UsbTest:
         self.dut.reset = 0
         yield RisingEdge(self.dut.clk12)
 
+        self.dut.reset = 0
         self.dut.usb_d_p = 1
         self.dut.usb_d_n = 0
 
@@ -76,15 +77,24 @@ class UsbTest:
 
     @cocotb.coroutine
     def connect(self):
-        return
+        # Python is a weird language.  This is required to turn this
+        # "def" into a coroutine.
+        if False:
+            yield
 
     @cocotb.coroutine
     def clear_pending(self, _ep):
-        yield Timer(0)
+        # Python is a weird language.  This is required to turn this
+        # "def" into a coroutine.
+        if False:
+            yield
 
     @cocotb.coroutine
     def disconnect(self):
-        raise ReturnValue(0)
+        # Python is a weird language.  This is required to turn this
+        # "def" into a coroutine.
+        if False:
+            yield
 
     def assertEqual(self, a, b, msg):
         if a != b:
@@ -800,7 +810,7 @@ def test_debug_in(dut):
     yield harness.connect()
 
     addr = 28
-    yield harness.write(harness.csrs['usb_address'], addr)
+    yield harness.transaction_setup(0,  [0x00, 0x05, addr, 0x00, 0x00, 0x00, 0x00, 0x00])
     # The "scratch" register defaults to 0x12345678 at boot.
     reg_addr = harness.csrs['ctrl_scratch']
     setup_data = [0xc3, 0x00,
@@ -811,10 +821,10 @@ def test_debug_in(dut):
     epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
     epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
 
-    yield harness.transaction_data_in(addr, epaddr_in, [0x2, 0x4, 0x6, 0x8, 0xa], chunk_size=64)
 
-    yield harness.clear_pending(epaddr_out)
-    yield harness.clear_pending(epaddr_in)
+    # yield harness.transaction_data_in(addr, epaddr_in, [0x2, 0x4, 0x6, 0x8, 0xa], chunk_size=64)
+    # yield harness.clear_pending(epaddr_out)
+    # yield harness.clear_pending(epaddr_in)
 
     # Setup stage
     yield harness.host_send_token_packet(PID.SETUP, addr, epaddr_out)
@@ -830,6 +840,8 @@ def test_debug_in(dut):
     yield harness.host_send_token_packet(PID.OUT, addr, epaddr_in)
     yield harness.host_send_data_packet(PID.DATA1, [])
     yield harness.host_expect_ack()
+
+    yield harness.transaction_setup(addr,  [0x00, 0x05, addr, 0x00, 0x00, 0x00, 0x00, 0x00])
 
 # @cocotb.test()
 # def test_debug_in_missing_ack(dut):
