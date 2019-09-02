@@ -18,42 +18,90 @@ from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
 from .usbwishbonebridge import USBWishboneBridge
 
-# Register Interface:
-#
-# pullup_out_read: Read the status of the USB "FS" pullup.
-# pullup_out_write: Write the USB "FS" pullup state
-#
-# SETUP - Responding to a SETUP packet from the host
-# setup_read: Read the contents of the last SETUP transaction
-# setup_ack: Write a "1" here to advance the data_read fifo
-# setup_empty: "0" if there is no SETUP data.
-# setup_epno: The endpoint the SETUP packet was destined for
-#
-# EPOUT - Data from the host to this device
-# epout_data_read: Read the contents of the last transaction on the EP0
-# epout_data_ack: Write a "1" here to advance the data_read fifo
-# epout_last_tok: Bits 2 and 3 of the last token, from the following table:
-#    USB_PID_OUT   = 0
-#    USB_PID_SOF   = 1
-#    USB_PID_IN    = 2
-#    USB_PID_SETUP = 3
-# epout_epno: Which endpoint contained the last data
-# epout_queued: A response is queued and has yet to be acknowledged by the host
-#
-# EPIN - Requests from the host to read data from this device
-# epin_data_write: Write 8 bits to the EP0 queue
-# epin_data_empty: Return 1 if the queue is empty
-# epin_epno: Which endpoint the data is for.  You must write this byte to indicate data is ready to be sent.
-# epin_queued: A response is queued and has yet to be acknowledged by the host
-#
-# ep_stall: a 32-bit field representing endpoitns to respond with STALL.
+"""
+Register Interface:
 
+pullup_out_read: Read the status of the USB "FS" pullup.
+pullup_out_write: Write the USB "FS" pullup state
 
-### Handle SETUP packets
-###
-### SETUP packets must always respond with ACK.  Sometimes, they are followed
-### by DATA packets, but not always.
+SETUP - Responding to a SETUP packet from the host
+setup_read: Read the contents of the last SETUP transaction
+setup_ack: Write a "1" here to advance the data_read fifo
+setup_empty: "0" if there is no SETUP data.
+setup_epno: The endpoint the SETUP packet was destined for
+
+EPOUT - Data from the host to this device
+epout_data_read: Read the contents of the last transaction on the EP0
+epout_data_ack: Write a "1" here to advance the data_read fifo
+epout_last_tok: Bits 2 and 3 of the last token, from the following table:
+   USB_PID_OUT   = 0
+   USB_PID_SOF   = 1
+   USB_PID_IN    = 2
+   USB_PID_SETUP = 3
+epout_epno: Which endpoint contained the last data
+epout_queued: A response is queued and has yet to be acknowledged by the host
+
+EPIN - Requests from the host to read data from this device
+epin_data_write: Write 8 bits to the EP0 queue
+epin_data_empty: Return 1 if the queue is empty
+epin_epno: Which endpoint the data is for.  You must write this byte to indicate data is ready to be sent.
+epin_queued: A response is queued and has yet to be acknowledged by the host
+
+ep_stall: a 32-bit field representing endpoitns to respond with STALL.
+"""
+
 class SetupHandler(Module, AutoCSR):
+    """Handle SETUP packets.
+
+    SETUP packets must always respond with ACK.  Sometimes, they are followed
+    by DATA packets, but not always.
+
+    Attributes
+    ----------
+
+    data : CSR
+        Data from the last SETUP packet.  It will be 10 bytes long, because it will include the CRC16.  This is a FIFO; use `DATA_ACK` to advance the queue.
+
+        .. wavedrom::
+            :caption: data CSR Interface
+
+            {
+              "reg": [
+                  { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The next byte of SETUP data" }
+              ]
+            }
+
+    status : CSRStatus
+        Status about the most recent SETUP packet, and the state of the FIFO.
+
+        .. wavedrom::
+            :caption: status CSR Interface
+
+            {
+              "reg": [
+                  { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
+                  {                  "bits": 1 },
+                  { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
+                  {                  "bits": 2 }
+              ]
+            }
+
+    ctrl : CSRStorage
+        Controls for managing `SETUP` packets.
+
+        .. wavedrom::
+            :caption: CTRL CSR Interface
+
+            {
+              "reg": [
+                  { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
+                  {                    "bits": 7 }
+              ]
+            }
+
+    """
+
+
     def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.error = ev.EventSourcePulse()
@@ -66,41 +114,8 @@ class SetupHandler(Module, AutoCSR):
         self.have_data_stage = Signal()
 
         self.submodules.data = buf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=10)))
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "DATA",
-        #w       "reg_description": "Data from the last SETUP packet.  It will be 10 bytes long, because it will include the CRC16.  This is a FIFO; use `DATA_ACK` to advance the queue.",
-        #w       "reg": [
-        #w           { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The next byte of SETUP data" }
-        #w       ]
-        #w   }
-        #w }
         self.data = CSR(8)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "STATUS",
-        #w       "reg_description": "Status about the most recent SETUP packet, and the state of the FIFO.",
-        #w       "reg": [
-        #w           { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-        #w           {                  "bits": 1 },
-        #w           { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
-        #w           {                  "bits": 2 }
-        #w       ]
-        #w   }
-        #w }
         self.status = CSRStatus(6)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "CTRL",
-        #w       "reg_description": "Controls for managing `SETUP` packets.",
-        #w       "reg": [
-        #w           { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
-        #w           {                    "bits": 7 }
-        #w       ]
-        #w   }
-        #w }
         self.ctrl = CSRStorage(1)
 
         # How to respond to requests:
