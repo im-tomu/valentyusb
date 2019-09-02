@@ -12,9 +12,17 @@ BUILDDIR      = build
 help:
 	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
-.PHONY: help Makefile
+venv:
+	virtualenv --python=python3 venv
+	source venv/bin/activate; cd ..; pip install -r requirements.txt
+	source venv/bin/activate; pip install -r requirements.txt
+
+apidoc:
+	source venv/bin/activate; cd ..; sphinx-apidoc -f -o docs/source valentyusb
+
+.PHONY: venv help Makefile
 
 # Catch-all target: route all unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
 %: Makefile
-	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@source venv/bin/activate; $(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
