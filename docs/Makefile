@@ -14,7 +14,6 @@ help:
 
 venv:
 	virtualenv --python=python3 venv
-	source venv/bin/activate; cd ..; pip install -r requirements.txt
 	source venv/bin/activate; pip install -r requirements.txt
 
 apidoc:
