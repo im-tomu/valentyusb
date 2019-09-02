@@ -4,6 +4,14 @@ usbcore.cpu package
 Submodules
 ----------
 
+usbcore.cpu.dummyusb module
+---------------------------
+
+.. automodule:: usbcore.cpu.dummyusb
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 usbcore.cpu.epfifo module
 -------------------------
 
@@ -32,6 +40,22 @@ usbcore.cpu.epmem\_test module
 ------------------------------
 
 .. automodule:: usbcore.cpu.epmem_test
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+usbcore.cpu.eptri module
+------------------------
+
+.. automodule:: usbcore.cpu.eptri
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+usbcore.cpu.eptri\_test module
+------------------------------
+
+.. automodule:: usbcore.cpu.eptri_test
    :members:
    :undoc-members:
    :show-inheritance:
