@@ -1,4 +1,5 @@
 recommonmark
 sphinx
 sphinx_rtd_theme
+sphinxcontrib-wavedrom
 sphinx-autodoc-typehints
