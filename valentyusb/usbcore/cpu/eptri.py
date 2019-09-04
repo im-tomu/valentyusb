@@ -75,8 +75,10 @@ class SetupHandler(Module, AutoCSR):
         Data from the last `SETUP` transactions.  It will be 10 bytes long, because
         it will include the CRC16.  This is a FIFO, so write a 1 to `DATA.ACK`
         to advance the queue.
+
         .. wavedrom::
             :caption: SETUP_DATA
+
             {
               "reg": [
                   { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The next byte of SETUP data" }
@@ -85,8 +87,10 @@ class SetupHandler(Module, AutoCSR):
 
     status : CSRStatus
         Status about the most recent `SETUP` transactions, and the state of the FIFO.
+
         .. wavedrom::
             :caption: SETUP_STATUS
+
             {
                "reg": [
                    { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
@@ -99,8 +103,10 @@ class SetupHandler(Module, AutoCSR):
 
     ctrl : CSRStorage
         Controls for managing handling of `SETUP` transactions.
+
         .. wavedrom::
             :caption: SETUP_CTRL
+
             {
               "reg": [
                   { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
@@ -212,8 +218,10 @@ class InHandler(Module, AutoCSR):
         bytes that are written here will be transmitted in the order in which
         they were added.  The FIFO queue is automatically advanced with each write.
         The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined.
+
         .. wavedrom::
             :caption: IN_DATA
+
             {
                "reg": [
                    { "name": "DATA",   "bits": 8, "attr": "WO", "description": "The next byte to add to the queue." }
@@ -223,8 +231,10 @@ class InHandler(Module, AutoCSR):
     status : CSRStatus
         Status about the IN handler.  As soon as you write to `IN_DATA`, `IN_STATUS.HAVE`
         should go to `1`.
+
         .. wavedrom::
             :caption: IN_STATUS
+
             {
                "reg": [
                    { "name": "HAVE",    "bits": 1, "attr": "RO", "description": "This value is '0' if the FIFO is empty." },
@@ -238,8 +248,10 @@ class InHandler(Module, AutoCSR):
     ctrl : CSRStorage
         Enables transmission of data in response to `IN` tokens, or resets
         the contents of the FIFO.
+
         .. wavedrom::
             :caption: IN_CTRL
+
             {
               "reg": [
                    { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." }
@@ -359,8 +371,10 @@ class OutHandler(Module, AutoCSR):
 
     data : CSRStatus
         Data received from the host will go into a FIFO.  This register reflects the contents of the top byte in that FIFO.
+
         .. wavedrom::
             :caption: OUT_DATA
+
             {
                "reg": [
                    { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The top byte of the receive FIFO." }
@@ -369,8 +383,10 @@ class OutHandler(Module, AutoCSR):
 
     status : CSRStatus
         Status about the contents of the OUT endpoint.
+
         .. wavedrom::
             :caption: OUT_STATUS
+
             {
                "reg": [
                    { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
@@ -383,8 +399,10 @@ class OutHandler(Module, AutoCSR):
 
     ctrl : CSRStorage
         Controls for receiving packet data.
+
         .. wavedrom::
-            :caption: out_CTRL
+            :caption: OUT_CTRL
+
             {
               "reg": [
                    { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
