@@ -51,56 +51,63 @@ ep_stall: a 32-bit field representing endpoitns to respond with STALL.
 """
 
 class SetupHandler(Module, AutoCSR):
-    """Handle SETUP packets.
+    """Handle `SETUP` packets.
 
-    SETUP packets must always respond with ACK.  Sometimes, they are followed
-    by DATA packets, but not always.
+    `SETUP` packets must always respond with `ACK`.  They are followed by a `DATA0`
+    packet, and may be followed by additional DATA stages.
+
+    Since SETUP packets must always be handled, there is a separate FIFO that
+    handles this data.  Hence the name `eptri`.
+
+    The device must always acknowledge the `SETUP` packet right away, but need
+    not send the acknowledgement stage right away.  You can use this to parse
+    the data at a leisurely pace.
+
+    When the device receives a `SETUP` transaction, an interrupt will fire
+    and the `SETUP_STATUS` register will have `SETUP_STATUS.HAVE` set to 1.
+    Drain the FIFO by reading from `SETUP_DATA`, then setting
+    `SETUP_CTRL.ADVANCE`.
 
     Attributes
     ----------
 
-    data : CSR
-        Data from the last SETUP packet.  It will be 10 bytes long, because it will include the CRC16.  This is a FIFO; use `DATA_ACK` to advance the queue.
-
+    data : CSRStatus
+        Data from the last `SETUP` transactions.  It will be 10 bytes long, because
+        it will include the CRC16.  This is a FIFO, so write a 1 to `DATA.ACK`
+        to advance the queue.
         .. wavedrom::
-            :caption: data CSR Interface
-
+            :caption: SETUP_DATA
             {
               "reg": [
                   { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The next byte of SETUP data" }
-              ]
+               ], "config": { bits: 8 }
             }
 
     status : CSRStatus
-        Status about the most recent SETUP packet, and the state of the FIFO.
-
+        Status about the most recent `SETUP` transactions, and the state of the FIFO.
         .. wavedrom::
-            :caption: status CSR Interface
-
+            :caption: SETUP_STATUS
             {
-              "reg": [
-                  { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-                  {                  "bits": 1 },
-                  { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
-                  {                  "bits": 2 }
-              ]
+               "reg": [
+                   { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
+                   {                  "bits": 1 },
+                   { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP token." },
+                   { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
+                   {                  "bits": 1 }
+               ], "config": { bits: 8 }
             }
 
     ctrl : CSRStorage
-        Controls for managing `SETUP` packets.
-
+        Controls for managing handling of `SETUP` transactions.
         .. wavedrom::
-            :caption: CTRL CSR Interface
-
+            :caption: SETUP_CTRL
             {
               "reg": [
                   { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
                   {                    "bits": 7 }
-              ]
+               ], "config": { bits: 8 }
             }
-
     """
-
 
     def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
@@ -113,33 +120,10 @@ class SetupHandler(Module, AutoCSR):
         self.have_data_stage = Signal()
 
         self.submodules.data = buf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=10)))
-        self.data = CSR(8)
 
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "STATUS",
-        #w       "reg_description": "Status about the most recent SETUP packet, and the state of the FIFO.",
-        #w       "reg": [
-        #w           { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-        #w           {                  "bits": 1 },
-        #w           { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
-        #w           { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-        #w           {                  "bits": 1 }
-        #w       ]
-        #w   }
-        #w }
+        # Register Interface
+        self.data = CSRStatus(8)
         self.status = CSRStatus(7)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "CTRL",
-        #w       "reg_description": "Controls for managing `SETUP` packets.",
-        #w       "reg": [
-        #w           { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
-        #w           {                    "bits": 7 }
-        #w       ]
-        #w   }
-        #w }
         self.ctrl = CSRStorage(1)
 
         # How to respond to requests:
@@ -160,7 +144,7 @@ class SetupHandler(Module, AutoCSR):
         # Wire up the "SETUP" endpoint.
         self.comb += [
             # Set the FIFO output to be the current buffer HEAD
-            self.data.w.eq(buf.dout),
+            self.data.status.eq(buf.dout),
 
             # Advance the FIFO when anything is written to the control bit
             buf.re.eq(self.ctrl.re & self.ctrl.storage[0]),
@@ -210,11 +194,59 @@ class SetupHandler(Module, AutoCSR):
 
 
 class InHandler(Module, AutoCSR):
-    """Endpoint for Device->Host data.
+    """Endpoint for Device->Host transactions.
 
-    Reads from the buffer memory.
-    Raises packet IRQ when packet has been sent.
-    CPU writes to the head CSR to push data onto the FIFO.
+    When a host requests data from a device, it sends an `IN` token.  The device
+    should then respond with `DATA0`, `DATA1`, or `NAK`.  This handler is
+    responsible for managing this response, as well as supplying the USB system
+    with data.
+
+    To send data, fill the FIFO by writing bytes to `IN_DATA`.  When you're ready
+    to transmit, write the destination endpoint number to `IN_CTRL`.
+
+    Attributes
+    ----------
+
+    data : CSRStorage
+        Each byte written into this register gets added to an outgoing FIFO. Any
+        bytes that are written here will be transmitted in the order in which
+        they were added.  The FIFO queue is automatically advanced with each write.
+        The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined.
+        .. wavedrom::
+            :caption: IN_DATA
+            {
+               "reg": [
+                   { "name": "DATA",   "bits": 8, "attr": "WO", "description": "The next byte to add to the queue." }
+               ], "config": { bits: 8 }
+            }
+
+    status : CSRStatus
+        Status about the IN handler.  As soon as you write to `IN_DATA`, `IN_STATUS.HAVE`
+        should go to `1`.
+        .. wavedrom::
+            :caption: IN_STATUS
+            {
+               "reg": [
+                   { "name": "HAVE",    "bits": 1, "attr": "RO", "description": "This value is '0' if the FIFO is empty." },
+                   { "name": "IDLE",    "bits": 1, "attr": "RO", "description": "This value is '1' if the packet has finished transmitting." },
+                   {                    "bits": 4 },
+                   { "name": "PEND",    "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
+                   {                    "bits": 1 }
+               ], "config": { bits: 8 }
+            }
+
+    ctrl : CSRStorage
+        Enables transmission of data in response to `IN` tokens, or resets
+        the contents of the FIFO.
+        .. wavedrom::
+            :caption: IN_CTRL
+            {
+              "reg": [
+                   { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." }
+                   { "name": "RESET","bits": 1, "attr": "WO", "description": "Write a 1 here to clear the contents of the FIFO." }
+                   {                 "bits": 3 }
+               ], "config": { bits: 8 }
+            }
     """
     def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
@@ -226,45 +258,11 @@ class InHandler(Module, AutoCSR):
         # Keep track of the current DTB for each of the 16 endpoints
         dtbs = Signal(16, reset=0xffff)
 
-        self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=128)
+        self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=128))
 
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "DATA",
-        #w       "reg_description": "Write data to this register.  It is a FIFO, so any bytes that are written here will be transmitted in-order.  The FIFO queue is automatically advanced. The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined.",
-        #w       "reg": [
-        #w           { "name": "DATA",   "bits": 8, "attr": "WO", "description": "The next byte to add to the queue." }
-        #w       ]
-        #w   }
-        #w }
         self.data = CSRStorage(8)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "STATUS",
-        #w       "reg_description": "Determine the status of the `IN` pathway.",
-        #w       "reg": [
-        #w           { "name": "HAVE",    "bits": 1, "attr": "RO", "description": "This value is '0' if the FIFO is empty." },
-        #w           { "name": "IDLE",    "bits": 1, "attr": "RO", "description": "This value is '1' if the packet has finished transmitting." },
-        #w           {                    "bits": 4 },
-        #w           { "name": "PEND",    "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-        #w           {                    "bits": 1 }
-        #w       ]
-        #w   }
-        #w }
         self.status = CSRStatus(7)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "EP",
-        #w       "reg_description": "After writing data to the `data` register, update this register with the destination endpoint number.  Writing to this register queues the packet for transmission.",
-        #w       "reg": [
-        #w           { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." }
-        #w           {                 "bits": 4 }
-        #w       ]
-        #w   }
-        #w }
-        self.epno = CSRStorage(4)
+        self.ctrl = CSRStorage(5)
 
         xxxx_readable = Signal()
         self.specials.crc_readable = cdc.MultiReg(~buf.readable, xxxx_readable)
@@ -276,6 +274,11 @@ class InHandler(Module, AutoCSR):
 
         # This value goes "1" when data is pending, and returns to "0" when it's done.
         queued = Signal()
+
+        epno = Signal(4)
+        reset_fifo = Signal(1)
+        self.comb += epno.eq(self.ctrl.storage[0:4])
+        self.comb += reset_fifo.eq(self.ctrl.storage[4])
 
         # Outgoing data will be placed on this signal
         self.data_out = Signal(8)
@@ -295,7 +298,7 @@ class InHandler(Module, AutoCSR):
 
         self.comb += [
             # We will respond with "ACK" if the register matches the current endpoint number
-            If(usb_core.endp == self.epno.storage,
+            If(usb_core.endp == epno,
                 self.response.eq(queued)
             ).Else(
                 self.response.eq(0)
@@ -315,17 +318,17 @@ class InHandler(Module, AutoCSR):
             buf.we.eq(self.data.re),
             buf.din.eq(self.data.storage),
             is_in_packet.eq(usb_core.tok == PID.IN),
-            is_our_packet.eq(usb_core.endp == self.epno.storage),
+            is_our_packet.eq(usb_core.endp == epno),
         ]
 
         self.sync += [
             # Toggle the "DTB" line if we transmitted data
             If(self.dtb_reset,
-                dtbs.eq(dtbs | (1 << self.epno.storage)),
+                dtbs.eq(dtbs | (1 << epno)),
             )
-            # When the user updates the `epno` register, enable writing.
-            .Elif(self.epno.re,
-                queued.eq(1)
+            # When the user updates the `ctrl` register, enable writing.
+            .Elif(self.ctrl.re,
+                queued.eq(~reset_fifo)
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
@@ -334,14 +337,63 @@ class InHandler(Module, AutoCSR):
                     queued.eq(0),
                 ),
                 If(usb_core.arm & ~usb_core.sta,
-                    dtbs.eq(dtbs ^ (1 << self.epno.storage)),
+                    dtbs.eq(dtbs ^ (1 << epno)),
                 ),
             ),
         ]
 
 class OutHandler(Module, AutoCSR):
+    """Endpoint for Host->Device transactions.
+
+    When a host wants to send data to a device, it sends an `OUT` token.  The device
+    should then respond with `ACK`, or `NAK`.  This handler is responsible for managing
+    this response, as well as reading data from the USB subsystem.
+
+    To enable receiving data, write a `1` to the `OUT_CTRL.ENABLE` bit.
+
+    To drain the FIFO, write a `1` to `OUT_CTRL.ADVANCE`.  Don't forget to re-
+    enable the FIFO by ensuring `OUT_CTRL.ENABLE` is set after advacing the FIFO!
+
+    Attributes
+    ----------
+
+    data : CSRStatus
+        Data received from the host will go into a FIFO.  This register reflects the contents of the top byte in that FIFO.
+        .. wavedrom::
+            :caption: OUT_DATA
+            {
+               "reg": [
+                   { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The top byte of the receive FIFO." }
+               ], "config": { bits: 8 }
+            }
+
+    status : CSRStatus
+        Status about the contents of the OUT endpoint.
+        .. wavedrom::
+            :caption: OUT_STATUS
+            {
+               "reg": [
+                   { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
+                   { "name": "IDLE",  "bits": 1, "attr": "RO", "description": "`1` if the packet has finished receiving." },
+                   { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
+                   { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
+                   {                  "bits": 1 }
+               ], "config": { bits: 8 }
+            }
+
+    ctrl : CSRStorage
+        Controls for receiving packet data.
+        .. wavedrom::
+            :caption: out_CTRL
+            {
+              "reg": [
+                   { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
+                   { "name": "ENABLE",  "bits": 1, "attr": "WO", "description": "Write a `1` here to enable recieving data" },
+                   {                    "bits": 6 }
+               ], "config": { bits: 8 }
+            }
+    """
     def __init__(self, usb_core):
-# EPOUT - Data from the host to this device
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.packet = ev.EventSourcePulse()
         self.ev.finalize()
@@ -349,43 +401,8 @@ class OutHandler(Module, AutoCSR):
 
         self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=128)
 
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "DATA",
-        #w       "reg_description": "Data received from the host will go into a FIFO.  This register reflects the contents of the top byte in that FIFO.",
-        #w       "reg": [
-        #w           { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The top byte of the receive FIFO." }
-        #w       ]
-        #w   }
-        #w }
-        self.data = CSR(8)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "STATUS",
-        #w       "reg_description": "Status about the contents of the OUT endpoint.",
-        #w       "reg": [
-        #w           { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-        #w           { "name": "IDLE",  "bits": 1, "attr": "RO", "description": "`1` if the packet has finished receiving." },
-        #w           { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
-        #w           { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-        #w           {                  "bits": 1 }
-        #w       ]
-        #w   }
-        #w }
+        self.data = CSRStatus(8)
         self.status = CSRStatus(7)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "CTRL",
-        #w       "reg_description": "Controls for managing `SETUP` packets.",
-        #w       "reg": [
-        #w           { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
-        #w           { "name": "ENABLE",  "bits": 1, "attr": "WO", "description": "Write a `1` here to enable recieving data" },
-        #w           {                    "bits": 6 }
-        #w       ]
-        #w   }
-        #w }
         self.ctrl = CSRStorage(2)
 
         # How to respond to requests:
@@ -410,7 +427,7 @@ class OutHandler(Module, AutoCSR):
         self.comb += [
             buf.din.eq(self.data_recv_payload),
             buf.we.eq(self.data_recv_put),
-            self.data.w.eq(buf.dout),
+            self.data.status.eq(buf.dout),
 
             # When a "1" is written to ctrl, advance the FIFO
             buf.re.eq(self.ctrl.storage[0] & self.ctrl.re),
