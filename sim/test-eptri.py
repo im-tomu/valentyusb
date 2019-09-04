@@ -366,13 +366,13 @@ class UsbTest:
     @cocotb.coroutine
     def set_response(self, ep, response):
         if EndpointType.epdir(ep) == EndpointType.IN and response == EndpointResponse.ACK:
-            yield self.write(self.csrs['usb_in_epno'], EndpointType.epnum(ep))
+            yield self.write(self.csrs['usb_in_ctrl'], EndpointType.epnum(ep))
 
     @cocotb.coroutine
     def send_data(self, token, ep, data):
         for b in data:
             yield self.write(self.csrs['usb_in_data'], b)
-        yield self.write(self.csrs['usb_in_epno'], ep)
+        yield self.write(self.csrs['usb_in_ctrl'], ep)
 
     @cocotb.coroutine
     def transaction_setup(self, addr, data, epnum=0):
@@ -389,7 +389,7 @@ class UsbTest:
         datax = PID.DATA1
 
         # # Set it up so we ACK the final IN packet
-        # yield self.write(self.csrs['usb_in_epno'], 0)
+        # yield self.write(self.csrs['usb_in_ctrl'], 0)
         for _i, chunk in enumerate(grouper_tofit(chunk_size, data)):
             self.dut._log.warning("Sening {} bytes to host".format(len(chunk)))
             # Enable receiving data
@@ -413,7 +413,7 @@ class UsbTest:
             self.dut._log.debug("Actual data we're expecting: {}".format(chunk))
             for b in chunk:
                 yield self.write(self.csrs['usb_in_data'], b)
-            yield self.write(self.csrs['usb_in_epno'], epnum)
+            yield self.write(self.csrs['usb_in_ctrl'], epnum)
             recv = cocotb.fork(self.host_recv(datax, addr, epnum, chunk))
             yield recv.join()
 
@@ -422,7 +422,7 @@ class UsbTest:
             else:
                 datax = PID.DATA0
         if not sent_data:
-            yield self.write(self.csrs['usb_in_epno'], epnum)
+            yield self.write(self.csrs['usb_in_ctrl'], epnum)
             recv = cocotb.fork(self.host_recv(datax, addr, epnum, []))
             yield self.send_data(datax, epnum, data)
             yield recv.join()
@@ -496,8 +496,8 @@ class UsbTest:
         yield self.transaction_status_in(addr, epaddr_in)
         yield RisingEdge(self.dut.clk12)
         in_ev = yield self.read(self.csrs['usb_in_ev_pending'])
-        if in_ev != 0:
-            raise TestFailure("in_ev should still be 0 at the end of the test, was: {:02x}".format(in_ev))
+        if in_ev != 1:
+            raise TestFailure("in_ev should be 1 at the end of the test, was: {:02x}".format(in_ev))
         yield self.write(self.csrs['usb_in_ev_pending'], in_ev)
 
     @cocotb.coroutine
@@ -620,7 +620,7 @@ def test_control_transfer_in_lazy(dut):
             0x08, 0x09, 0x0A, 0x0B]
     for b in data:
         yield harness.write(harness.csrs['usb_in_data'], b)
-    yield harness.write(harness.csrs['usb_in_epno'], 0)
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     # Send a few packets while we "process" the data as a slow host
     for i in range(10):
@@ -678,7 +678,7 @@ def test_control_transfer_in_lazy(dut):
             0x08, 0x09, 0x0A, 0x0B]
     for b in data:
         yield harness.write(harness.csrs['usb_in_data'], b)
-    yield harness.write(harness.csrs['usb_in_epno'], 0)
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     # Send a few packets while we "process" the data as a slow host
     for i in range(10):
@@ -750,7 +750,7 @@ def test_control_transfer_in_large(dut):
         harness.dut._log.debug("Actual data we're expecting: {}".format(chunk))
         for b in chunk:
             yield harness.write(harness.csrs['usb_in_data'], b)
-        yield harness.write(harness.csrs['usb_in_epno'], 0)
+        yield harness.write(harness.csrs['usb_in_ctrl'], 0)
         recv = cocotb.fork(harness.host_recv(datax, 11, 0, chunk))
         yield recv.join()
 
@@ -764,7 +764,7 @@ def test_control_transfer_in_large(dut):
         else:
             datax = PID.DATA0
     if not sent_data:
-        yield harness.write(harness.csrs['usb_in_epno'], 0)
+        yield harness.write(harness.csrs['usb_in_ctrl'], 0)
         recv = cocotb.fork(harness.host_recv(datax, 11, 0, []))
         yield harness.send_data(datax, 0, string_data)
         yield recv.join()
@@ -830,7 +830,7 @@ def test_sof_is_ignored(dut):
         yield harness.host_send_sof(4)
 
     # Indicate that we're ready to receive data to EP0
-    # harness.write(harness.csrs['usb_in_epno'], 0)
+    # harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     xmit = cocotb.fork(send_setup_and_sof())
     yield harness.expect_setup(epaddr_out, data)
@@ -954,6 +954,8 @@ def test_control_transfer_in(dut):
 
     yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
     yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
+    yield harness.write(harness.csrs['usb_address'], 20)
+    yield harness.host_send_sof(0)
 
     yield harness.control_transfer_in(
         20,
