@@ -1272,3 +1272,29 @@ def test_debug_out(dut):
     new_value = yield harness.read(reg_addr)
     if new_value != 0x42:
         raise TestFailure("memory at 0x{:08x} should be 0x{:08x}, but memory value was 0x{:08x}".format(reg_Addr, 0x42, new_value))
+
+@cocotb.test()
+def test_reset(dut):
+    harness = UsbTest(dut)
+    yield harness.reset()
+    yield harness.connect()
+
+    yield harness.write(harness.csrs['usb_address'], 23)
+    val = yield harness.read(harness.csrs['usb_address'])
+    if val != 23:
+        raise TestFailure("usb address should have been 23, but was {}".format(val))
+
+    # SE0 condition
+    harness.dut.usb_d_p = 0
+    harness.dut.usb_d_n = 0
+    for i in range(0, 64):
+        yield RisingEdge(harness.dut.clk12)
+
+    harness.dut.usb_d_p = 1
+    harness.dut.usb_d_n = 0
+    for i in range(0, 64):
+        yield RisingEdge(harness.dut.clk12)
+
+    val = yield harness.read(harness.csrs['usb_address'])
+    if val != 0:
+        raise TestFailure("after reset, usb address should have been 0, but was {}".format(val))
