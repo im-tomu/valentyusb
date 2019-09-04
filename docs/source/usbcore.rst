@@ -9,7 +9,6 @@ Subpackages
    usbcore.cpu
    usbcore.rx
    usbcore.sm
-   usbcore.test
    usbcore.tx
    usbcore.utils
 
@@ -28,14 +27,6 @@ usbcore.io module
 -----------------
 
 .. automodule:: usbcore.io
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-usbcore.io\_test module
------------------------
-
-.. automodule:: usbcore.io_test
    :members:
    :undoc-members:
    :show-inheritance:
