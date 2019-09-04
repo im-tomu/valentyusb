@@ -44,7 +44,7 @@ class USBWishboneBridge(Module):
         self.send_ack = Signal()
 
         # Indicates whether a "debug" packet is currently being processed
-        self.n_debug_in_progress = Signal()
+        self.n_debug_in_progress = Signal(reset=1)
 
         address = Signal(32, reset_less=True)
         address_ce = Signal()
@@ -90,6 +90,7 @@ class USBWishboneBridge(Module):
         # The target address comes as the wValue and wIndex in the SETUP
         # packet.  Once we get that data, we're ready to do the operation.
         fsm.act("RECEIVE_ADDRESS",
+            self.n_debug_in_progress.eq(0),
             If(usb_core.data_recv_put,
                 byte_counter_ce.eq(1),
                 If((byte_counter >= 1),
@@ -117,6 +118,7 @@ class USBWishboneBridge(Module):
             # once it comes in, and so that we're in a position to
             # receive data.
             self.send_ack.eq(usb_core.endp == 0),
+            self.n_debug_in_progress.eq(0),
             If(usb_core.endp == 0,
                 If(usb_core.data_recv_put,
                     rx_data_ce.eq(1),
@@ -132,6 +134,7 @@ class USBWishboneBridge(Module):
             )
         )
         fsm.act("WAIT_RECEIVE_DATA_END",
+            self.n_debug_in_progress.eq(0),
             self.send_ack.eq(1),
             # Wait for the end of the USB packet, if
             # it hasn't come already.
@@ -149,6 +152,7 @@ class USBWishboneBridge(Module):
             self.wishbone.sel.eq(2**len(self.wishbone.sel) - 1)
         ]
         fsm.act("WRITE_DATA",
+            self.n_debug_in_progress.eq(0),
             byte_counter_reset.eq(1),
             self.wishbone.stb.eq(1),
             self.wishbone.we.eq(1),
@@ -159,6 +163,7 @@ class USBWishboneBridge(Module):
         )
 
         fsm.act("READ_DATA",
+            self.n_debug_in_progress.eq(0),
             byte_counter_reset.eq(1),
             self.wishbone.stb.eq(1),
             self.wishbone.we.eq(0),
@@ -170,6 +175,7 @@ class USBWishboneBridge(Module):
         )
 
         fsm.act("SEND_DATA_WAIT_START",
+            self.n_debug_in_progress.eq(0),
             byte_counter_reset.eq(1),
             If(usb_core.start,
                 NextState("SEND_DATA"),
@@ -178,6 +184,7 @@ class USBWishboneBridge(Module):
         self.comb += \
             chooser(data, byte_counter, self.sink_data, n=4, reverse=False)
         fsm.act("SEND_DATA",
+            self.n_debug_in_progress.eq(0),
             If(usb_core.endp != 0,
                 NextState("SEND_DATA_WAIT_START"),
             ),
@@ -200,6 +207,7 @@ class USBWishboneBridge(Module):
         # send an "IN" request.  Acknowledge that by setting
         # self.send_ack, without putting anything in self.sink_data.
         fsm.act("WAIT_SEND_ACK_START",
+            self.n_debug_in_progress.eq(0),
             If(usb_core.start,
                 NextState("SEND_ACK")
             ),
@@ -208,6 +216,7 @@ class USBWishboneBridge(Module):
         # Send the ACK.  If the endpoint number is incorrect, go back and
         # wait again.
         fsm.act("SEND_ACK",
+            self.n_debug_in_progress.eq(0),
             If(usb_core.endp != 0,
                 NextState("WAIT_SEND_ACK_START")
             ),
