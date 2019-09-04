@@ -50,6 +50,431 @@ epin_queued: A response is queued and has yet to be acknowledged by the host
 ep_stall: a 32-bit field representing endpoitns to respond with STALL.
 """
 
+class TriEndpointInterface(Module, AutoCSR):
+    """Implements a CPU interface with three FIFOs:
+        * SETUP
+        * IN
+        * OUT
+
+    Each of the three FIFOs has a relatively similar register set.
+
+    Attributes
+    ----------
+
+    enable_out0 : CSRStorage
+        Write a `1` to enable endpoints 0-7 OUT -- otherwise a STALL will be sent.
+
+        .. wavedrom::
+            :caption: ENABLE_OUT0
+
+            {
+               "reg": [
+                   { "name": "EPOUT",   "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given OUT endpoint" }
+               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
+           }
+
+    enable_out1 : CSRStorage
+        Write a `1` to enable endpoints 8-15 OUT -- otherwise a STALL will be sent.
+
+        .. wavedrom::
+            :caption: ENABLE_OUT1
+
+            {
+                "reg": [
+                    { "name": "EPOUT",   "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given OUT endpoint" }
+                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
+            }
+
+    enable_in0 : CSRStorage
+        Write a `1` to enable endpoints 0-7 IN -- otherwise a STALL will be sent.
+
+        .. wavedrom::
+            :caption: ENABLE_IN0
+
+            {
+                "reg": [
+                    { "name": "EPIN",    "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given IN endpoint" }
+                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
+            }
+
+    enable_in1 : CSRStorage
+        Write a `1` to enable endpoints 8-15 IN -- otherwise a STALL will be sent.
+
+        .. wavedrom::
+            :caption: ENABLE_IN1
+
+            {
+                "reg": [
+                    { "name": "EPIN",    "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given IN endpoint" }
+                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
+            }
+
+    address : CSRStorage
+        Sets the USB device address, to ignore packets going to other devices.
+
+        .. wavedrom::
+            :caption: ADDRESS
+
+            {
+                "reg": [
+                    { "name": "ADDRESS", "bits": 7, "attr": "WO", "description": "Write the USB address from USB `SET_ADDRESS packets.`" },
+                    {                    "bits": 1 }
+                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
+            }
+    """
+
+    def __init__(self, iobuf, debug=False):
+
+        # USB Core
+        self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
+
+        self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
+        self.iobuf = usb_core.iobuf
+
+        self.eps_idx = eps_idx = Signal(5)
+        self.comb += [
+            self.eps_idx.eq(Cat(usb_core.endp, usb_core.tok == PID.IN)),
+        ]
+        
+        # Generate debug signals, in case debug is enabled.
+        debug_packet_detected = Signal()
+        debug_data_mux = Signal(8)
+        debug_data_ready_mux = Signal()
+        debug_sink_data = Signal(8)
+        debug_sink_data_ready = Signal()
+        debug_ack_response = Signal()
+
+        # Wire up debug signals if required
+        if debug:
+            debug_bridge = USBWishboneBridge(self.usb_core)
+            self.submodules.debug_bridge = ClockDomainsRenamer("usb_12")(debug_bridge)
+            self.comb += [
+                debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
+            ]
+
+        ems = []
+        trigger_all = []
+
+        # IRQ
+        self.submodules.setup = setup_handler = ClockDomainsRenamer("usb_12")(SetupHandler(usb_core))
+        ems.append(setup_handler.ev)
+        trigger_all.append(setup_handler.trigger.eq(1)),
+
+        in_handler = ClockDomainsRenamer("usb_12")(InHandler(usb_core))
+        self.submodules.__setattr__("in", in_handler)
+        ems.append(in_handler.ev)
+        trigger_all.append(in_handler.trigger.eq(1)),
+
+        self.submodules.out = out_handler = ClockDomainsRenamer("usb_12")(OutHandler(usb_core))
+        ems.append(out_handler.ev)
+        trigger_all.append(out_handler.trigger.eq(1)),
+
+        self.submodules.ev = ev.SharedIRQ(*ems)
+
+        self.comb += [
+            If(~iobuf.usb_pullup,
+                *trigger_all,
+            ),
+        ]
+
+        self.enable_out0 = CSRStorage(8)
+        self.enable_out1 = CSRStorage(8)
+        self.enable_in0 = CSRStorage(8)
+        self.enable_in1 = CSRStorage(8)
+
+        enable = Signal(32)
+        should_stall = Signal()
+        usb_core_reset = Signal()
+
+        self.address = ResetInserter()(CSRStorage(7, name="address"))
+        self.comb += self.address.reset.eq(usb_core.usb_reset)
+
+        self.submodules.stage = stage = ClockDomainsRenamer("usb_12")(ResetInserter()(FSM(reset_state="IDLE")))
+        self.comb += stage.reset.eq(usb_core.usb_reset)
+        stage_num = Signal(8)
+
+        # If the SETUP stage should have data, this will be 1
+        setup_data_stage = Signal()
+
+        # Which of the 10 SETUP bytes (8 + CRC16) we're currently looking at
+        setup_data_byte = Signal(4)
+        setup_data_byte_ce = Signal()
+        setup_data_byte_rst = Signal()
+
+        # 1 if it's an IN packet, 0 if it's an OUT
+        setup_is_in = Signal()
+
+        invalid_states = Signal(8)
+        invalid_state_ce = Signal()
+
+        self.sync.usb_12 += [
+            If(invalid_state_ce, invalid_states.eq(invalid_states+1)),
+            If(setup_data_byte_rst,
+                setup_data_byte.eq(0),
+                setup_is_in.eq(0),
+                setup_data_stage.eq(0),
+            ).Elif(setup_data_byte_ce,
+                setup_data_byte.eq(setup_data_byte + 1),
+                If(setup_data_byte == 0,
+                    setup_is_in.eq(usb_core.data_recv_payload[7]),
+                ).Elif(setup_data_byte == 6,
+                    If(usb_core.data_recv_payload,
+                        setup_data_stage.eq(1)
+                    )
+                ).Elif(setup_data_byte == 7,
+                    If(usb_core.data_recv_payload,
+                        setup_data_stage.eq(1)
+                    )
+                ),
+            ),
+        ]
+
+        stage.act("IDLE",
+            stage_num.eq(0),
+            NextValue(usb_core.addr, self.address.storage),
+            setup_data_byte_rst.eq(1),
+
+            If(usb_core.start,
+                NextState("CHECK_TOK")
+            )
+        )
+
+        tok_waits = Signal(8)
+        stage.act("CHECK_TOK",
+            stage_num.eq(1),
+            NextValue(tok_waits, tok_waits + 1),
+            If(usb_core.idle,
+                NextState("IDLE"),
+            ).Elif(usb_core.tok == PID.SETUP,
+                NextState("SETUP"),
+                # SETUP packets must be ACKed
+                usb_core.sta.eq(0),
+                usb_core.arm.eq(1),
+            ).Elif(usb_core.tok == PID.IN,
+                NextState("IN"),
+                usb_core.sta.eq(should_stall),
+                usb_core.arm.eq(in_handler.response | should_stall),
+            ).Elif(usb_core.tok == PID.OUT,
+                NextState("OUT"),
+                usb_core.sta.eq(should_stall),
+                usb_core.arm.eq(out_handler.response | should_stall),
+            ).Else(
+                NextState("IDLE"),
+            )
+        )
+
+        if debug:
+            stage.act("DEBUG",
+                stage_num.eq(2),
+                usb_core.data_send_payload.eq(self.debug_bridge.sink_data),
+                usb_core.data_send_have.eq(self.debug_bridge.sink_valid),
+                usb_core.sta.eq(0),
+                If(usb_core.endp == 0,
+                    usb_core.arm.eq(self.debug_bridge.send_ack | self.debug_bridge.sink_valid),
+                ).Else(
+                    usb_core.arm.eq(0)
+                ),
+                usb_core.dtb.eq(1),
+                If(~debug_packet_detected,
+                    NextState("IDLE")
+                )
+            )
+        else:
+            stage.act("DEBUG", NextState("IDLE"))
+
+        stage.act("SETUP",
+            stage_num.eq(3),
+            # SETUP packet
+            setup_handler.data_recv_payload.eq(usb_core.data_recv_payload),
+            setup_handler.data_recv_put.eq(usb_core.data_recv_put),
+
+            in_handler.dtb_reset.eq(1),
+
+            # We aren't allowed to STALL a SETUP packet
+            usb_core.sta.eq(0),
+
+            # Always ACK a SETUP packet
+            usb_core.arm.eq(1),
+
+            setup_handler.trigger.eq(usb_core.commit),
+
+            setup_data_byte_ce.eq(usb_core.data_recv_put),
+
+            # If the transfer size is nonzero, proceed to handle data packets
+
+            If(debug_packet_detected,
+                NextState("DEBUG")
+            ),
+
+            If(usb_core.setup,
+                If(setup_is_in,
+                    If(setup_data_stage,
+                        NextState("CONTROL_IN"),
+                        usb_core.sta.eq(~out_handler.response & should_stall),
+                        usb_core.arm.eq(in_handler.response | should_stall),
+                    ).Else(
+                        NextState("WAIT_CONTROL_ACK_IN"),
+                    )
+                ).Else(
+                    If(setup_data_stage,
+                        NextState("CONTROL_OUT"),
+                        usb_core.sta.eq(~out_handler.response & should_stall),
+                        usb_core.arm.eq(out_handler.response | should_stall),
+                    ).Else(
+                        NextState("WAIT_CONTROL_ACK_OUT"),
+                    )
+                )
+            ).Elif(usb_core.end,
+                invalid_state_ce.eq(1),
+                NextState("IDLE"),
+            ),
+        )
+
+        stage.act("CONTROL_IN",
+            stage_num.eq(4),
+            If(usb_core.endp == 0,
+                If(usb_core.tok == PID.IN,
+                    usb_core.data_send_have.eq(in_handler.data_out_have),
+                    usb_core.data_send_payload.eq(in_handler.data_out),
+                    in_handler.data_out_advance.eq(usb_core.data_send_get),
+
+                    usb_core.sta.eq(should_stall),
+                    usb_core.arm.eq(should_stall | (setup_handler.empty & in_handler.response)),
+                    usb_core.dtb.eq(in_handler.dtb),
+                    in_handler.trigger.eq(usb_core.commit),
+
+                ).Elif(usb_core.tok == PID.OUT,
+                    usb_core.sta.eq(0),
+                    usb_core.arm.eq(1),
+                    # After an IN transfer, the host sends an OUT
+                    # packet.  We must ACK this and then return to IDLE.
+                    out_handler.ctrl_response.eq(1),
+                    NextState("WAIT_DONE"),
+                )
+            )
+        )
+
+        stage.act("CONTROL_OUT",
+            stage_num.eq(5),
+            If(usb_core.endp == 0,
+                If(usb_core.tok == PID.OUT,
+                    out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
+                    out_handler.data_recv_put.eq(usb_core.data_recv_put),
+                    usb_core.sta.eq(should_stall),
+                    usb_core.arm.eq(should_stall | (setup_handler.empty & out_handler.response)),
+                    out_handler.trigger.eq(usb_core.commit),
+                ).Elif(usb_core.tok == PID.IN,
+                    usb_core.sta.eq(0),
+                    usb_core.arm.eq(setup_handler.empty),
+                    NextState("WAIT_DONE"),
+                )
+            ),
+        )
+
+        # ACK the IN packet by sending a single OUT packet with no data
+        stage.act("WAIT_CONTROL_ACK_IN",
+            stage_num.eq(6),
+            usb_core.sta.eq(0),
+            # Only continue once the buffer has been drained.
+            usb_core.arm.eq(setup_handler.empty),
+            usb_core.dtb.eq(1),
+            If(usb_core.end & setup_handler.empty,
+                NextState("IDLE")
+            ),
+        )
+
+        # ACK the OUT packet by sending a single IN packet with no data
+        stage.act("WAIT_CONTROL_ACK_OUT",
+            stage_num.eq(7),
+            usb_core.sta.eq(0),
+            # Only continue once the buffer has been drained.
+            usb_core.arm.eq(setup_handler.empty),
+            usb_core.dtb.eq(1),
+            If(usb_core.data_end & setup_handler.empty,
+                # usb_core_reset.eq(1),
+                NextState("IDLE")
+            ),
+        )
+
+        stage.act("IN",
+            stage_num.eq(8),
+            # If(usb_core.tok == PID.IN,
+                # # IN packet (device-to-host)
+                usb_core.data_send_have.eq(in_handler.data_out_have),
+                usb_core.data_send_payload.eq(in_handler.data_out),
+                in_handler.data_out_advance.eq(usb_core.data_send_get),
+
+                usb_core.sta.eq(should_stall),
+                usb_core.arm.eq(in_handler.response | should_stall),
+                usb_core.dtb.eq(in_handler.dtb),
+                in_handler.trigger.eq(usb_core.commit),
+
+                # After an IN transfer, the host sends an OUT
+                # packet.  We must ACK this and then return to IDLE.
+                If(usb_core.end,
+                    NextState("IDLE"),
+                ),
+            # ),
+        )
+
+        stage.act("OUT",
+            stage_num.eq(9),
+            # OUT packet (host-to-device)
+            out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
+            out_handler.data_recv_put.eq(usb_core.data_recv_put),
+            usb_core.sta.eq(should_stall),
+            usb_core.arm.eq(out_handler.response | should_stall),
+            out_handler.trigger.eq(usb_core.commit),
+
+            # After an OUT transfer, the host sends an IN
+            # packet.  We must ACK this and then return to IDLE.
+            If(usb_core.end,
+                NextState("IDLE"),
+            ),
+        )
+
+        stage.act("WAIT_DONE",
+            stage_num.eq(10),
+            usb_core.sta.eq(0),
+            usb_core.arm.eq(1),
+            If(usb_core.end,
+                NextState("IDLE"),
+            ),
+        )
+
+        self.comb += [
+            enable.eq(Cat(self.enable_out0.storage, self.enable_out1.storage, self.enable_in0.storage, self.enable_in1.storage)),
+            should_stall.eq(~(enable >> eps_idx)),
+        ]
+
+        error_count = Signal(8)
+        self.comb += usb_core.reset.eq(usb_core.error | usb_core_reset)
+        self.sync.usb_12 += [
+            # Reset the transfer state machine if it gets into an error
+            If(usb_core.error,
+                error_count.eq(error_count + 1),
+            ),
+        ]
+
+        self.stage_num = CSRStatus(8)
+        self.comb += self.stage_num.status.eq(stage_num)
+
+        self.error_count = CSRStatus(8)
+        self.comb += self.error_count.status.eq(error_count)
+
+        self.tok_waits = CSRStatus(8)
+        self.comb += self.tok_waits.status.eq(tok_waits)
+
+        self.status = CSRStatus(8)
+        # reset_count = Signal(4)
+        # self.sync += If(usb_core.usb_reset, reset_count.eq(reset_count + 1))
+        self.comb += self.status.status.eq(Cat(setup_data_byte,
+                                               setup_data_byte_ce,
+                                               setup_data_byte_rst))
+
+        self.invalid_states = CSRStatus(8)
+        self.comb += self.invalid_states.status.eq(invalid_states)
+
 class SetupHandler(Module, AutoCSR):
     """Handle `SETUP` packets.
 
@@ -471,425 +896,3 @@ class OutHandler(Module, AutoCSR):
                 have_data.eq(self.ctrl.storage[1]),
             ),
         ]
-
-
-class TriEndpointInterface(Module, AutoCSR):
-    """
-
-    Implements a CPU interface with three endpoints:
-        * SETUP
-        * EPIN
-        * EPOUT
-
-    Each endpoint has:
-     * A FIFO with one end connected to CSRs and the other to the USB core.
-     * Control bits.
-     * A pending flag.
-
-    An output FIFO is written to using CSR registers.
-    An input FIFO is read using CSR registers.
-
-    Extra CSR registers set the response type (ACK/NAK/STALL).
-    """
-
-    def __init__(self, iobuf, debug=False):
-
-        # USB Core
-        self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
-
-        self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
-        self.iobuf = usb_core.iobuf
-
-        self.eps_idx = eps_idx = Signal(5)
-        self.comb += [
-            self.eps_idx.eq(Cat(usb_core.endp, usb_core.tok == PID.IN)),
-        ]
-        
-        # Generate debug signals, in case debug is enabled.
-        debug_packet_detected = Signal()
-        debug_data_mux = Signal(8)
-        debug_data_ready_mux = Signal()
-        debug_sink_data = Signal(8)
-        debug_sink_data_ready = Signal()
-        debug_ack_response = Signal()
-
-        # Wire up debug signals if required
-        if debug:
-            debug_bridge = USBWishboneBridge(self.usb_core)
-            self.submodules.debug_bridge = ClockDomainsRenamer("usb_12")(debug_bridge)
-            self.comb += [
-                debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
-            ]
-
-        ems = []
-        trigger_all = []
-
-        # IRQ
-        self.submodules.setup = setup_handler = ClockDomainsRenamer("usb_12")(SetupHandler(usb_core))
-        ems.append(setup_handler.ev)
-        trigger_all.append(setup_handler.trigger.eq(1)),
-
-        in_handler = ClockDomainsRenamer("usb_12")(InHandler(usb_core))
-        self.submodules.__setattr__("in", in_handler)
-        ems.append(in_handler.ev)
-        trigger_all.append(in_handler.trigger.eq(1)),
-
-        self.submodules.out = out_handler = ClockDomainsRenamer("usb_12")(OutHandler(usb_core))
-        ems.append(out_handler.ev)
-        trigger_all.append(out_handler.trigger.eq(1)),
-
-        self.submodules.ev = ev.SharedIRQ(*ems)
-
-        self.comb += [
-            If(~iobuf.usb_pullup,
-                *trigger_all,
-            ),
-        ]
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "ENABLE_OUT0",
-        #w       "reg_description": "Set a `1` to enable endpoints 0-7 OUT -- otherwise a STALL will be sent.",
-        #w       "reg": [
-        #w           { "name": "EPOUT",   "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given OUT endpoint" },
-        #w       ]
-        #w   }
-        #w }
-        self.enable_out0 = CSRStorage(8)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "ENABLE_OUT1",
-        #w       "reg_description": "Set a `1` to enable endpoints 8-15 IN -- otherwise a STALL will be sent.",
-        #w       "reg": [
-        #w           { "name": "EPOUT",   "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given OUT endpoint" },
-        #w       ]
-        #w   }
-        #w }
-        self.enable_out1 = CSRStorage(8)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "ENABLE_IN0",
-        #w       "reg_description": "Set a `1` to enable endpoints 0-7 IN -- otherwise a STALL will be sent.",
-        #w       "reg": [
-        #w           { "name": "EPIN",    "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given IN endpoint" }
-        #w       ]
-        #w   }
-        #w }
-        self.enable_in0 = CSRStorage(8)
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "ENABLE_IN1",
-        #w       "reg_description": "Set a `1` to enable endpoints 8-15 IN -- otherwise a STALL will be sent.",
-        #w       "reg": [
-        #w           { "name": "EPIN",    "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given IN endpoint" }
-        #w       ]
-        #w   }
-        #w }
-        self.enable_in1 = CSRStorage(8)
-
-        enable = Signal(32)
-        should_stall = Signal()
-        usb_core_reset = Signal()
-
-        #w {
-        #w   "reg_definition": {
-        #w       "reg_name": "ADDRESS",
-        #w       "reg_description": "Sets the USB device address, to ignore packets going to other devices.",
-        #w       "reg": [
-        #w           { "name": "ADDRESS", "bits": 7, "attr": "WO", "description": "Write the USB address from USB `SET_ADDRESS packets.`" },
-        #w           {                    "bits": 1 }
-        #w       ]
-        #w   }
-        #w }
-        self.address = ResetInserter()(CSRStorage(7, name="address"))
-        self.comb += self.address.reset.eq(usb_core.usb_reset)
-        # self.sync.usb_12 += If(self.address.re, usb_address.eq(self.address.storage))
-
-        self.submodules.stage = stage = ClockDomainsRenamer("usb_12")(ResetInserter()(FSM(reset_state="IDLE")))
-        self.comb += stage.reset.eq(usb_core.usb_reset)
-        stage_num = Signal(8)
-
-        # If the SETUP stage should have data, this will be 1
-        setup_data_stage = Signal()
-
-        # Which of the 10 SETUP bytes (8 + CRC16) we're currently looking at
-        setup_data_byte = Signal(4)
-        setup_data_byte_ce = Signal()
-        setup_data_byte_rst = Signal()
-
-        # 1 if it's an IN packet, 0 if it's an OUT
-        setup_is_in = Signal()
-
-        invalid_states = Signal(8)
-        invalid_state_ce = Signal()
-
-        self.sync.usb_12 += [
-            If(invalid_state_ce, invalid_states.eq(invalid_states+1)),
-            If(setup_data_byte_rst,
-                setup_data_byte.eq(0),
-                setup_is_in.eq(0),
-                setup_data_stage.eq(0),
-            ).Elif(setup_data_byte_ce,
-                setup_data_byte.eq(setup_data_byte + 1),
-                If(setup_data_byte == 0,
-                    setup_is_in.eq(usb_core.data_recv_payload[7]),
-                ).Elif(setup_data_byte == 6,
-                    If(usb_core.data_recv_payload,
-                        setup_data_stage.eq(1)
-                    )
-                ).Elif(setup_data_byte == 7,
-                    If(usb_core.data_recv_payload,
-                        setup_data_stage.eq(1)
-                    )
-                ),
-            ),
-        ]
-
-        stage.act("IDLE",
-            stage_num.eq(0),
-            NextValue(usb_core.addr, self.address.storage),
-            setup_data_byte_rst.eq(1),
-
-            If(usb_core.start,
-                NextState("CHECK_TOK")
-            )
-        )
-
-        tok_waits = Signal(8)
-        stage.act("CHECK_TOK",
-            stage_num.eq(1),
-            NextValue(tok_waits, tok_waits + 1),
-            If(usb_core.idle,
-                NextState("IDLE"),
-            ).Elif(usb_core.tok == PID.SETUP,
-                NextState("SETUP"),
-                # SETUP packets must be ACKed
-                usb_core.sta.eq(0),
-                usb_core.arm.eq(1),
-            ).Elif(usb_core.tok == PID.IN,
-                NextState("IN"),
-                usb_core.sta.eq(should_stall),
-                usb_core.arm.eq(in_handler.response | should_stall),
-            ).Elif(usb_core.tok == PID.OUT,
-                NextState("OUT"),
-                usb_core.sta.eq(should_stall),
-                usb_core.arm.eq(out_handler.response | should_stall),
-            ).Else(
-                NextState("IDLE"),
-            )
-        )
-
-        if debug:
-            stage.act("DEBUG",
-                stage_num.eq(2),
-                usb_core.data_send_payload.eq(self.debug_bridge.sink_data),
-                usb_core.data_send_have.eq(self.debug_bridge.sink_valid),
-                usb_core.sta.eq(0),
-                If(usb_core.endp == 0,
-                    usb_core.arm.eq(self.debug_bridge.send_ack | self.debug_bridge.sink_valid),
-                ).Else(
-                    usb_core.arm.eq(0)
-                ),
-                usb_core.dtb.eq(1),
-                If(~debug_packet_detected,
-                    NextState("IDLE")
-                )
-            )
-        else:
-            stage.act("DEBUG", NextState("IDLE"))
-
-        stage.act("SETUP",
-            stage_num.eq(3),
-            # SETUP packet
-            setup_handler.data_recv_payload.eq(usb_core.data_recv_payload),
-            setup_handler.data_recv_put.eq(usb_core.data_recv_put),
-
-            in_handler.dtb_reset.eq(1),
-
-            # We aren't allowed to STALL a SETUP packet
-            usb_core.sta.eq(0),
-
-            # Always ACK a SETUP packet
-            usb_core.arm.eq(1),
-
-            setup_handler.trigger.eq(usb_core.commit),
-
-            setup_data_byte_ce.eq(usb_core.data_recv_put),
-
-            # If the transfer size is nonzero, proceed to handle data packets
-
-            If(debug_packet_detected,
-                NextState("DEBUG")
-            ),
-
-            If(usb_core.setup,
-                If(setup_is_in,
-                    If(setup_data_stage,
-                        NextState("CONTROL_IN"),
-                        usb_core.sta.eq(~out_handler.response & should_stall),
-                        usb_core.arm.eq(in_handler.response | should_stall),
-                    ).Else(
-                        NextState("WAIT_CONTROL_ACK_IN"),
-                    )
-                ).Else(
-                    If(setup_data_stage,
-                        NextState("CONTROL_OUT"),
-                        usb_core.sta.eq(~out_handler.response & should_stall),
-                        usb_core.arm.eq(out_handler.response | should_stall),
-                    ).Else(
-                        NextState("WAIT_CONTROL_ACK_OUT"),
-                    )
-                )
-            ).Elif(usb_core.end,
-                invalid_state_ce.eq(1),
-                NextState("IDLE"),
-            ),
-        )
-
-        stage.act("CONTROL_IN",
-            stage_num.eq(4),
-            If(usb_core.endp == 0,
-                If(usb_core.tok == PID.IN,
-                    usb_core.data_send_have.eq(in_handler.data_out_have),
-                    usb_core.data_send_payload.eq(in_handler.data_out),
-                    in_handler.data_out_advance.eq(usb_core.data_send_get),
-
-                    usb_core.sta.eq(should_stall),
-                    usb_core.arm.eq(should_stall | (setup_handler.empty & in_handler.response)),
-                    usb_core.dtb.eq(in_handler.dtb),
-                    in_handler.trigger.eq(usb_core.commit),
-
-                ).Elif(usb_core.tok == PID.OUT,
-                    usb_core.sta.eq(0),
-                    usb_core.arm.eq(1),
-                    # After an IN transfer, the host sends an OUT
-                    # packet.  We must ACK this and then return to IDLE.
-                    out_handler.ctrl_response.eq(1),
-                    NextState("WAIT_DONE"),
-                )
-            )
-        )
-
-        stage.act("CONTROL_OUT",
-            stage_num.eq(5),
-            If(usb_core.endp == 0,
-                If(usb_core.tok == PID.OUT,
-                    out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
-                    out_handler.data_recv_put.eq(usb_core.data_recv_put),
-                    usb_core.sta.eq(should_stall),
-                    usb_core.arm.eq(should_stall | (setup_handler.empty & out_handler.response)),
-                    out_handler.trigger.eq(usb_core.commit),
-                ).Elif(usb_core.tok == PID.IN,
-                    usb_core.sta.eq(0),
-                    usb_core.arm.eq(setup_handler.empty),
-                    NextState("WAIT_DONE"),
-                )
-            ),
-        )
-
-        # ACK the IN packet by sending a single OUT packet with no data
-        stage.act("WAIT_CONTROL_ACK_IN",
-            stage_num.eq(6),
-            usb_core.sta.eq(0),
-            # Only continue once the buffer has been drained.
-            usb_core.arm.eq(setup_handler.empty),
-            usb_core.dtb.eq(1),
-            If(usb_core.end & setup_handler.empty,
-                NextState("IDLE")
-            ),
-        )
-
-        # ACK the OUT packet by sending a single IN packet with no data
-        stage.act("WAIT_CONTROL_ACK_OUT",
-            stage_num.eq(7),
-            usb_core.sta.eq(0),
-            # Only continue once the buffer has been drained.
-            usb_core.arm.eq(setup_handler.empty),
-            usb_core.dtb.eq(1),
-            If(usb_core.data_end & setup_handler.empty,
-                # usb_core_reset.eq(1),
-                NextState("IDLE")
-            ),
-        )
-
-        stage.act("IN",
-            stage_num.eq(8),
-            # If(usb_core.tok == PID.IN,
-                # # IN packet (device-to-host)
-                usb_core.data_send_have.eq(in_handler.data_out_have),
-                usb_core.data_send_payload.eq(in_handler.data_out),
-                in_handler.data_out_advance.eq(usb_core.data_send_get),
-
-                usb_core.sta.eq(should_stall),
-                usb_core.arm.eq(in_handler.response | should_stall),
-                usb_core.dtb.eq(in_handler.dtb),
-                in_handler.trigger.eq(usb_core.commit),
-
-                # After an IN transfer, the host sends an OUT
-                # packet.  We must ACK this and then return to IDLE.
-                If(usb_core.end,
-                    NextState("IDLE"),
-                ),
-            # ),
-        )
-
-        stage.act("OUT",
-            stage_num.eq(9),
-            # OUT packet (host-to-device)
-            out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
-            out_handler.data_recv_put.eq(usb_core.data_recv_put),
-            usb_core.sta.eq(should_stall),
-            usb_core.arm.eq(out_handler.response | should_stall),
-            out_handler.trigger.eq(usb_core.commit),
-
-            # After an OUT transfer, the host sends an IN
-            # packet.  We must ACK this and then return to IDLE.
-            If(usb_core.end,
-                NextState("IDLE"),
-            ),
-        )
-
-        stage.act("WAIT_DONE",
-            stage_num.eq(10),
-            usb_core.sta.eq(0),
-            usb_core.arm.eq(1),
-            If(usb_core.end,
-                NextState("IDLE"),
-            ),
-        )
-
-        self.comb += [
-            enable.eq(Cat(self.enable_out0.storage, self.enable_out1.storage, self.enable_in0.storage, self.enable_in1.storage)),
-            should_stall.eq(~(enable >> eps_idx)),
-        ]
-
-        error_count = Signal(8)
-        self.comb += usb_core.reset.eq(usb_core.error | usb_core_reset)
-        self.sync.usb_12 += [
-            # Reset the transfer state machine if it gets into an error
-            If(usb_core.error,
-                error_count.eq(error_count + 1),
-            ),
-        ]
-
-        self.stage_num = CSRStatus(8)
-        self.comb += self.stage_num.status.eq(stage_num)
-
-        self.error_count = CSRStatus(8)
-        self.comb += self.error_count.status.eq(error_count)
-
-        self.tok_waits = CSRStatus(8)
-        self.comb += self.tok_waits.status.eq(tok_waits)
-
-        self.status = CSRStatus(8)
-        # reset_count = Signal(4)
-        # self.sync += If(usb_core.usb_reset, reset_count.eq(reset_count + 1))
-        self.comb += self.status.status.eq(Cat(setup_data_byte,
-                                               setup_data_byte_ce,
-                                               setup_data_byte_rst))
-
-        self.invalid_states = CSRStatus(8)
-        self.comb += self.invalid_states.status.eq(invalid_states)
