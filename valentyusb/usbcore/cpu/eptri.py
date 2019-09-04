@@ -71,7 +71,7 @@ class TriEndpointInterface(Module, AutoCSR):
                "reg": [
                    { "name": "EPOUT",   "bits": 8, "description": "Set a `1` here to enable the given OUT endpoint" }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-           }
+            }
 
     enable_out1 : CSRStorage
         Write a `1` to enable endpoints 8-15 OUT -- otherwise a STALL will be sent.
@@ -338,11 +338,14 @@ class TriEndpointInterface(Module, AutoCSR):
                     usb_core.data_send_payload.eq(in_handler.data_out),
                     in_handler.data_out_advance.eq(usb_core.data_send_get),
 
-                    usb_core.sta.eq(should_stall),
-                    usb_core.arm.eq(should_stall | (setup_handler.empty & in_handler.response)),
+                    usb_core.sta.eq(should_stall | in_handler.stall),
+                    usb_core.arm.eq(should_stall | (setup_handler.handled & in_handler.response)),
                     usb_core.dtb.eq(in_handler.dtb),
-                    in_handler.trigger.eq(usb_core.commit),
-
+                    # in_handler.trigger.eq(usb_core.commit),
+                    If(in_handler.stall & usb_core.end,
+                        in_handler.reset.eq(1),
+                        NextState("IDLE")
+                    )
                 ).Elif(usb_core.tok == PID.OUT,
                     usb_core.sta.eq(0),
                     usb_core.arm.eq(1),
@@ -361,11 +364,11 @@ class TriEndpointInterface(Module, AutoCSR):
                     out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
                     out_handler.data_recv_put.eq(usb_core.data_recv_put),
                     usb_core.sta.eq(should_stall),
-                    usb_core.arm.eq(should_stall | (setup_handler.empty & out_handler.response)),
+                    usb_core.arm.eq(should_stall | (setup_handler.handled & out_handler.response)),
                     out_handler.trigger.eq(usb_core.commit),
                 ).Elif(usb_core.tok == PID.IN,
                     usb_core.sta.eq(0),
-                    usb_core.arm.eq(setup_handler.empty),
+                    usb_core.arm.eq(setup_handler.handled),
                     NextState("WAIT_DONE"),
                 )
             ),
@@ -447,27 +450,25 @@ class TriEndpointInterface(Module, AutoCSR):
             should_stall.eq(~(enable >> eps_idx)),
         ]
 
-        error_count = Signal(8)
+        # error_count = Signal(8)
         self.comb += usb_core.reset.eq(usb_core.error | usb_core_reset)
-        self.sync.usb_12 += [
-            # Reset the transfer state machine if it gets into an error
-            If(usb_core.error,
-                error_count.eq(error_count + 1),
-            ),
-        ]
+        # self.sync.usb_12 += [
+        #     # Reset the transfer state machine if it gets into an error
+        #     If(usb_core.error,
+        #         error_count.eq(error_count + 1),
+        #     ),
+        # ]
 
         self.stage_num = CSRStatus(8)
         self.comb += self.stage_num.status.eq(stage_num)
 
         self.error_count = CSRStatus(8)
-        self.comb += self.error_count.status.eq(error_count)
+        # self.comb += self.error_count.status.eq(error_count)
 
         self.tok_waits = CSRStatus(8)
         self.comb += self.tok_waits.status.eq(tok_waits)
 
         self.status = CSRStatus(8)
-        # reset_count = Signal(4)
-        # self.sync += If(usb_core.usb_reset, reset_count.eq(reset_count + 1))
         self.comb += self.status.status.eq(Cat(setup_data_byte,
                                                setup_data_byte_ce,
                                                setup_data_byte_rst))
@@ -535,7 +536,8 @@ class SetupHandler(Module, AutoCSR):
             {
               "reg": [
                   { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
-                  {                    "bits": 7 }
+                  { "name": "HANDLED", "bits": 1, "attr": "WO", "description": "Write a `1` here to indicate SETUP has been handled." },
+                  {                    "bits": 6 }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
     """
@@ -545,6 +547,7 @@ class SetupHandler(Module, AutoCSR):
         self.ev.submodules.packet = ev.EventSourcePulse()
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
+        self.handled = Signal()
 
         self.data_recv_payload = Signal(8)
         self.data_recv_put = Signal()
@@ -555,7 +558,7 @@ class SetupHandler(Module, AutoCSR):
         # Register Interface
         self.data = CSRStatus(8)
         self.status = CSRStatus(7)
-        self.ctrl = CSRStorage(1)
+        self.ctrl = CSRStorage(2)
 
         # How to respond to requests:
         #  - 0 - ACK
@@ -593,11 +596,16 @@ class SetupHandler(Module, AutoCSR):
         check_reset = Signal()
         data_bytes = Signal(3)
         self.sync.usb_12 += [
+            # When a `1` is written to the `CTRL.HANDLED` bit, indicate
+            # that the packet has been handled.
+            If(self.ctrl.re & self.ctrl.storage[1], self.handled.eq(1)),
+
             check_reset.eq(usb_core.start),
             If(check_reset,
                 If(usb_core.tok == PID.SETUP,
                     epno.eq(usb_core.endp),
                     buf.reset.eq(1),
+                    self.handled.eq(0),
                     data_bytes.eq(0),
                     self.have_data_stage.eq(0),
                 ).Else(
@@ -681,7 +689,8 @@ class InHandler(Module, AutoCSR):
               "reg": [
                    { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." },
                    { "name": "RESET","bits": 1, "attr": "WO", "description": "Write a 1 here to clear the contents of the FIFO." },
-                   {                 "bits": 3 }
+                   { "name": "STALL","bits": 1, "attr": "WO", "description": "Write a 1 here to stall the EP written in `EP`." },
+                   {                 "bits": 2 }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
     """
@@ -699,7 +708,7 @@ class InHandler(Module, AutoCSR):
 
         self.data = CSRStorage(8)
         self.status = CSRStatus(7)
-        self.ctrl = CSRStorage(5)
+        self.ctrl = ResetInserter()(CSRStorage(6, name="ctrl"))
 
         xxxx_readable = Signal()
         self.specials.crc_readable = cdc.MultiReg(~buf.readable, xxxx_readable)
@@ -709,11 +718,14 @@ class InHandler(Module, AutoCSR):
         #  - 1 - NAK
         self.response = Signal()
 
+        self.reset = Signal()
+
         # This value goes "1" when data is pending, and returns to "0" when it's done.
         queued = Signal()
 
         epno = Signal(4)
-        reset_fifo = Signal(1)
+        reset_fifo = Signal()
+        self.stall = Signal()
         self.comb += epno.eq(self.ctrl.storage[0:4])
         self.comb += reset_fifo.eq(self.ctrl.storage[4])
 
@@ -759,20 +771,26 @@ class InHandler(Module, AutoCSR):
         ]
 
         self.sync += [
-            # Toggle the "DTB" line if we transmitted data
             If(self.dtb_reset,
                 dtbs.eq(dtbs | (1 << epno)),
             )
             # When the user updates the `ctrl` register, enable writing.
             .Elif(self.ctrl.re,
-                queued.eq(~reset_fifo)
+                self.stall.eq(self.ctrl.storage[5]),
+                queued.eq(~reset_fifo),
+            )
+            .Elif(self.reset,
+                queued.eq(0),
+                self.stall.eq(0),
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
             .Elif(usb_core.commit,
                 If(is_in_packet & is_our_packet,
                     queued.eq(0),
+                    self.stall.eq(0),
                 ),
+                # Toggle the "DTB" line if we transmitted data
                 If(usb_core.arm & ~usb_core.sta,
                     dtbs.eq(dtbs ^ (1 << epno)),
                 ),
