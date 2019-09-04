@@ -32,7 +32,12 @@ class UsbTransfer(Module):
             tx.i_bit_strobe.eq(rx.o_bit_strobe),
         ]
 
+        # Whether to reset the FSM
         self.reset = Signal()
+
+        # The state of the USB reset (SE0) signal
+        self.usb_reset = Signal()
+        self.comb += self.usb_reset.eq(rx.o_reset)
 
         # ----------------------
         # Data paths
@@ -70,12 +75,14 @@ class UsbTransfer(Module):
         self.tok    = Signal(4)     # Contains the transfer token type
         self.endp   = Signal(4)
 
+        self.idle   = Signal(reset=0)      # Asserted when in the "WAIT_TOKEN" state
         self.start  = Signal()      # Asserted when a transfer is starting
         self.setup  = Signal()      # Asserted when a transfer is a setup
         self.commit = Signal()      # Asserted when a transfer succeeds
         self.retry  = Signal()      # Asserted when the host sends an IN without an ACK
         self.abort  = Signal()      # Asserted when a transfer fails
         self.end    = Signal()      # Asserted when transfer ends
+        self.data_end=Signal()      # Asserted when a DATAx transfer finishes
         self.error  = Signal()      # Asserted when in the ERROR state
         self.comb += [
             self.end.eq(self.commit | self.abort),
@@ -114,20 +121,22 @@ class UsbTransfer(Module):
         # <Data0[]
         # >Ack
         # ---------------------------
-        transfer = FSM(reset_state="WAIT_TOKEN")
+        transfer = ResetInserter()(FSM(reset_state="WAIT_TOKEN"))
         self.submodules.transfer = transfer = ClockDomainsRenamer("usb_12")(transfer)
+        self.comb += transfer.reset.eq(self.reset)
         transfer.act("ERROR",
             self.error.eq(1),
-            If(self.reset, NextState("WAIT_TOKEN")),
         )
 
         transfer.act("WAIT_TOKEN",
+            self.idle.eq(1),
             If(rx.o_pkt_start,
                 NextState("RECV_TOKEN"),
             ),
         )
 
         transfer.act("RECV_TOKEN",
+            self.idle.eq(0),
             If(rxstate.o_decoded,
                 #If((rxstate.o_pid & PIDTypes.TYPE_MASK) != PIDTypes.TOKEN,
                 #    NextState('ERROR'),
@@ -220,6 +229,7 @@ class UsbTransfer(Module):
                 txstate.i_pid.eq(PID.DATA0),
             ),
             self.data_send_get.eq(txstate.o_data_ack),
+            self.data_end.eq(txstate.o_pkt_end),
             If(txstate.o_pkt_end, NextState("WAIT_HAND")),
         )
         self.comb += [

@@ -28,7 +28,7 @@ from litex.soc.interconnect.csr import AutoCSR, CSRStatus, CSRStorage
 
 from valentyusb import usbcore
 from valentyusb.usbcore import io as usbio
-from valentyusb.usbcore.cpu import dummyusb, eptri
+from valentyusb.usbcore.cpu import dummyusb, eptri, epfifo
 from valentyusb.usbcore.endpoint import EndpointType
 
 import argparse
@@ -156,6 +156,8 @@ class BaseSoC(SoCCore):
         self.comb += usb_pads.tx_en.eq(usb_iobuf.usb_tx_en)
         if usb_variant == 'eptri':
             self.submodules.usb = eptri.TriEndpointInterface(usb_iobuf, debug=True)
+        elif usb_variant == 'epfifo':
+            self.submodules.usb = epfifo.PerEndpointFifoInterface(usb_iobuf, debug=True)
         elif usb_variant == 'dummy':
             self.submodules.usb = dummyusb.DummyUsb(usb_iobuf, debug=True)
         else:
@@ -235,7 +237,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Build test file for dummy or eptri module")
     parser.add_argument('variant', metavar='VARIANT',
-                                   choices=['dummy', 'eptri'],
+                                   choices=['dummy', 'eptri', 'epfifo'],
                                    default='dummy',
                                    help='USB variant. Choices: [%(choices)s] (default: %(default)s)' )
     parser.add_argument('--dir', metavar='DIRECTORY',
