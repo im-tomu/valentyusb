@@ -69,7 +69,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
             {
                "reg": [
-                   { "name": "EPOUT",   "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given OUT endpoint" }
+                   { "name": "EPOUT",   "bits": 8, "description": "Set a `1` here to enable the given OUT endpoint" }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
            }
 
@@ -81,7 +81,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
             {
                 "reg": [
-                    { "name": "EPOUT",   "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given OUT endpoint" }
+                    { "name": "EPOUT",   "bits": 8, "description": "Set a `1` here to enable the given OUT endpoint" }
                 ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
 
@@ -93,7 +93,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
             {
                 "reg": [
-                    { "name": "EPIN",    "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given IN endpoint" }
+                    { "name": "EPIN",    "bits": 8, "description": "Set a `1` here to enable the given IN endpoint" }
                 ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
 
@@ -105,7 +105,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
             {
                 "reg": [
-                    { "name": "EPIN",    "bits": 8, "attr": "WO", "description": "Set a `1` here to enable the given IN endpoint" }
+                    { "name": "EPIN",    "bits": 8, "description": "Set a `1` here to enable the given IN endpoint" }
                 ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
 
@@ -117,7 +117,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
             {
                 "reg": [
-                    { "name": "ADDRESS", "bits": 7, "attr": "WO", "description": "Write the USB address from USB `SET_ADDRESS packets.`" },
+                    { "name": "ADDRESS", "bits": 7, "description": "Write the USB address from USB `SET_ADDRESS packets.`" },
                     {                    "bits": 1 }
                 ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
