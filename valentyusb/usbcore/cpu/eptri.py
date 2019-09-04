@@ -82,7 +82,7 @@ class SetupHandler(Module, AutoCSR):
             {
               "reg": [
                   { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The next byte of SETUP data" }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
 
     status : CSRStatus
@@ -98,7 +98,7 @@ class SetupHandler(Module, AutoCSR):
                    { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP token." },
                    { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
                    {                  "bits": 1 }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
 
     ctrl : CSRStorage
@@ -111,7 +111,7 @@ class SetupHandler(Module, AutoCSR):
               "reg": [
                   { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
                   {                    "bits": 7 }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
     """
 
@@ -225,7 +225,7 @@ class InHandler(Module, AutoCSR):
             {
                "reg": [
                    { "name": "DATA",   "bits": 8, "attr": "WO", "description": "The next byte to add to the queue." }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
 
     status : CSRStatus
@@ -242,7 +242,7 @@ class InHandler(Module, AutoCSR):
                    {                    "bits": 4 },
                    { "name": "PEND",    "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
                    {                    "bits": 1 }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
 
     ctrl : CSRStorage
@@ -257,7 +257,7 @@ class InHandler(Module, AutoCSR):
                    { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." }
                    { "name": "RESET","bits": 1, "attr": "WO", "description": "Write a 1 here to clear the contents of the FIFO." }
                    {                 "bits": 3 }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
     """
     def __init__(self, usb_core):
@@ -378,7 +378,7 @@ class OutHandler(Module, AutoCSR):
             {
                "reg": [
                    { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The top byte of the receive FIFO." }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
 
     status : CSRStatus
@@ -394,7 +394,7 @@ class OutHandler(Module, AutoCSR):
                    { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
                    { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
                    {                  "bits": 1 }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
 
     ctrl : CSRStorage
@@ -408,7 +408,7 @@ class OutHandler(Module, AutoCSR):
                    { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
                    { "name": "ENABLE",  "bits": 1, "attr": "WO", "description": "Write a `1` here to enable recieving data" },
                    {                    "bits": 6 }
-               ], "config": { bits: 8 }
+               ], "config": { "bits": 8 }
             }
     """
     def __init__(self, usb_core):
