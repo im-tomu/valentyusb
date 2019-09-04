@@ -1,0 +1,6 @@
+recommonmark
+sphinx
+sphinx_rtd_theme
+-e git+https://github.com/bavovanachte/sphinx-wavedrom.git#egg=sphinxcontrib-wavedrom
+sphinx-autodoc-typehints
+-r ../requirements.txt
