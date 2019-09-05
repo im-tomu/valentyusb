@@ -68,8 +68,6 @@ class UsbTest:
         # Enable endpoint 0
         yield self.write(self.csrs['usb_enable_out0'], 0xff)
         yield self.write(self.csrs['usb_enable_out1'], 0xff)
-        yield self.write(self.csrs['usb_enable_in0'], 0xff)
-        yield self.write(self.csrs['usb_enable_in1'], 0xff)
         yield self.write(self.csrs['usb_setup_ev_enable'], 0xff)
         yield self.write(self.csrs['usb_in_ev_enable'], 0xff)
         yield self.write(self.csrs['usb_out_ev_enable'], 0xff)
@@ -319,6 +317,8 @@ class UsbTest:
             actual_data.append(v)
             yield RisingEdge(self.dut.clk12)
         yield self.write(self.csrs['usb_setup_ctrl'], 2)
+        # Drain the pending bit
+        yield self.write(self.csrs['usb_setup_ev_pending'], 0xff)
         return actual_data
 
     @cocotb.coroutine
@@ -880,8 +880,6 @@ def test_control_setup_clears_stall(dut):
     # STALL the endpoint now
     yield harness.write(harness.csrs['usb_enable_out0'], 0)
     yield harness.write(harness.csrs['usb_enable_out1'], 0)
-    yield harness.write(harness.csrs['usb_enable_in0'], 0)
-    yield harness.write(harness.csrs['usb_enable_in1'], 0)
 
     # Do another receive, which should fail
     yield harness.transaction_data_out(addr, epaddr_out, d, expected=PID.STALL)
@@ -1319,6 +1317,7 @@ def test_stall_in(dut):
             00, 0x01],
     )
 
+### STALL TRANSACTION
     # Send a SETUP packet without draining it on the device side
     yield harness.host_send_token_packet(PID.SETUP, 0, epaddr_in)
     yield harness.host_send_data_packet(PID.DATA0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
@@ -1338,6 +1337,40 @@ def test_stall_in(dut):
     # Perform the final "read"
     yield harness.host_send_token_packet(PID.IN, 0, 0)
     yield harness.host_expect_stall()
+
+### STALL TRANSACTION
+    # Send a SETUP packet without draining it on the device side
+    yield harness.host_send_token_packet(PID.SETUP, 0, epaddr_in)
+    yield harness.host_send_data_packet(PID.DATA0, [0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00])
+    yield harness.host_expect_ack()
+
+    # Send a few packets while we "process" the data as a slow host
+    for i in range(10):
+        yield harness.host_send_token_packet(PID.IN, 0, 0)
+        yield harness.host_expect_nak()
+
+    # Read the data, which should unblock the sending
+    setup_data = yield harness.drain_setup()
+    if len(setup_data) != 10:
+        raise TestFailure("1. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0x20) # Set STALL
+
+    # Perform the final "read"
+    yield harness.host_send_token_packet(PID.IN, 0, 0)
+    yield harness.host_expect_stall()
+
+### NORMAL TRANSACTION
+    # Finally, ensure the host returns after the stall.
+    yield harness.control_transfer_in(
+        0,
+        # Get device descriptor
+        [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x40, 00],
+        # 18 byte descriptor, max packet size 8 bytes
+        [0x12, 0x01, 0x10, 0x02, 0x02, 0x00, 0x00, 0x40,
+            0x09, 0x12, 0xB1, 0x70, 0x01, 0x01, 0x01, 0x02,
+            00, 0x01],
+    )
+
 
 @cocotb.test()
 def test_reset(dut):

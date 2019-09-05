@@ -85,30 +85,6 @@ class TriEndpointInterface(Module, AutoCSR):
                 ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
 
-    enable_in0 : CSRStorage
-        Write a `1` to enable endpoints 0-7 IN -- otherwise a STALL will be sent.
-
-        .. wavedrom::
-            :caption: ENABLE_IN0
-
-            {
-                "reg": [
-                    { "name": "EPIN",    "bits": 8, "description": "Set a `1` here to enable the given IN endpoint" }
-                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
-    enable_in1 : CSRStorage
-        Write a `1` to enable endpoints 8-15 IN -- otherwise a STALL will be sent.
-
-        .. wavedrom::
-            :caption: ENABLE_IN1
-
-            {
-                "reg": [
-                    { "name": "EPIN",    "bits": 8, "description": "Set a `1` here to enable the given IN endpoint" }
-                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
     address : CSRStorage
         Sets the USB device address, to ignore packets going to other devices.
 
@@ -130,12 +106,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
         self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
         self.iobuf = usb_core.iobuf
-
-        self.eps_idx = eps_idx = Signal(5)
-        self.comb += [
-            self.eps_idx.eq(Cat(usb_core.endp, usb_core.tok == PID.IN)),
-        ]
-        
+       
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
         debug_data_mux = Signal(8)
@@ -179,10 +150,8 @@ class TriEndpointInterface(Module, AutoCSR):
 
         self.enable_out0 = CSRStorage(8)
         self.enable_out1 = CSRStorage(8)
-        self.enable_in0 = CSRStorage(8)
-        self.enable_in1 = CSRStorage(8)
 
-        enable = Signal(32)
+        enable = Signal(16)
         should_stall = Signal()
         usb_core_reset = Signal()
 
@@ -193,46 +162,16 @@ class TriEndpointInterface(Module, AutoCSR):
         self.comb += stage.reset.eq(usb_core.usb_reset)
         stage_num = Signal(8)
 
-        # If the SETUP stage should have data, this will be 1
-        setup_data_stage = Signal()
-
-        # Which of the 10 SETUP bytes (8 + CRC16) we're currently looking at
-        setup_data_byte = Signal(4)
-        setup_data_byte_ce = Signal()
-        setup_data_byte_rst = Signal()
-
-        # 1 if it's an IN packet, 0 if it's an OUT
-        setup_is_in = Signal()
-
         invalid_states = Signal(8)
         invalid_state_ce = Signal()
 
         self.sync.usb_12 += [
             If(invalid_state_ce, invalid_states.eq(invalid_states+1)),
-            If(setup_data_byte_rst,
-                setup_data_byte.eq(0),
-                setup_is_in.eq(0),
-                setup_data_stage.eq(0),
-            ).Elif(setup_data_byte_ce,
-                setup_data_byte.eq(setup_data_byte + 1),
-                If(setup_data_byte == 0,
-                    setup_is_in.eq(usb_core.data_recv_payload[7]),
-                ).Elif(setup_data_byte == 6,
-                    If(usb_core.data_recv_payload,
-                        setup_data_stage.eq(1)
-                    )
-                ).Elif(setup_data_byte == 7,
-                    If(usb_core.data_recv_payload,
-                        setup_data_stage.eq(1)
-                    )
-                ),
-            ),
         ]
 
         stage.act("IDLE",
             stage_num.eq(0),
             NextValue(usb_core.addr, self.address.storage),
-            setup_data_byte_rst.eq(1),
 
             If(usb_core.start,
                 NextState("CHECK_TOK")
@@ -247,13 +186,14 @@ class TriEndpointInterface(Module, AutoCSR):
                 NextState("IDLE"),
             ).Elif(usb_core.tok == PID.SETUP,
                 NextState("SETUP"),
+                setup_handler.begin.eq(1),
                 # SETUP packets must be ACKed
                 usb_core.sta.eq(0),
                 usb_core.arm.eq(1),
             ).Elif(usb_core.tok == PID.IN,
                 NextState("IN"),
-                usb_core.sta.eq(should_stall),
-                usb_core.arm.eq(in_handler.response | should_stall),
+                usb_core.sta.eq(0), # XXX FIX THIS
+                usb_core.arm.eq(in_handler.response),
             ).Elif(usb_core.tok == PID.OUT,
                 NextState("OUT"),
                 usb_core.sta.eq(should_stall),
@@ -288,17 +228,13 @@ class TriEndpointInterface(Module, AutoCSR):
             setup_handler.data_recv_payload.eq(usb_core.data_recv_payload),
             setup_handler.data_recv_put.eq(usb_core.data_recv_put),
 
-            in_handler.dtb_reset.eq(1),
+            in_handler.reset.eq(1),
 
             # We aren't allowed to STALL a SETUP packet
             usb_core.sta.eq(0),
 
             # Always ACK a SETUP packet
             usb_core.arm.eq(1),
-
-            setup_handler.trigger.eq(usb_core.commit),
-
-            setup_data_byte_ce.eq(usb_core.data_recv_put),
 
             # If the transfer size is nonzero, proceed to handle data packets
 
@@ -307,16 +243,16 @@ class TriEndpointInterface(Module, AutoCSR):
             ),
 
             If(usb_core.setup,
-                If(setup_is_in,
-                    If(setup_data_stage,
+                If(setup_handler.is_in,
+                    If(setup_handler.have_data_stage,
                         NextState("CONTROL_IN"),
-                        usb_core.sta.eq(~out_handler.response & should_stall),
-                        usb_core.arm.eq(in_handler.response | should_stall),
+                        usb_core.sta.eq(~out_handler.response),
+                        usb_core.arm.eq(in_handler.response),
                     ).Else(
                         NextState("WAIT_CONTROL_ACK_IN"),
                     )
                 ).Else(
-                    If(setup_data_stage,
+                    If(setup_handler.have_data_stage,
                         NextState("CONTROL_OUT"),
                         usb_core.sta.eq(~out_handler.response & should_stall),
                         usb_core.arm.eq(out_handler.response | should_stall),
@@ -332,14 +268,15 @@ class TriEndpointInterface(Module, AutoCSR):
 
         stage.act("CONTROL_IN",
             stage_num.eq(4),
+            # If(usb_core.tok == PID.SETUP, NextState("SETUP")),
             If(usb_core.endp == 0,
                 If(usb_core.tok == PID.IN,
                     usb_core.data_send_have.eq(in_handler.data_out_have),
                     usb_core.data_send_payload.eq(in_handler.data_out),
                     in_handler.data_out_advance.eq(usb_core.data_send_get),
 
-                    usb_core.sta.eq(should_stall | in_handler.stall),
-                    usb_core.arm.eq(should_stall | (setup_handler.handled & in_handler.response)),
+                    usb_core.sta.eq(in_handler.stall),
+                    usb_core.arm.eq(setup_handler.handled & in_handler.response),
                     usb_core.dtb.eq(in_handler.dtb),
                     # in_handler.trigger.eq(usb_core.commit),
                     If(in_handler.stall & usb_core.end,
@@ -407,8 +344,8 @@ class TriEndpointInterface(Module, AutoCSR):
                 usb_core.data_send_payload.eq(in_handler.data_out),
                 in_handler.data_out_advance.eq(usb_core.data_send_get),
 
-                usb_core.sta.eq(should_stall),
-                usb_core.arm.eq(in_handler.response | should_stall),
+                usb_core.sta.eq(0), # XXX FIX STALL
+                usb_core.arm.eq(in_handler.response),
                 usb_core.dtb.eq(in_handler.dtb),
                 in_handler.trigger.eq(usb_core.commit),
 
@@ -446,8 +383,8 @@ class TriEndpointInterface(Module, AutoCSR):
         )
 
         self.comb += [
-            enable.eq(Cat(self.enable_out0.storage, self.enable_out1.storage, self.enable_in0.storage, self.enable_in1.storage)),
-            should_stall.eq(~(enable >> eps_idx)),
+            enable.eq(Cat(self.enable_out0.storage, self.enable_out1.storage)),
+            should_stall.eq(~(enable >> usb_core.endp)),
         ]
 
         # error_count = Signal(8)
@@ -469,9 +406,7 @@ class TriEndpointInterface(Module, AutoCSR):
         self.comb += self.tok_waits.status.eq(tok_waits)
 
         self.status = CSRStatus(8)
-        self.comb += self.status.status.eq(Cat(setup_data_byte,
-                                               setup_data_byte_ce,
-                                               setup_data_byte_rst))
+        self.comb += self.status.status.eq(0)
 
         self.invalid_states = CSRStatus(8)
         self.comb += self.invalid_states.status.eq(invalid_states)
@@ -540,96 +475,140 @@ class SetupHandler(Module, AutoCSR):
                   {                    "bits": 6 }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
+
+    reset : Signal
+        Asserting this resets the entire SetupHandler object.  You should do this at boot, or if
+        you're switching applications.
+
+    begin : Signal
+        Assert this when a `SETUP` token is received.  This will clear out the current buffer
+        (if any) and prepare the endpoint to receive data.
+
+    handled : Signal
+        This gets set to `1` when the `SETUP` packet has been handled.
+
+    is_in : Signal
+        This is a `1` if the `SETUP` packet will be followed by an `IN` stage.
+
     """
 
     def __init__(self, usb_core):
+
+        self.reset = Signal()
+        self.begin = Signal()
+
+        # Register Interface
+        self.data = data = CSRStatus(8)
+        self.status = status = CSRStatus(7)
+        self.ctrl = ctrl = CSRStorage(2)
+
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.packet = ev.EventSourcePulse()
         self.ev.finalize()
-        self.trigger = self.ev.packet.trigger
-        self.handled = Signal()
+        self.trigger = trigger = self.ev.packet.trigger
+        self.pending = pending = self.ev.packet.pending
 
-        self.data_recv_payload = Signal(8)
-        self.data_recv_put = Signal()
-        self.have_data_stage = Signal()
+        self.data_recv_payload = data_recv_payload = Signal(8)
+        self.data_recv_put = data_recv_put = Signal()
 
-        self.submodules.data = buf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=10)))
-
-        # Register Interface
-        self.data = CSRStatus(8)
-        self.status = CSRStatus(7)
-        self.ctrl = CSRStorage(2)
-
-        # How to respond to requests:
-        #  - 0 - ACK
-        #  - 1 - NAK
         # Since we must always ACK a SETUP packet, set this to 0.
         self.response = Signal()
-        self.comb += self.response.eq(0),
-
-        self.empty = Signal()
-        self.comb += self.empty.eq(~buf.readable)
 
         epno = Signal(4)
 
-        # Wire up the `STATUS` register
-        self.comb += self.status.status.eq(Cat(buf.readable, Signal(), epno, self.ev.packet.pending))
+        class SetupHandlerInner(Module):
+            def __init__(self):
+                self.submodules.data = buf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(fifo.SyncFIFOBuffered(width=8, depth=10))
 
-        # Wire up the "SETUP" endpoint.
-        self.comb += [
-            # Set the FIFO output to be the current buffer HEAD
-            self.data.status.eq(buf.dout),
+                # Stays 0 until the packet is handled, at which point it becomes 1.
+                self.handled = Signal()
 
-            # Advance the FIFO when anything is written to the control bit
-            buf.re.eq(self.ctrl.re & self.ctrl.storage[0]),
+                # Indicates which byte of `SETUP` data we're currently on.
+                data_byte = Signal(4)
 
-            If(usb_core.tok == PID.SETUP,
-                buf.din.eq(self.data_recv_payload),
-                buf.we.eq(self.data_recv_put),
-            ),
+                # If the incoming `SETUP` token indicates there will be
+                # a DATA stage, this will be set to 1.
+                self.have_data_stage = have_data_stage = Signal()
 
-            # Tie the trigger to the STATUS.HAVE bit
-            self.trigger.eq(buf.readable & usb_core.end),
-        ]
+                # If the incoming `SETUP` token is an OUT packet, this
+                # will be 1.
+                self.is_in = is_in = Signal()
 
-        # When we get the start of a SETUP packet, update the `epno` value.
-        check_reset = Signal()
-        data_bytes = Signal(3)
-        self.sync.usb_12 += [
-            # When a `1` is written to the `CTRL.HANDLED` bit, indicate
-            # that the packet has been handled.
-            If(self.ctrl.re & self.ctrl.storage[1], self.handled.eq(1)),
+                    #     epno.eq(usb_core.endp),
+                    #     buf.reset.eq(1),
+                    #     self.handled.eq(0),
+                    #     data_bytes.eq(0),
+                    #     self.have_data_stage.eq(0),
 
-            check_reset.eq(usb_core.start),
-            If(check_reset,
-                If(usb_core.tok == PID.SETUP,
-                    epno.eq(usb_core.endp),
-                    buf.reset.eq(1),
-                    self.handled.eq(0),
-                    data_bytes.eq(0),
-                    self.have_data_stage.eq(0),
-                ).Else(
-                    buf.reset.eq(0),
-                )
-            ).Else(
-                buf.reset.eq(0),
-            ),
+                self.empty = Signal()
+                self.comb += self.empty.eq(~buf.readable)
 
-            # The 6th and 7th bytes of SETUP data are
-            # the wLength field.  If these are nonzero,
-            # then there will be a Data stage following
-            # this Setup stage.
-            If(self.data_recv_put,
-                data_bytes.eq(data_bytes + 1),
-                If(self.data_recv_payload,
-                    If(data_bytes == 6,
-                        self.have_data_stage.eq(1),
-                    ).Elif(data_bytes == 7,
-                        self.have_data_stage.eq(1),
+                # Wire up the `STATUS` register
+                self.comb += status.status.eq(Cat(buf.readable, Signal(), epno, pending))
+
+                # Wire up the "SETUP" endpoint.
+                self.comb += [
+                    # Set the FIFO output to be the current buffer HEAD
+                    data.status.eq(buf.dout),
+
+                    # Advance the FIFO when anything is written to the control bit
+                    buf.re.eq(ctrl.re & ctrl.storage[0]),
+
+                    If(usb_core.tok == PID.SETUP,
+                        buf.din.eq(data_recv_payload),
+                        buf.we.eq(data_recv_put),
+                    ),
+
+                    # Tie the trigger to the STATUS.HAVE bit
+                    trigger.eq(buf.readable & usb_core.setup),
+                ]
+
+                self.sync += [
+                    # When a `1` is written to the `CTRL.HANDLED` bit, indicate
+                    # that the packet has been handled.
+                    If(ctrl.re & ctrl.storage[1], self.handled.eq(1)),
+                    # If(check_reset & (usb_core.tok == PID.SETUP)),
+                    #     epno.eq(usb_core.endp),
+                    #     buf.reset.eq(1),
+                    #     self.handled.eq(0),
+                    #     data_bytes.eq(0),
+                    #     self.have_data_stage.eq(0),
+                    # ).Else(
+                    #     buf.reset.eq(0),
+                    # ),
+
+                    # The 6th and 7th bytes of SETUP data are
+                    # the wLength field.  If these are nonzero,
+                    # then there will be a Data stage following
+                    # this Setup stage.
+                    If(data_recv_put,
+                        If(data_byte == 0,
+                            epno.eq(usb_core.endp),
+                            is_in.eq(data_recv_payload[7]),
+                        ).Elif(data_byte == 6,
+                            If(data_recv_payload,
+                                have_data_stage.eq(1),
+                            ),
+                        ).Elif(data_byte == 7,
+                            If(data_recv_payload,
+                                have_data_stage.eq(1),
+                            ),
+                        ),
+                        data_byte.eq(data_byte + 1),
                     )
-                )
-            )
+                ]
+
+        self.submodules.inner = inner = ResetInserter()(SetupHandlerInner())
+        self.comb += [
+            inner.reset.eq(self.reset | self.begin),
+            self.ev.packet.clear.eq(self.begin),
         ]
+
+        # Expose relevant Inner signals to the top
+        self.handled = inner.handled
+        self.have_data_stage = inner.have_data_stage
+        self.is_in = inner.is_in
+        self.empty = inner.empty
 
 
 class InHandler(Module, AutoCSR):
@@ -704,6 +683,9 @@ class InHandler(Module, AutoCSR):
         # Keep track of the current DTB for each of the 16 endpoints
         dtbs = Signal(16, reset=0xffff)
 
+        # A list of endpoints that are stalled
+        stall_ep = Signal(16)
+
         self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=128))
 
         self.data = CSRStorage(8)
@@ -713,21 +695,42 @@ class InHandler(Module, AutoCSR):
         xxxx_readable = Signal()
         self.specials.crc_readable = cdc.MultiReg(~buf.readable, xxxx_readable)
 
+        # Control bits
+        ctrl_ep = Signal(4)
+        ctrl_reset = Signal()
+        ctrl_stall = Signal()
+        ctrl_update = Signal()
+        self.comb += [
+            ctrl_update.eq(self.ctrl.re),
+            ctrl_ep.eq(self.ctrl.storage[0:4]),
+            ctrl_reset.eq(self.ctrl.storage[4] & ctrl_update),
+            ctrl_stall.eq(self.ctrl.storage[5]),
+        ]
+
+        # Keep track of which endpoints are currently stalled
+        # self.sync += [
+        #     If(ctrl_reset,
+        #         stall_ep.eq(0),
+        #     ).Elif(self.ctrl.re,
+        #         stall_ep.eq((stall_ep & ~(1 << ctrl_ep)) | (ctrl_stall << ctrl_ep)),
+        #     )
+        # ]
+
         # How to respond to requests:
         #  - 0 - ACK
         #  - 1 - NAK
         self.response = Signal()
 
         self.reset = Signal()
+        self.comb += [
+            buf.reset.eq(ctrl_reset | self.reset),
+            self.ctrl.reset.eq(self.reset),
+        ]
 
         # This value goes "1" when data is pending, and returns to "0" when it's done.
         queued = Signal()
 
-        epno = Signal(4)
-        reset_fifo = Signal()
         self.stall = Signal()
-        self.comb += epno.eq(self.ctrl.storage[0:4])
-        self.comb += reset_fifo.eq(self.ctrl.storage[4])
 
         # Outgoing data will be placed on this signal
         self.data_out = Signal(8)
@@ -739,7 +742,7 @@ class InHandler(Module, AutoCSR):
         self.data_out_advance = Signal()
 
         # Pulse this to reset the DTB value
-        self.dtb_reset = Signal()
+        # self.dtb_reset = Signal()
 
         # Used to detect when an IN packet finished
         is_in_packet = Signal()
@@ -747,7 +750,7 @@ class InHandler(Module, AutoCSR):
 
         self.comb += [
             # We will respond with "ACK" if the register matches the current endpoint number
-            If(usb_core.endp == epno,
+            If(usb_core.endp == ctrl_ep,
                 self.response.eq(queued)
             ).Else(
                 self.response.eq(0)
@@ -767,32 +770,28 @@ class InHandler(Module, AutoCSR):
             buf.we.eq(self.data.re),
             buf.din.eq(self.data.storage),
             is_in_packet.eq(usb_core.tok == PID.IN),
-            is_our_packet.eq(usb_core.endp == epno),
+            is_our_packet.eq(usb_core.endp == ctrl_ep),
         ]
 
         self.sync += [
-            If(self.dtb_reset,
-                dtbs.eq(dtbs | (1 << epno)),
-            )
-            # When the user updates the `ctrl` register, enable writing.
-            .Elif(self.ctrl.re,
-                self.stall.eq(self.ctrl.storage[5]),
-                queued.eq(~reset_fifo),
-            )
-            .Elif(self.reset,
+            If(self.reset,
                 queued.eq(0),
                 self.stall.eq(0),
+                dtbs.eq(dtbs | (1 << ctrl_ep)),
+            )
+            # When the user updates the `ctrl` register, enable writing.
+            .Elif(ctrl_update,
+                self.stall.eq(ctrl_stall),
+                queued.eq(1),
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
             .Elif(usb_core.commit,
-                If(is_in_packet & is_our_packet,
+                If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
                     queued.eq(0),
                     self.stall.eq(0),
-                ),
-                # Toggle the "DTB" line if we transmitted data
-                If(usb_core.arm & ~usb_core.sta,
-                    dtbs.eq(dtbs ^ (1 << epno)),
+                    # Toggle the "DTB" line if we transmitted data
+                    dtbs.eq(dtbs ^ (1 << ctrl_ep)),
                 ),
             ),
         ]
