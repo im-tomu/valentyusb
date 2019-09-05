@@ -288,7 +288,7 @@ class TriEndpointInterface(Module, AutoCSR):
                     usb_core.arm.eq(1),
                     # After an IN transfer, the host sends an OUT
                     # packet.  We must ACK this and then return to IDLE.
-                    out_handler.ctrl_response.eq(1),
+                    out_handler.trigger.eq(1),
                     NextState("WAIT_DONE"),
                 )
             )
@@ -511,6 +511,15 @@ class SetupHandler(Module, AutoCSR):
         self.data_recv_payload = data_recv_payload = Signal(8)
         self.data_recv_put = data_recv_put = Signal()
 
+        ctrl_advance = Signal()
+        ctrl_handled = Signal()
+        ctrl_update = Signal()
+        self.comb += [
+            ctrl_update.eq(self.ctrl.re),
+            ctrl_advance.eq(self.ctrl.storage[0] & ctrl_update),
+            ctrl_handled.eq(self.ctrl.storage[1] & ctrl_update),
+        ]
+
         # Since we must always ACK a SETUP packet, set this to 0.
         self.response = Signal()
 
@@ -552,7 +561,7 @@ class SetupHandler(Module, AutoCSR):
                     data.status.eq(buf.dout),
 
                     # Advance the FIFO when anything is written to the control bit
-                    buf.re.eq(ctrl.re & ctrl.storage[0]),
+                    buf.re.eq(ctrl_advance),
 
                     If(usb_core.tok == PID.SETUP,
                         buf.din.eq(data_recv_payload),
@@ -566,7 +575,7 @@ class SetupHandler(Module, AutoCSR):
                 self.sync += [
                     # When a `1` is written to the `CTRL.HANDLED` bit, indicate
                     # that the packet has been handled.
-                    If(ctrl.re & ctrl.storage[1], self.handled.eq(1)),
+                    If(ctrl_handled, self.handled.eq(1)),
                     # If(check_reset & (usb_core.tok == PID.SETUP)),
                     #     epno.eq(usb_core.endp),
                     #     buf.reset.eq(1),
@@ -852,6 +861,20 @@ class OutHandler(Module, AutoCSR):
                    {                    "bits": 6 }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
+
+    stall : CSRStorage
+        Enables / disables STALL for a given endpoint
+
+        .. wavedrom::
+            :caption: OUT_STALL
+
+            {
+              "reg": [
+                   { "name": "EPNO",  "bits": 4, "attr": "WO", "description": "The endpoint to update STALL status for" },
+                   { "name": "STALL", "bits": 1, "attr": "WO", "description": "`1` to enable STALL, `0` to disable it" },
+                   {                  "bits": 3 }
+               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
+            }
     """
     def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
@@ -864,15 +887,23 @@ class OutHandler(Module, AutoCSR):
         self.data = CSRStatus(8)
         self.status = CSRStatus(7)
         self.ctrl = CSRStorage(2)
+        self.stall = CSRStorage(5)
+
+        ctrl_advance = Signal()
+        ctrl_enable = Signal()
+        ctrl_update = Signal()
+        self.comb += [
+            ctrl_update.eq(self.ctrl.re),
+            ctrl_advance.eq(self.ctrl.storage[0] & ctrl_update),
+            ctrl_enable.eq(self.ctrl.storage[1]),
+        ]
 
         # How to respond to requests:
         #  - 1 - ACK
         #  - 0 - NAK
         # Send a NAK if the buffer contains data, or if "ENABLE" has not been set.
         self.response = Signal()
-        self.ctrl_response = Signal()
-        have_data = Signal()
-        self.comb += self.response.eq(have_data & self.ctrl.storage[1])
+        self.comb += self.response.eq(ctrl_enable)
 
         epno = Signal(4)
         is_idle = Signal(reset=1)
@@ -890,10 +921,10 @@ class OutHandler(Module, AutoCSR):
             self.data.status.eq(buf.dout),
 
             # When a "1" is written to ctrl, advance the FIFO
-            buf.re.eq(self.ctrl.storage[0] & self.ctrl.re),
+            buf.re.eq(ctrl_advance),
 
             self.status.status.eq(Cat(buf.readable, is_idle, epno, self.ev.packet.pending)),
-            self.trigger.eq((usb_core.commit & is_our_packet & is_out_packet & self.response) | self.ctrl_response),
+            self.trigger.eq(usb_core.commit & is_our_packet & is_out_packet & self.response),
 
             is_out_packet.eq(usb_core.tok == PID.OUT),
             is_our_packet.eq(usb_core.endp == epno),
@@ -908,8 +939,5 @@ class OutHandler(Module, AutoCSR):
             ),
             If(is_out_packet,
                 epno.eq(usb_core.endp),
-            ),
-            If(self.ctrl.re,
-                have_data.eq(self.ctrl.storage[1]),
             ),
         ]
