@@ -139,18 +139,14 @@ class UsbTransfer(Module):
         transfer.act("RECV_TOKEN",
             self.idle.eq(0),
             If(rxstate.o_decoded,
-                #If((rxstate.o_pid & PIDTypes.TYPE_MASK) != PIDTypes.TOKEN,
-                #    NextState('ERROR'),
-                #),
-                NextValue(self.tok,  rxstate.o_pid),
-                NextValue(self.endp, rxstate.o_endp),
-                self.start.eq(1),
-
                 # If the address doesn't match, go back and wait for
                 # a new token.
                 If(rxstate.o_addr != self.addr,
                     NextState("WAIT_TOKEN"),
                 ).Else(
+                    self.start.eq(1),
+                    NextValue(self.tok,  rxstate.o_pid),
+                    NextValue(self.endp, rxstate.o_endp),
                     NextState("POLL_RESPONSE"),
                 ),
             ),
