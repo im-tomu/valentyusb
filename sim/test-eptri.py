@@ -333,7 +333,7 @@ class UsbTest:
             yield RisingEdge(self.dut.clk12)
         yield self.write(self.csrs['usb_out_ev_pending'], 0xff)
         yield self.write(self.csrs['usb_out_ctrl'], 0x02)
-        return actual_data
+        return actual_data[:-2] # Strip off CRC16
 
     @cocotb.coroutine
     def expect_data(self, epaddr, expected_data, expected):
@@ -614,6 +614,7 @@ def test_control_transfer_in_lazy(dut):
     yield harness.connect()
     yield harness.write(harness.csrs['usb_address'], 0)
 ### SETUP packet
+    harness.dut._log.info("sending initial SETUP packet")
     # Send a SETUP packet without draining it on the device side
     yield harness.host_send_token_packet(PID.SETUP, 0, epaddr_in)
     yield harness.host_send_data_packet(PID.DATA0, [0x80, 0x06, 0x00, 0x05, 0x00, 0x00, 0x0A, 0x00])
@@ -643,6 +644,7 @@ def test_control_transfer_in_lazy(dut):
     yield harness.transaction_status_out(0, epaddr_out)
 
 ### SET ADDRESS
+    harness.dut._log.info("setting USB address")
     # Set the address.  Again, don't drain the device side yet.
     yield harness.host_send_token_packet(PID.SETUP, 0, epaddr_out)
     yield harness.host_send_data_packet(PID.DATA0, [0x00, 0x05, 11, 0x00, 0x00, 0x00, 0x00, 0x00])
@@ -667,6 +669,7 @@ def test_control_transfer_in_lazy(dut):
 
 
 ### STALL TEST
+    harness.dut._log.info("sending a STALL test")
     # Send a SETUP packet without draining it on the device side
     yield harness.host_send_token_packet(PID.SETUP, 0, epaddr_in)
     yield harness.host_send_data_packet(PID.DATA0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
@@ -681,7 +684,7 @@ def test_control_transfer_in_lazy(dut):
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("1. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
-    yield harness.write(harness.csrs['usb_in_ctrl'], 0x20) # Set STALL
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0x10) # Set STALL
 
     # Perform the final "read"
     yield harness.host_send_token_packet(PID.IN, 0, 0)
@@ -689,12 +692,14 @@ def test_control_transfer_in_lazy(dut):
 ### RESUMING
 
     # Send a SETUP packet to the wrong endpoint
+    harness.dut._log.info("sending a packet to the wrong endpoint that should be ignored")
     yield harness.host_send_token_packet(PID.SETUP, 11, epaddr_in)
     yield harness.host_send_data_packet(PID.DATA0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
     # yield harness.host_expect_ack()
 
     yield harness.write(harness.csrs['usb_address'], 11)
-
+### SETUP packet without draining
+    harness.dut._log.info("sending a packet without draining SETUP")
     # Send a SETUP packet without draining it on the device side
     yield harness.host_send_token_packet(PID.SETUP, 11, epaddr_in)
     yield harness.host_send_data_packet(PID.DATA0, [0x80, 0x06, 0x00, 0x06, 0x00, 0x00, 0x0A, 0x00])
@@ -708,11 +713,12 @@ def test_control_transfer_in_lazy(dut):
     yield harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     # Send a few packets while we "process" the data as a slow host
-    for i in range(10):
+    for i in range(2):
         yield harness.host_send_token_packet(PID.IN, 11, 0)
         yield harness.host_expect_nak()
 
     # Read the data, which should unblock the sending
+    harness.dut._log.info("draining SETUP which should unblock it")
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("3. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
@@ -1130,6 +1136,13 @@ def test_control_transfer_out_nak_data(dut):
     yield harness.host_send_ack()
     yield harness.write(harness.csrs['usb_address'], 11)
 
+### GET STATUS
+    yield harness.write(harness.csrs['usb_in_ev_pending'], 0xff)
+    harness.dut._log.info("sending DFU GET_STATUS command")
+    yield harness.control_transfer_in(11,
+        [0xA1, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00],
+        [0x00, 0x05, 0x00, 0x00, 0x02, 0x00])
+   
 
 ### STALL TEST
     out_data = []
@@ -1157,27 +1170,41 @@ def test_control_transfer_out_nak_data(dut):
     yield harness.host_send_data_packet(PID.DATA1, out_data)
     yield harness.host_expect_ack()
 
-    yield harness.drain_out()
+    out_compare_data = yield harness.drain_out()
+    harness.assertSequenceEqual(out_data, out_compare_data, "first packet not equal")
 
     # Send second packet of OUT data
+    out_data = []
+    for i in range(64):
+        out_data.append(0x20 + i)
     harness.dut._log.info("sending second transaction of large transfer (should succeed)")
     yield harness.host_send_token_packet(PID.OUT, 11, epaddr_out)
     yield harness.host_send_data_packet(PID.DATA1, out_data)
     yield harness.host_expect_ack()
 
     # Send third packet of OUT data
-    harness.dut._log.info("sending second transaction of large transfer (should NAK)")
-    yield harness.host_send_token_packet(PID.OUT, 11, epaddr_out)
-    yield harness.host_send_data_packet(PID.DATA0, out_data)
-    yield harness.host_expect_nak()
+    for i in range(5):
+        harness.dut._log.info("sending third transaction of large transfer (should NAK)")
+        yield harness.host_send_token_packet(PID.OUT, 11, epaddr_out)
+        yield harness.host_send_data_packet(PID.DATA0, out_data)
+        yield harness.host_expect_nak()
 
     # Drain the OUT buffer and try again
-    harness.dut._log.info("sending second transaction of large transfer (should ACK)")
-    yield harness.drain_out()
+    harness.dut._log.info("sending third transaction of large transfer (should ACK)")
+    out_compare_data = yield harness.drain_out()
+    harness.assertSequenceEqual(out_data, out_compare_data, "second packet not equal")
+    out_data = []
+    for i in range(64):
+        out_data.append(0x40 + i)
     yield harness.host_send_token_packet(PID.OUT, 11, epaddr_out)
     yield harness.host_send_data_packet(PID.DATA0, out_data)
     yield harness.host_expect_ack()
-
+    out_compare_data = yield harness.drain_out()
+    harness.assertSequenceEqual(out_data, out_compare_data, "third packet not equal")
+### CONFIRM SEQUENCE
+    yield harness.host_send_token_packet(PID.IN, 11, 0)
+    yield harness.host_expect_data_packet(PID.DATA1, [])
+    yield harness.host_send_ack()
 
 @cocotb.test()
 def test_in_transfer(dut):
@@ -1380,7 +1407,7 @@ def test_stall_in(dut):
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("1. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
-    yield harness.write(harness.csrs['usb_in_ctrl'], 0x20) # Set STALL
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0x10) # Set STALL
 
     # Perform the final "read"
     yield harness.host_send_token_packet(PID.IN, 0, 0)
@@ -1401,7 +1428,7 @@ def test_stall_in(dut):
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("1. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
-    yield harness.write(harness.csrs['usb_in_ctrl'], 0x20) # Set STALL
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0x10) # Set STALL
 
     # Perform the final "read"
     yield harness.host_send_token_packet(PID.IN, 0, 0)
