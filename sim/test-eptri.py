@@ -1194,12 +1194,12 @@ def test_control_transfer_out_nak_data(dut):
     yield harness.host_send_token_packet(PID.OUT, 11, epaddr_out)
     yield harness.host_send_data_packet(PID.DATA0, out_data)
     yield harness.host_expect_ack()
-    out_compare_data = yield harness.drain_out()
-    harness.assertSequenceEqual(out_data, out_compare_data, "third packet not equal")
 ### CONFIRM SEQUENCE
     yield harness.host_send_token_packet(PID.IN, 11, 0)
     yield harness.host_expect_data_packet(PID.DATA1, [])
     yield harness.host_send_ack()
+    out_compare_data = yield harness.drain_out()
+    harness.assertSequenceEqual(out_data, out_compare_data, "third packet not equal")
 
 @cocotb.test()
 def test_in_transfer(dut):
