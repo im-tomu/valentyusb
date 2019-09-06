@@ -77,6 +77,7 @@ class UsbTransfer(Module):
 
         self.idle   = Signal(reset=0)      # Asserted when in the "WAIT_TOKEN" state
         self.start  = Signal()      # Asserted when a transfer is starting
+        self.poll   = Signal()      # Asserted when polling for a response (i.e. one cycle after `self.start`)
         self.setup  = Signal()      # Asserted when a transfer is a setup
         self.commit = Signal()      # Asserted when a transfer succeeds
         self.retry  = Signal()      # Asserted when the host sends an IN without an ACK
@@ -157,6 +158,7 @@ class UsbTransfer(Module):
 
         response_pid = Signal(4)
         transfer.act("POLL_RESPONSE",
+            self.poll.eq(1),
             If(self.rdy,
                 # Work out the response
                 If(self.tok == PID.SETUP,
