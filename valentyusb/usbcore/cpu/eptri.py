@@ -151,7 +151,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
         tok_waits = Signal(8)
         stage.act("CHECK_TOK",
-            stage_num.eq(1),
+            # stage_num.eq(1),
             NextValue(tok_waits, tok_waits + 1),
             If(usb_core.idle,
                 NextState("IDLE"),
@@ -249,8 +249,7 @@ class TriEndpointInterface(Module, AutoCSR):
                     usb_core.sta.eq(in_handler.stalled),
                     usb_core.arm.eq(setup_handler.handled & in_handler.response),
                     usb_core.dtb.eq(in_handler.dtb),
-                    # in_handler.trigger.eq(usb_core.commit),
-                    If(in_handler.stalled & usb_core.end,
+                    If(in_handler.stalled & usb_core.poll,
                         in_handler.reset.eq(1),
                         NextState("IDLE")
                     )
@@ -277,7 +276,11 @@ class TriEndpointInterface(Module, AutoCSR):
                 ).Elif(usb_core.tok == PID.IN,
                     usb_core.sta.eq(0),
                     usb_core.arm.eq(setup_handler.handled),
-                    NextState("WAIT_DONE"),
+                    usb_core.dtb.eq(in_handler.dtb),
+                    in_handler.ignore_transfer.eq(1),
+                    If(usb_core.commit,
+                        NextState("IDLE"),
+                    ),
                 )
             ),
         )
@@ -289,7 +292,7 @@ class TriEndpointInterface(Module, AutoCSR):
             # Only continue once the buffer has been drained.
             usb_core.arm.eq(setup_handler.empty),
             usb_core.dtb.eq(1),
-            If(usb_core.end & setup_handler.empty,
+            If(usb_core.commit & setup_handler.empty,
                 NextState("IDLE")
             ),
         )
@@ -363,6 +366,12 @@ class TriEndpointInterface(Module, AutoCSR):
         # ]
 
         self.stage_num = CSRStatus(8)
+        self.last_stage_num = CSRStatus(8)
+        last_stage_num = Signal(8)
+        self.sync += If(stage_num != last_stage_num,
+            self.last_stage_num.status.eq(last_stage_num),
+            last_stage_num.eq(stage_num),
+        )
         self.comb += self.stage_num.status.eq(stage_num)
 
         self.error_count = CSRStatus(8)
@@ -421,10 +430,10 @@ class SetupHandler(Module, AutoCSR):
             {
                "reg": [
                    { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-                   {                  "bits": 1 },
+                   { "name": "IS_IN", "bits": 1, "attr": "RO", "description": "`1` if an IN stage was detected." },
                    { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP token." },
                    { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-                   {                  "bits": 1 }
+                   { "name": "DATA",  "bits": 1,"attr": "RO", "description": "`1` if a DATA stage is expected." },
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
 
@@ -438,7 +447,8 @@ class SetupHandler(Module, AutoCSR):
               "reg": [
                   { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
                   { "name": "HANDLED", "bits": 1, "attr": "WO", "description": "Write a `1` here to indicate SETUP has been handled." },
-                  {                    "bits": 6 }
+                  { "name": "RESET",   "bits": 1, "attr": "WO", "description": "Write a `1` here to reset the `SETUP` handler." },
+                  {                    "bits": 5 }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
 
@@ -465,8 +475,8 @@ class SetupHandler(Module, AutoCSR):
 
         # Register Interface
         self.data = data = CSRStatus(8)
-        self.status = status = CSRStatus(7)
-        self.ctrl = ctrl = CSRStorage(2)
+        self.status = status = CSRStatus(8)
+        self.ctrl = ctrl = CSRStorage(3)
 
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.packet = ev.EventSourcePulse()
@@ -480,10 +490,12 @@ class SetupHandler(Module, AutoCSR):
         ctrl_advance = Signal()
         ctrl_handled = Signal()
         ctrl_update = Signal()
+        ctrl_reset = Signal()
         self.comb += [
             ctrl_update.eq(self.ctrl.re),
             ctrl_advance.eq(self.ctrl.storage[0] & ctrl_update),
             ctrl_handled.eq(self.ctrl.storage[1] & ctrl_update),
+            ctrl_reset.eq(self.ctrl.storage[2] & ctrl_update),
         ]
 
         # Since we must always ACK a SETUP packet, set this to 0.
@@ -509,17 +521,11 @@ class SetupHandler(Module, AutoCSR):
                 # will be 1.
                 self.is_in = is_in = Signal()
 
-                    #     epno.eq(usb_core.endp),
-                    #     buf.reset.eq(1),
-                    #     self.handled.eq(0),
-                    #     data_bytes.eq(0),
-                    #     self.have_data_stage.eq(0),
-
                 self.empty = Signal()
                 self.comb += self.empty.eq(~buf.readable)
 
                 # Wire up the `STATUS` register
-                self.comb += status.status.eq(Cat(buf.readable, Signal(), epno, pending))
+                self.comb += status.status.eq(Cat(buf.readable, is_in, epno, pending, have_data_stage))
 
                 # Wire up the "SETUP" endpoint.
                 self.comb += [
@@ -542,16 +548,6 @@ class SetupHandler(Module, AutoCSR):
                     # When a `1` is written to the `CTRL.HANDLED` bit, indicate
                     # that the packet has been handled.
                     If(ctrl_handled, self.handled.eq(1)),
-                    # If(check_reset & (usb_core.tok == PID.SETUP)),
-                    #     epno.eq(usb_core.endp),
-                    #     buf.reset.eq(1),
-                    #     self.handled.eq(0),
-                    #     data_bytes.eq(0),
-                    #     self.have_data_stage.eq(0),
-                    # ).Else(
-                    #     buf.reset.eq(0),
-                    # ),
-
                     # The 6th and 7th bytes of SETUP data are
                     # the wLength field.  If these are nonzero,
                     # then there will be a Data stage following
@@ -642,8 +638,8 @@ class InHandler(Module, AutoCSR):
             {
               "reg": [
                    { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." },
-                   { "name": "RESET","bits": 1, "attr": "WO", "description": "Write a 1 here to clear the contents of the FIFO." },
                    { "name": "STALL","bits": 1, "attr": "WO", "description": "Write a 1 here to stall the EP written in `EP`." },
+                   { "name": "RESET","bits": 1, "attr": "WO", "description": "Write a 1 here to clear the contents of the FIFO." },
                    {                 "bits": 2 }
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
@@ -654,6 +650,7 @@ class InHandler(Module, AutoCSR):
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
         self.dtb = Signal()
+        self.ignore_transfer = Signal()
 
         # Keep track of the current DTB for each of the 16 endpoints
         dtbs = Signal(16, reset=0xffff)
@@ -679,8 +676,8 @@ class InHandler(Module, AutoCSR):
         self.comb += [
             ctrl_update.eq(self.ctrl.re),
             ctrl_ep.eq(self.ctrl.storage[0:4]),
-            ctrl_reset.eq(self.ctrl.storage[4] & ctrl_update),
-            ctrl_stall.eq(self.ctrl.storage[5]),
+            ctrl_stall.eq(self.ctrl.storage[4]),
+            ctrl_reset.eq(self.ctrl.storage[5] & ctrl_update),
             ep_stall_mask.eq(1 << ctrl_ep),
         ]
 
@@ -740,7 +737,7 @@ class InHandler(Module, AutoCSR):
             self.status.status.eq(
                 Cat(~xxxx_readable, ~queued, Signal(4), self.ev.packet.pending)
             ),
-            self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit),
+            self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit & ~self.ignore_transfer),
 
             self.dtb.eq(dtbs >> usb_core.endp),
 
@@ -764,9 +761,11 @@ class InHandler(Module, AutoCSR):
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(usb_core.commit,
+            .Elif(usb_core.end,
                 If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
-                    queued.eq(0),
+                    If(~self.ignore_transfer,
+                        queued.eq(0),
+                    ),
                     # Toggle the "DTB" line if we transmitted data
                     dtbs.eq(dtbs ^ (1 << ctrl_ep)),
                 ),
@@ -858,6 +857,10 @@ class OutHandler(Module, AutoCSR):
         self.ctrl = CSRStorage(3)
         self.stall = CSRStorage(5)
 
+        # If we start an OUT stage with data in the FIFO, ignore it
+        ignore = Signal()
+        self.sync += If(usb_core.poll, ignore.eq(buf.readable))
+
         epno = Signal(4)
 
         ctrl_advance = Signal()
@@ -913,14 +916,14 @@ class OutHandler(Module, AutoCSR):
         self.data_recv_put = Signal()
         self.comb += [
             buf.din.eq(self.data_recv_payload),
-            buf.we.eq(self.data_recv_put),
+            buf.we.eq(self.data_recv_put & ~ignore),
             self.data.status.eq(buf.dout),
 
             # When a "1" is written to ctrl, advance the FIFO
             buf.re.eq(ctrl_advance),
 
             self.status.status.eq(Cat(buf.readable, is_idle, epno, self.ev.packet.pending)),
-            self.trigger.eq(usb_core.commit & is_our_packet & is_out_packet & self.response),
+            self.trigger.eq(usb_core.commit & is_our_packet & is_out_packet & self.response & ~ignore),
 
             is_out_packet.eq(usb_core.tok == PID.OUT),
             is_our_packet.eq(usb_core.endp == epno),
