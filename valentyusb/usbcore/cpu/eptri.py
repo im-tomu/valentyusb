@@ -275,9 +275,8 @@ class TriEndpointInterface(Module, AutoCSR):
                     out_handler.trigger.eq(usb_core.commit),
                 ).Elif(usb_core.tok == PID.IN,
                     usb_core.sta.eq(0),
-                    usb_core.arm.eq(setup_handler.handled),
+                    usb_core.arm.eq(1),
                     usb_core.dtb.eq(in_handler.dtb),
-                    in_handler.ignore_transfer.eq(1),
                     If(usb_core.commit,
                         NextState("IDLE"),
                     ),
@@ -650,7 +649,6 @@ class InHandler(Module, AutoCSR):
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
         self.dtb = Signal()
-        self.ignore_transfer = Signal()
 
         # Keep track of the current DTB for each of the 16 endpoints
         dtbs = Signal(16, reset=0xffff)
@@ -737,7 +735,7 @@ class InHandler(Module, AutoCSR):
             self.status.status.eq(
                 Cat(~xxxx_readable, ~queued, Signal(4), self.ev.packet.pending)
             ),
-            self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit & ~self.ignore_transfer),
+            self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit),
 
             self.dtb.eq(dtbs >> usb_core.endp),
 
@@ -763,9 +761,7 @@ class InHandler(Module, AutoCSR):
             # de-assert the queue flag
             .Elif(usb_core.end,
                 If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
-                    If(~self.ignore_transfer,
-                        queued.eq(0),
-                    ),
+                    queued.eq(0),
                     # Toggle the "DTB" line if we transmitted data
                     dtbs.eq(dtbs ^ (1 << ctrl_ep)),
                 ),
