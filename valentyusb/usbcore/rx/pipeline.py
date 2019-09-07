@@ -35,12 +35,12 @@ class RxPipeline(Module):
         # A reset condition is one where the device is in SE0 for more
         # than 2.5 uS, which is ~30 clock cycles as 12 MHz.
         self.o_reset = Signal()
-        reset_counter = Signal(6)
-        self.comb += self.o_reset.eq(reset_counter[5])
+        reset_counter = Signal(7)
+        self.comb += self.o_reset.eq(reset_counter[6])
         self.sync.usb_12 += [
             If(self.i_usbp | self.i_usbn,
                 reset_counter.eq(0),
-            ).Elif(~reset_counter[5],
+            ).Elif(~reset_counter[6],
                 reset_counter.eq(reset_counter + 1),
             )
         ]
