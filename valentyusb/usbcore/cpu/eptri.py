@@ -432,7 +432,7 @@ class SetupHandler(Module, AutoCSR):
                    { "name": "IS_IN", "bits": 1, "attr": "RO", "description": "`1` if an IN stage was detected." },
                    { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP token." },
                    { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-                   { "name": "DATA",  "bits": 1,"attr": "RO", "description": "`1` if a DATA stage is expected." },
+                   { "name": "DATA",  "bits": 1, "attr": "RO", "description": "`1` if a DATA stage is expected." },
                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
             }
 
