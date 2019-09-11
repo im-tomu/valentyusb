@@ -85,11 +85,6 @@ class TriEndpointInterface(Module, AutoCSR):
        
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
-        debug_data_mux = Signal(8)
-        debug_data_ready_mux = Signal()
-        debug_sink_data = Signal(8)
-        debug_sink_data_ready = Signal()
-        debug_ack_response = Signal()
 
         # Wire up debug signals if required
         if debug:
@@ -214,22 +209,16 @@ class TriEndpointInterface(Module, AutoCSR):
             ),
 
             If(usb_core.setup,
-                If(setup_handler.is_in,
-                    If(setup_handler.have_data_stage,
-                        NextState("CONTROL_IN"),
-                        usb_core.sta.eq(in_handler.stalled),
-                        usb_core.arm.eq(in_handler.response),
-                    ).Else(
-                        NextState("WAIT_CONTROL_ACK_IN"),
-                    )
+                If(~setup_handler.have_data_stage,
+                    NextState("WAIT_CONTROL_ACK"),
+                ).Elif(setup_handler.is_in,
+                    NextState("CONTROL_IN"),
+                    usb_core.sta.eq(in_handler.stalled),
+                    usb_core.arm.eq(in_handler.response),
                 ).Else(
-                    If(setup_handler.have_data_stage,
-                        NextState("CONTROL_OUT"),
-                        usb_core.sta.eq(out_handler.stalled),
-                        usb_core.arm.eq(out_handler.response),
-                    ).Else(
-                        NextState("WAIT_CONTROL_ACK_OUT"),
-                    )
+                    NextState("CONTROL_OUT"),
+                    usb_core.sta.eq(out_handler.stalled),
+                    usb_core.arm.eq(out_handler.response),
                 )
             ).Elif(usb_core.end,
                 invalid_state_ce.eq(1),
@@ -285,26 +274,13 @@ class TriEndpointInterface(Module, AutoCSR):
         )
 
         # ACK the IN packet by sending a single OUT packet with no data
-        stage.act("WAIT_CONTROL_ACK_IN",
+        stage.act("WAIT_CONTROL_ACK",
             stage_num.eq(6),
             usb_core.sta.eq(0),
             # Only continue once the buffer has been drained.
             usb_core.arm.eq(setup_handler.empty),
             usb_core.dtb.eq(1),
             If(usb_core.commit & setup_handler.empty,
-                NextState("IDLE")
-            ),
-        )
-
-        # ACK the OUT packet by sending a single IN packet with no data
-        stage.act("WAIT_CONTROL_ACK_OUT",
-            stage_num.eq(7),
-            usb_core.sta.eq(0),
-            # Only continue once the buffer has been drained.
-            usb_core.arm.eq(setup_handler.empty),
-            usb_core.dtb.eq(1),
-            If(usb_core.data_end & setup_handler.empty,
-                # usb_core_reset.eq(1),
                 NextState("IDLE")
             ),
         )
@@ -364,26 +340,26 @@ class TriEndpointInterface(Module, AutoCSR):
         #     ),
         # ]
 
-        self.stage_num = CSRStatus(8)
-        self.last_stage_num = CSRStatus(8)
-        last_stage_num = Signal(8)
-        self.sync += If(stage_num != last_stage_num,
-            self.last_stage_num.status.eq(last_stage_num),
-            last_stage_num.eq(stage_num),
-        )
-        self.comb += self.stage_num.status.eq(stage_num)
+        # self.stage_num = CSRStatus(8)
+        # self.last_stage_num = CSRStatus(8)
+        # last_stage_num = Signal(8)
+        # self.sync += If(stage_num != last_stage_num,
+        #     self.last_stage_num.status.eq(last_stage_num),
+        #     last_stage_num.eq(stage_num),
+        # )
+        # self.comb += self.stage_num.status.eq(stage_num)
 
-        self.error_count = CSRStatus(8)
-        # self.comb += self.error_count.status.eq(error_count)
+        # self.error_count = CSRStatus(8)
+        # # self.comb += self.error_count.status.eq(error_count)
 
-        self.tok_waits = CSRStatus(8)
-        self.comb += self.tok_waits.status.eq(tok_waits)
+        # self.tok_waits = CSRStatus(8)
+        # self.comb += self.tok_waits.status.eq(tok_waits)
 
-        self.status = CSRStatus(8)
-        self.comb += self.status.status.eq(0)
+        # self.status = CSRStatus(8)
+        # self.comb += self.status.status.eq(0)
 
-        self.invalid_states = CSRStatus(8)
-        self.comb += self.invalid_states.status.eq(invalid_states)
+        # self.invalid_states = CSRStatus(8)
+        # self.comb += self.invalid_states.status.eq(invalid_states)
 
 class SetupHandler(Module, AutoCSR):
     """Handle `SETUP` packets.
@@ -504,7 +480,7 @@ class SetupHandler(Module, AutoCSR):
 
         class SetupHandlerInner(Module):
             def __init__(self):
-                self.submodules.data = buf = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(fifo.SyncFIFOBuffered(width=8, depth=10))
+                self.submodules.data = buf = fifo.SyncFIFOBuffered(width=8, depth=10)
 
                 # Stays 0 until the packet is handled, at which point it becomes 1.
                 self.handled = Signal()
@@ -651,19 +627,16 @@ class InHandler(Module, AutoCSR):
         self.dtb = Signal()
 
         # Keep track of the current DTB for each of the 16 endpoints
-        dtbs = Signal(16, reset=0xffff)
+        dtbs = Signal(16, reset=1)
 
         # A list of endpoints that are stalled
         stall_status = Signal(16)
 
-        self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=128))
+        self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=64))
 
         self.data = CSRStorage(8)
         self.status = CSRStatus(7)
-        self.ctrl = ResetInserter()(CSRStorage(6, name="ctrl"))
-
-        xxxx_readable = Signal()
-        self.specials.crc_readable = cdc.MultiReg(~buf.readable, xxxx_readable)
+        self.ctrl = CSRStorage(6, name="ctrl")
 
         # Control bits
         ctrl_ep = Signal(4)
@@ -701,7 +674,6 @@ class InHandler(Module, AutoCSR):
         self.reset = Signal()
         self.comb += [
             buf.reset.eq(ctrl_reset | self.reset),
-            self.ctrl.reset.eq(self.reset),
         ]
 
         # This value goes "1" when data is pending, and returns to "0" when it's done.
@@ -733,7 +705,7 @@ class InHandler(Module, AutoCSR):
 
             # Wire up the "status" register
             self.status.status.eq(
-                Cat(~xxxx_readable, ~queued, Signal(4), self.ev.packet.pending)
+                Cat(buf.readable, ~queued, Signal(4), self.ev.packet.pending)
             ),
             self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit),
 
@@ -846,7 +818,7 @@ class OutHandler(Module, AutoCSR):
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
 
-        self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=128)
+        self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=66)
 
         self.data = CSRStatus(8)
         self.status = CSRStatus(7)
