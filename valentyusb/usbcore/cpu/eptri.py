@@ -538,21 +538,6 @@ class InHandler(Module, AutoCSR):
     Attributes
     ----------
 
-    ctrl : CSRStorage
-        Enables transmission of data in response to `IN` tokens, or resets
-        the contents of the FIFO.
-
-        .. wavedrom::
-            :caption: IN_CTRL
-
-            {
-              "reg": [
-                   { "name": "EP",   "bits": 4, "attr": "WO", "description": "The endpoint number for the transaction that is queued in the FIFO." },
-                   { "name": "STALL","bits": 1, "attr": "WO", "description": "Write a 1 here to stall the EP written in `EP`." },
-                   { "name": "RESET","bits": 1, "attr": "WO", "description": "Write a 1 here to clear the contents of the FIFO." },
-                   {                 "bits": 2 }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
     """
     def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
@@ -584,34 +569,32 @@ class InHandler(Module, AutoCSR):
                         `IN_STATUS.HAVE` should go to `1`."""
         )
 
-        self.ctrl = CSRStorage(6, name="ctrl")
+        self.ctrl = ctrl = DCSRStorage(
+            Field("ep", 4, description="The endpoint number for the transaction that is queued in the FIFO."),
+            Field("stall", description="Write a 1 here to stall the EP written in `EP`.", pulse=True),
+            Field("reset", description="Write a 1 here to clear the contents of the FIFO.", pulse=True),
+            description="""Enables transmission of data in response to `IN` tokens, or resets
+                        the contents of the FIFO."""
+        )
 
         # Control bits
-        ctrl_ep = Signal(4)
-        ctrl_reset = Signal()
-        ctrl_stall = Signal()
-        ctrl_update = Signal()
         ep_stall_mask = Signal(16)
         self.comb += [
-            ctrl_update.eq(self.ctrl.re),
-            ctrl_ep.eq(self.ctrl.storage[0:4]),
-            ctrl_stall.eq(self.ctrl.storage[4]),
-            ctrl_reset.eq(self.ctrl.storage[5] & ctrl_update),
-            ep_stall_mask.eq(1 << ctrl_ep),
+            ep_stall_mask.eq(1 << ctrl.r.ep),
         ]
 
         # Keep track of which endpoints are currently stalled
         self.stalled = Signal()
         self.sync += [
-            If(ctrl_reset,
+            If(ctrl.r.reset,
                 stall_status.eq(0),
-            ).Elif(usb_core.setup | (ctrl_update & ~ctrl_stall),
+            ).Elif(usb_core.setup | (ctrl.re & ~ctrl.r.stall),
                 # If a SETUP packet comes in, clear the STALL bit.
                 stall_status.eq(stall_status & ~ep_stall_mask),
-            ).Elif(ctrl_update,
+            ).Elif(ctrl.re,
                 stall_status.eq(stall_status | ep_stall_mask),
             ),
-            self.stalled.eq(stall_status >> ctrl_ep),
+            self.stalled.eq(stall_status >> ctrl.r.ep),
         ]
 
         # How to respond to requests:
@@ -621,7 +604,7 @@ class InHandler(Module, AutoCSR):
 
         self.reset = Signal()
         self.comb += [
-            buf.reset.eq(ctrl_reset | self.reset),
+            buf.reset.eq(ctrl.r.reset | self.reset),
         ]
 
         # This value goes "1" when data is pending, and returns to "0" when it's done.
@@ -645,7 +628,7 @@ class InHandler(Module, AutoCSR):
 
         self.comb += [
             # We will respond with "ACK" if the register matches the current endpoint number
-            If(usb_core.endp == ctrl_ep,
+            If(usb_core.endp == ctrl.r.ep,
                 self.response.eq(queued)
             ).Else(
                 self.response.eq(0)
@@ -666,16 +649,16 @@ class InHandler(Module, AutoCSR):
             buf.we.eq(self.data.re),
             buf.din.eq(self.data.storage),
             is_in_packet.eq(usb_core.tok == PID.IN),
-            is_our_packet.eq(usb_core.endp == ctrl_ep),
+            is_our_packet.eq(usb_core.endp == ctrl.r.ep),
         ]
 
         self.sync += [
             If(self.reset,
                 queued.eq(0),
-                dtbs.eq(dtbs | (1 << ctrl_ep)),
+                dtbs.eq(dtbs | (1 << ctrl.r.ep)),
             )
             # When the user updates the `ctrl` register, enable writing.
-            .Elif(ctrl_update,
+            .Elif(ctrl.re,
                 queued.eq(1),
             )
             # When the USB core finishes operating on this packet,
@@ -684,7 +667,7 @@ class InHandler(Module, AutoCSR):
                 If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
                     queued.eq(0),
                     # Toggle the "DTB" line if we transmitted data
-                    dtbs.eq(dtbs ^ (1 << ctrl_ep)),
+                    dtbs.eq(dtbs ^ (1 << ctrl.r.ep)),
                 ),
             ),
         ]
