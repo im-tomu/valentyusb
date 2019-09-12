@@ -13,6 +13,8 @@ from litex.soc.interconnect.csr import *
 
 from litex.soc.cores.gpio import GPIOOut
 
+from dcsr import DCSRStorage, DCSRStatus, Field
+
 from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
@@ -125,7 +127,12 @@ class TriEndpointInterface(Module, AutoCSR):
         usb_core_reset = Signal()
 
         # When the USB host sends a USB reset, set our address back to 0.
-        self.address = ResetInserter()(CSRStorage(7, name="address"))
+        self.address = DCSRStorage(
+            Field("addr", 7, description="Write the USB address from USB `SET_ADDRESS` packets."),
+            resettable=True,
+            description="""Sets the USB device address, in order to ignore packets
+                        going to other devices on the bus. This value is reset when the host
+                        issues a USB Device Reset condition.""")
         self.comb += self.address.reset.eq(usb_core.usb_reset)
 
         self.submodules.stage = stage = ClockDomainsRenamer("usb_12")(ResetInserter()(FSM(reset_state="IDLE")))
@@ -141,7 +148,8 @@ class TriEndpointInterface(Module, AutoCSR):
 
         stage.act("IDLE",
             stage_num.eq(0),
-            NextValue(usb_core.addr, self.address.storage),
+            # NextValue(usb_core.addr, self.address.storage),
+            NextValue(usb_core.addr, self.address.r.addr),
 
             If(usb_core.start,
                 NextState("CHECK_TOK")
@@ -382,36 +390,6 @@ class SetupHandler(Module, AutoCSR):
     Attributes
     ----------
 
-    data : CSRStatus
-        Data from the last `SETUP` transactions.  It will be 10 bytes long, because
-        it will include the CRC16.  This is a FIFO, so write a 1 to `DATA.ACK`
-        to advance the queue.
-
-        .. wavedrom::
-            :caption: SETUP_DATA
-
-            {
-              "reg": [
-                  { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The next byte of SETUP data" }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
-    status : CSRStatus
-        Status about the most recent `SETUP` transactions, and the state of the FIFO.
-
-        .. wavedrom::
-            :caption: SETUP_STATUS
-
-            {
-               "reg": [
-                   { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-                   { "name": "IS_IN", "bits": 1, "attr": "RO", "description": "`1` if an IN stage was detected." },
-                   { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP token." },
-                   { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-                   { "name": "DATA",  "bits": 1, "attr": "RO", "description": "`1` if a DATA stage is expected." },
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
     ctrl : CSRStorage
         Controls for managing handling of `SETUP` transactions.
 
@@ -449,8 +427,22 @@ class SetupHandler(Module, AutoCSR):
         self.begin = Signal()
 
         # Register Interface
-        self.data = data = CSRStatus(8)
-        self.status = status = CSRStatus(8)
+        self.data = data = DCSRStatus(
+            Field("data", 8, description="The next byte of SETUP data", writeable=False),
+            description="""Data from the last `SETUP` transactions.  It will be 10 bytes long, because
+                        it will include the CRC16.  This is a FIFO, so write a 1 to `CTRL.ADVANCE`
+                        to advance the queue."""
+        )
+
+        self.status = status = DCSRStatus(
+            Field("have", description="`1` if there is data in the FIFO."),
+            Field("is_in", description="`1` if an IN stage was detected."),
+            Field("epno", 4, description="The destination endpoint for the most recent SETUP token."),
+            Field("pend", description="`1` if there is an IRQ pending."),
+            Field("data", description="`1` if a DATA stage is expected."),
+            description="Status about the most recent `SETUP` transactions, and the state of the FIFO."
+        )
+
         self.ctrl = ctrl = CSRStorage(3)
 
         self.submodules.ev = ev.EventManager()
@@ -500,12 +492,18 @@ class SetupHandler(Module, AutoCSR):
                 self.comb += self.empty.eq(~buf.readable)
 
                 # Wire up the `STATUS` register
-                self.comb += status.status.eq(Cat(buf.readable, is_in, epno, pending, have_data_stage))
+                self.comb += [
+                    status.w.have.eq(buf.readable),
+                    status.w.is_in.eq(is_in),
+                    status.w.epno.eq(epno),
+                    status.w.pend.eq(pending),
+                    status.w.data.eq(have_data_stage),
+                ]
 
                 # Wire up the "SETUP" endpoint.
                 self.comb += [
                     # Set the FIFO output to be the current buffer HEAD
-                    data.status.eq(buf.dout),
+                    data.w.data.eq(buf.dout),
 
                     # Advance the FIFO when anything is written to the control bit
                     buf.re.eq(ctrl_advance),
