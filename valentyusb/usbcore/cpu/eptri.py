@@ -687,34 +687,6 @@ class OutHandler(Module, AutoCSR):
     Attributes
     ----------
 
-    ctrl : CSRStorage
-        Controls for receiving packet data.
-
-        .. wavedrom::
-            :caption: OUT_CTRL
-
-            {
-              "reg": [
-                   { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
-                   { "name": "ENABLE",  "bits": 1, "attr": "WO", "description": "Write a `1` here to enable recieving data" },
-                   { "name": "RESET",   "bits": 1, "attr": "WO", "description": "Write a `1` here to reset the OUT handler" },
-                   {                    "bits": 5 }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
-    stall : CSRStorage
-        Enables / disables STALL for a given endpoint
-
-        .. wavedrom::
-            :caption: OUT_STALL
-
-            {
-              "reg": [
-                   { "name": "EPNO",  "bits": 4, "attr": "WO", "description": "The endpoint to update STALL status for" },
-                   { "name": "STALL", "bits": 1, "attr": "WO", "description": "`1` to enable STALL, `0` to disable it" },
-                   {                  "bits": 3 }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
     """
     def __init__(self, usb_core):
         self.submodules.ev = ev.EventManager()
@@ -738,8 +710,18 @@ class OutHandler(Module, AutoCSR):
             description="Status about the current state of the `OUT` endpoint."
         )
 
-        self.ctrl = CSRStorage(3)
-        self.stall = CSRStorage(5)
+        self.ctrl = ctrl = DCSRStorage(
+            Field("advance", pulse=True, description="Write a `1` here to advance the `DATA` FIFO."),
+            Field("enable", description="Write a `1` here to enable recieving data"),
+            Field("reset", pulse=True, description="Write a `1` here to reset the OUT handler"),
+            description="Controls for receiving packet data."
+        )
+
+        self.stall = stall = DCSRStorage(
+            Field("epno", 4, description="The endpoint to update STALL status for"),
+            Field("stall", description="`1` to enable STALL, `0` to disable it"),
+            description="Enables / disables STALL for a given endpoint"
+        )
 
         # If we start an OUT stage with data in the FIFO, ignore it
         ignore = Signal()
@@ -747,36 +729,19 @@ class OutHandler(Module, AutoCSR):
 
         epno = Signal(4)
 
-        ctrl_advance = Signal()
-        ctrl_enable = Signal()
-        ctrl_reset = Signal()
-        ctrl_update = Signal()
-        self.comb += [
-            ctrl_update.eq(self.ctrl.re),
-            ctrl_advance.eq(self.ctrl.storage[0] & ctrl_update),
-            ctrl_enable.eq(self.ctrl.storage[1]),
-            ctrl_reset.eq(self.ctrl.storage[2] & ctrl_update),
-        ]
-
         self.stalled = Signal()
         stall_status = Signal(16)
-        stall_ep = Signal(4)
-        stall_en = Signal()
-        stall_update = Signal()
         ep_stall_mask = Signal(16)
         self.comb += [
-            stall_update.eq(self.stall.re),
-            stall_ep.eq(self.stall.storage[0:4]),
-            stall_en.eq(self.stall.storage[4]),
-            ep_stall_mask.eq(1 << stall_ep),
+            ep_stall_mask.eq(1 << stall.r.epno),
         ]
         self.sync += [
-            If(ctrl_reset,
+            If(ctrl.r.reset,
                 stall_status.eq(0),
-            ).Elif(usb_core.setup | (stall_update & ~stall_en),
+            ).Elif(usb_core.setup | (stall.re & ~stall.r.stall),
                 # If a SETUP packet comes in, clear the STALL bit.
                 stall_status.eq(stall_status & ~ep_stall_mask),
-            ).Elif(stall_update,
+            ).Elif(stall.re,
                 stall_status.eq(stall_status | ep_stall_mask),
             ),
             self.stalled.eq(stall_status >> epno),
@@ -787,7 +752,7 @@ class OutHandler(Module, AutoCSR):
         #  - 0 - NAK
         # Send a NAK if the buffer contains data, or if "ENABLE" has not been set.
         self.response = Signal()
-        self.comb += self.response.eq(ctrl_enable & ~buf.readable)
+        self.comb += self.response.eq(ctrl.r.enable & ~buf.readable)
 
         is_idle = Signal(reset=1)
 
@@ -804,7 +769,7 @@ class OutHandler(Module, AutoCSR):
             self.data.w.data.eq(buf.dout),
 
             # When a "1" is written to ctrl, advance the FIFO
-            buf.re.eq(ctrl_advance),
+            buf.re.eq(ctrl.r.advance),
 
             self.status.w.have.eq(buf.readable),
             self.status.w.idle.eq(is_idle),
