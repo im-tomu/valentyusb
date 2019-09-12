@@ -95,32 +95,36 @@ class TriEndpointInterface(Module, AutoCSR):
             ]
 
         ems = []
-        trigger_all = []
+        # trigger_all = []
 
         # IRQ
         self.submodules.setup = setup_handler = ClockDomainsRenamer("usb_12")(SetupHandler(usb_core))
         ems.append(setup_handler.ev)
-        trigger_all.append(setup_handler.trigger.eq(1)),
+        # trigger_all.append(setup_handler.trigger.eq(1)),
 
         in_handler = ClockDomainsRenamer("usb_12")(InHandler(usb_core))
         self.submodules.__setattr__("in", in_handler)
         ems.append(in_handler.ev)
-        trigger_all.append(in_handler.trigger.eq(1)),
+        # trigger_all.append(in_handler.trigger.eq(1)),
 
         self.submodules.out = out_handler = ClockDomainsRenamer("usb_12")(OutHandler(usb_core))
         ems.append(out_handler.ev)
-        trigger_all.append(out_handler.trigger.eq(1)),
+        # trigger_all.append(out_handler.trigger.eq(1)),
 
         self.submodules.ev = ev.SharedIRQ(*ems)
 
-        self.comb += [
-            If(~iobuf.usb_pullup,
-                *trigger_all,
-            ),
-        ]
+        # self.comb += [
+        #     If(~iobuf.usb_pullup,
+        #         *trigger_all,
+        #     ),
+        # ]
 
+        # If a debug packet comes in, the DTB should be 1.  Otherwise, the DTB should
+        # be whatever the in_handler says it is.
+        self.comb += usb_core.dtb.eq(in_handler.dtb | debug_packet_detected)
         usb_core_reset = Signal()
 
+        # When the USB host sends a USB reset, set our address back to 0.
         self.address = ResetInserter()(CSRStorage(7, name="address"))
         self.comb += self.address.reset.eq(usb_core.usb_reset)
 
@@ -180,7 +184,6 @@ class TriEndpointInterface(Module, AutoCSR):
                 ).Else(
                     usb_core.arm.eq(0)
                 ),
-                usb_core.dtb.eq(1),
                 If(~debug_packet_detected,
                     NextState("IDLE")
                 )
@@ -237,7 +240,6 @@ class TriEndpointInterface(Module, AutoCSR):
 
                     usb_core.sta.eq(in_handler.stalled),
                     usb_core.arm.eq(setup_handler.handled & in_handler.response),
-                    usb_core.dtb.eq(in_handler.dtb),
                     If(in_handler.stalled & usb_core.poll,
                         in_handler.reset.eq(1),
                         NextState("IDLE")
@@ -265,7 +267,6 @@ class TriEndpointInterface(Module, AutoCSR):
                 ).Elif(usb_core.tok == PID.IN,
                     usb_core.sta.eq(0),
                     usb_core.arm.eq(1),
-                    usb_core.dtb.eq(in_handler.dtb),
                     If(usb_core.commit,
                         NextState("IDLE"),
                     ),
@@ -273,13 +274,13 @@ class TriEndpointInterface(Module, AutoCSR):
             ),
         )
 
+
         # ACK the IN packet by sending a single OUT packet with no data
         stage.act("WAIT_CONTROL_ACK",
             stage_num.eq(6),
             usb_core.sta.eq(0),
             # Only continue once the buffer has been drained.
             usb_core.arm.eq(setup_handler.empty),
-            usb_core.dtb.eq(1),
             If(usb_core.commit & setup_handler.empty,
                 NextState("IDLE")
             ),
@@ -293,9 +294,8 @@ class TriEndpointInterface(Module, AutoCSR):
                 usb_core.data_send_payload.eq(in_handler.data_out),
                 in_handler.data_out_advance.eq(usb_core.data_send_get),
 
-                usb_core.sta.eq(in_handler.stalled), # XXX FIX STALL
+                usb_core.sta.eq(in_handler.stalled),
                 usb_core.arm.eq(in_handler.response),
-                usb_core.dtb.eq(in_handler.dtb),
                 in_handler.trigger.eq(usb_core.commit),
 
                 # After an IN transfer, the host sends an OUT
