@@ -1262,7 +1262,8 @@ def test_debug_in(dut):
     yield harness.reset()
     yield harness.connect()
 
-    addr = 28
+    addr = 0
+    yield harness.write(harness.csrs['usb_address'], addr)
     # The "scratch" register defaults to 0x12345678 at boot.
     reg_addr = harness.csrs['ctrl_scratch']
     setup_data = [0xc3, 0x00,
@@ -1334,7 +1335,8 @@ def test_debug_out(dut):
     yield harness.reset()
     yield harness.connect()
 
-    addr = 28
+    addr = 0
+    yield harness.write(harness.csrs['usb_address'], addr)
     reg_addr = harness.csrs['ctrl_scratch']
     setup_data = [0x43, 0x00,
                     (reg_addr >> 0) & 0xff,
