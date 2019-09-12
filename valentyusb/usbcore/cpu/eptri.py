@@ -687,34 +687,6 @@ class OutHandler(Module, AutoCSR):
     Attributes
     ----------
 
-    data : CSRStatus
-        Data received from the host will go into a FIFO.  This register reflects the contents of the top byte in that FIFO.
-
-        .. wavedrom::
-            :caption: OUT_DATA
-
-            {
-               "reg": [
-                   { "name": "DATA",   "bits": 8, "attr": "RO", "description": "The top byte of the receive FIFO." }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
-    status : CSRStatus
-        Status about the contents of the OUT endpoint.
-
-        .. wavedrom::
-            :caption: OUT_STATUS
-
-            {
-               "reg": [
-                   { "name": "HAVE",  "bits": 1, "attr": "RO", "description": "`1` if there is data in the FIFO." },
-                   { "name": "IDLE",  "bits": 1, "attr": "RO", "description": "`1` if the packet has finished receiving." },
-                   { "name": "EPNO",  "bits": 4, "attr": "RO", "description": "The destination endpoint for the most recent SETUP packet." },
-                   { "name": "PEND",  "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-                   {                  "bits": 1 }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
     ctrl : CSRStorage
         Controls for receiving packet data.
 
@@ -752,8 +724,20 @@ class OutHandler(Module, AutoCSR):
 
         self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=66)
 
-        self.data = CSRStatus(8)
-        self.status = CSRStatus(7)
+        self.data = DCSRStatus(
+            Field("data", 8, description="The top byte of the receive FIFO."),
+            description="""Data received from the host will go into a FIFO.  This register
+                        reflects the contents of the top byte in that FIFO."""
+        )
+
+        self.status = DCSRStatus(
+            Field("have", description="`1` if there is data in the FIFO."),
+            Field("idle", description="`1` if the packet has finished receiving."),
+            Field("epno", 4, description="The destination endpoint for the most recent OUT packet."),
+            Field("pend", description="`1` if there is an IRQ pending."),
+            description="Status about the current state of the `OUT` endpoint."
+        )
+
         self.ctrl = CSRStorage(3)
         self.stall = CSRStorage(5)
 
@@ -817,12 +801,16 @@ class OutHandler(Module, AutoCSR):
         self.comb += [
             buf.din.eq(self.data_recv_payload),
             buf.we.eq(self.data_recv_put & ~ignore),
-            self.data.status.eq(buf.dout),
+            self.data.w.data.eq(buf.dout),
 
             # When a "1" is written to ctrl, advance the FIFO
             buf.re.eq(ctrl_advance),
 
-            self.status.status.eq(Cat(buf.readable, is_idle, epno, self.ev.packet.pending)),
+            self.status.w.have.eq(buf.readable),
+            self.status.w.idle.eq(is_idle),
+            self.status.w.epno.eq(epno),
+            self.status.w.pend.eq(self.ev.packet.pending),
+
             self.trigger.eq(usb_core.commit & is_our_packet & is_out_packet & self.response & ~ignore),
 
             is_out_packet.eq(usb_core.tok == PID.OUT),
