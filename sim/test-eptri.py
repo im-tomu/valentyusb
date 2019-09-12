@@ -1219,7 +1219,7 @@ def test_in_transfer(dut):
     yield harness.set_data(epaddr, d[:4])
     yield harness.set_response(epaddr, EndpointResponse.ACK)
     yield harness.host_send_token_packet(PID.IN, addr, epaddr)
-    yield harness.host_expect_data_packet(PID.DATA1, d[:4])
+    yield harness.host_expect_data_packet(PID.DATA0, d[:4])
     yield harness.host_send_ack()
 
     pending = yield harness.pending(epaddr)
@@ -1230,7 +1230,7 @@ def test_in_transfer(dut):
     yield harness.set_response(epaddr, EndpointResponse.ACK)
 
     yield harness.host_send_token_packet(PID.IN, addr, epaddr)
-    yield harness.host_expect_data_packet(PID.DATA0, d[4:])
+    yield harness.host_expect_data_packet(PID.DATA1, d[4:])
     yield harness.host_send_ack()
 
 @cocotb.test()
@@ -1251,7 +1251,7 @@ def test_in_transfer_stuff_last(dut):
     yield harness.set_data(epaddr, d)
     yield harness.set_response(epaddr, EndpointResponse.ACK)
     yield harness.host_send_token_packet(PID.IN, addr, epaddr)
-    yield harness.host_expect_data_packet(PID.DATA1, d)
+    yield harness.host_expect_data_packet(PID.DATA0, d)
 
 @cocotb.test()
 def test_debug_in(dut):
