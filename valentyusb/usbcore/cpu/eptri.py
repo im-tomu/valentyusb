@@ -390,21 +390,6 @@ class SetupHandler(Module, AutoCSR):
     Attributes
     ----------
 
-    ctrl : CSRStorage
-        Controls for managing handling of `SETUP` transactions.
-
-        .. wavedrom::
-            :caption: SETUP_CTRL
-
-            {
-              "reg": [
-                  { "name": "ADVANCE", "bits": 1, "attr": "WO", "description": "Write a `1` here to advance the `DATA` FIFO." },
-                  { "name": "HANDLED", "bits": 1, "attr": "WO", "description": "Write a `1` here to indicate SETUP has been handled." },
-                  { "name": "RESET",   "bits": 1, "attr": "WO", "description": "Write a `1` here to reset the `SETUP` handler." },
-                  {                    "bits": 5 }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
     reset : Signal
         Asserting this resets the entire SetupHandler object.  You should do this at boot, or if
         you're switching applications.
@@ -434,6 +419,13 @@ class SetupHandler(Module, AutoCSR):
                         to advance the queue."""
         )
 
+        self.ctrl = ctrl = DCSRStorage(
+            Field("advance", description="Write a `1` here to advance the `DATA` FIFO.", pulse=True),
+            Field("handled", description="Write a `1` here to indicate SETUP has been handled.", pulse=True),
+            Field("reset", description="Write a `1` here to reset the `SETUP` handler.", pulse=True),
+            description="Controls for managing how to handle `SETUP` transactions."
+        )
+
         self.status = status = DCSRStatus(
             Field("have", description="`1` if there is data in the FIFO."),
             Field("is_in", description="`1` if an IN stage was detected."),
@@ -443,8 +435,6 @@ class SetupHandler(Module, AutoCSR):
             description="Status about the most recent `SETUP` transactions, and the state of the FIFO."
         )
 
-        self.ctrl = ctrl = CSRStorage(3)
-
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.packet = ev.EventSourcePulse()
         self.ev.finalize()
@@ -453,17 +443,6 @@ class SetupHandler(Module, AutoCSR):
 
         self.data_recv_payload = data_recv_payload = Signal(8)
         self.data_recv_put = data_recv_put = Signal()
-
-        ctrl_advance = Signal()
-        ctrl_handled = Signal()
-        ctrl_update = Signal()
-        ctrl_reset = Signal()
-        self.comb += [
-            ctrl_update.eq(self.ctrl.re),
-            ctrl_advance.eq(self.ctrl.storage[0] & ctrl_update),
-            ctrl_handled.eq(self.ctrl.storage[1] & ctrl_update),
-            ctrl_reset.eq(self.ctrl.storage[2] & ctrl_update),
-        ]
 
         # Since we must always ACK a SETUP packet, set this to 0.
         self.response = Signal()
@@ -506,7 +485,7 @@ class SetupHandler(Module, AutoCSR):
                     data.w.data.eq(buf.dout),
 
                     # Advance the FIFO when anything is written to the control bit
-                    buf.re.eq(ctrl_advance),
+                    buf.re.eq(ctrl.r.advance),
 
                     If(usb_core.tok == PID.SETUP,
                         buf.din.eq(data_recv_payload),
@@ -520,7 +499,7 @@ class SetupHandler(Module, AutoCSR):
                 self.sync += [
                     # When a `1` is written to the `CTRL.HANDLED` bit, indicate
                     # that the packet has been handled.
-                    If(ctrl_handled, self.handled.eq(1)),
+                    If(ctrl.r.handled, self.handled.eq(1)),
                     # The 6th and 7th bytes of SETUP data are
                     # the wLength field.  If these are nonzero,
                     # then there will be a Data stage following
@@ -544,7 +523,7 @@ class SetupHandler(Module, AutoCSR):
 
         self.submodules.inner = inner = ResetInserter()(SetupHandlerInner())
         self.comb += [
-            inner.reset.eq(self.reset | self.begin),
+            inner.reset.eq(self.reset | self.begin | ctrl.r.reset),
             self.ev.packet.clear.eq(self.begin),
         ]
 
