@@ -548,38 +548,6 @@ class InHandler(Module, AutoCSR):
     Attributes
     ----------
 
-    data : CSRStorage
-        Each byte written into this register gets added to an outgoing FIFO. Any
-        bytes that are written here will be transmitted in the order in which
-        they were added.  The FIFO queue is automatically advanced with each write.
-        The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined.
-
-        .. wavedrom::
-            :caption: IN_DATA
-
-            {
-               "reg": [
-                   { "name": "DATA",   "bits": 8, "attr": "WO", "description": "The next byte to add to the queue." }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
-    status : CSRStatus
-        Status about the IN handler.  As soon as you write to `IN_DATA`, `IN_STATUS.HAVE`
-        should go to `1`.
-
-        .. wavedrom::
-            :caption: IN_STATUS
-
-            {
-               "reg": [
-                   { "name": "HAVE",    "bits": 1, "attr": "RO", "description": "This value is '0' if the FIFO is empty." },
-                   { "name": "IDLE",    "bits": 1, "attr": "RO", "description": "This value is '1' if the packet has finished transmitting." },
-                   {                    "bits": 4 },
-                   { "name": "PEND",    "bits": 1, "attr": "RO", "description": "`1` if there is an IRQ pending." },
-                   {                    "bits": 1 }
-               ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
-
     ctrl : CSRStorage
         Enables transmission of data in response to `IN` tokens, or resets
         the contents of the FIFO.
@@ -611,8 +579,21 @@ class InHandler(Module, AutoCSR):
 
         self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=64))
 
-        self.data = CSRStorage(8)
-        self.status = CSRStatus(7)
+        self.data = DCSRStorage(
+            Field("data", 8, description="The next byte to add to the queue."),
+            description="""Each byte written into this register gets added to an outgoing FIFO. Any
+                        bytes that are written here will be transmitted in the order in which
+                        they were added.  The FIFO queue is automatically advanced with each write.
+                        The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined."""
+        )
+        self.status = DCSRStatus(
+            Field("have", description="This value is '0' if the FIFO is empty."),
+            Field("idle", description="This value is '1' if the packet has finished transmitting."),
+            Field("pend", offset=7, description="`1` if there is an IRQ pending."),
+            description="""Status about the IN handler.  As soon as you write to `IN_DATA`,
+                        `IN_STATUS.HAVE` should go to `1`."""
+        )
+
         self.ctrl = CSRStorage(6, name="ctrl")
 
         # Control bits
@@ -681,9 +662,10 @@ class InHandler(Module, AutoCSR):
             ),
 
             # Wire up the "status" register
-            self.status.status.eq(
-                Cat(buf.readable, ~queued, Signal(4), self.ev.packet.pending)
-            ),
+            self.status.w.have.eq(buf.readable),
+            self.status.w.idle.eq(~queued),
+            self.status.w.pend.eq(self.ev.packet.pending),
+
             self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit),
 
             self.dtb.eq(dtbs >> usb_core.endp),
