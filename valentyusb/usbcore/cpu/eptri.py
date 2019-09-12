@@ -63,18 +63,9 @@ class TriEndpointInterface(Module, AutoCSR):
     Attributes
     ----------
 
-    address : CSRStorage
-        Sets the USB device address, to ignore packets going to other devices.
-
-        .. wavedrom::
-            :caption: ADDRESS
-
-            {
-                "reg": [
-                    { "name": "ADDRESS", "bits": 7, "description": "Write the USB address from USB `SET_ADDRESS packets.`" },
-                    {                    "bits": 1 }
-                ], "config": { "bits": 8, "lanes": 1 }, "options": {"bits": 8, "lanes": 1}
-            }
+    debug_bridge (:obj:`wishbone.Interface`): The wishbone interface master for debug
+        If `debug=True`, this attribute will contain the Wishbone Interface
+        master for you to connect to your desired Wishbone bus.
     """
 
     def __init__(self, iobuf, debug=False):
