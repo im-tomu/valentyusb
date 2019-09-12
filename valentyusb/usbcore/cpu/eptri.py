@@ -132,12 +132,12 @@ class TriEndpointInterface(Module, AutoCSR):
         self.comb += stage.reset.eq(usb_core.usb_reset)
         stage_num = Signal(8)
 
-        invalid_states = Signal(8)
-        invalid_state_ce = Signal()
+        # invalid_states = Signal(8)
+        # invalid_state_ce = Signal()
 
-        self.sync.usb_12 += [
-            If(invalid_state_ce, invalid_states.eq(invalid_states+1)),
-        ]
+        # self.sync.usb_12 += [
+        #     If(invalid_state_ce, invalid_states.eq(invalid_states+1)),
+        # ]
 
         stage.act("IDLE",
             stage_num.eq(0),
@@ -224,7 +224,7 @@ class TriEndpointInterface(Module, AutoCSR):
                     usb_core.arm.eq(out_handler.response),
                 )
             ).Elif(usb_core.end,
-                invalid_state_ce.eq(1),
+                # invalid_state_ce.eq(1),
                 NextState("IDLE"),
             ),
         )
