@@ -139,8 +139,7 @@ class TriEndpointInterface(Module, AutoCSR):
 
         stage.act("IDLE",
             stage_num.eq(0),
-            # NextValue(usb_core.addr, self.address.storage),
-            NextValue(usb_core.addr, self.address.r.addr),
+            NextValue(usb_core.addr, self.address.storage),
 
             If(usb_core.start,
                 NextState("CHECK_TOK")
