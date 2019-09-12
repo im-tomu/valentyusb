@@ -125,10 +125,8 @@ class USBWishboneBridge(Module):
                     byte_counter_ce.eq(1),
                     If(byte_counter == 3,
                         NextState("WAIT_RECEIVE_DATA_END"),
-                        byte_counter_reset.eq(1)
                     ).Elif(usb_core.end,
                         NextState("WRITE_DATA"),
-                        byte_counter_reset.eq(1)
                     )
                 )
             )
@@ -153,7 +151,6 @@ class USBWishboneBridge(Module):
         ]
         fsm.act("WRITE_DATA",
             self.n_debug_in_progress.eq(0),
-            byte_counter_reset.eq(1),
             self.wishbone.stb.eq(1),
             self.wishbone.we.eq(1),
             self.wishbone.cyc.eq(1),
@@ -164,7 +161,6 @@ class USBWishboneBridge(Module):
 
         fsm.act("READ_DATA",
             self.n_debug_in_progress.eq(0),
-            byte_counter_reset.eq(1),
             self.wishbone.stb.eq(1),
             self.wishbone.we.eq(0),
             self.wishbone.cyc.eq(1),
