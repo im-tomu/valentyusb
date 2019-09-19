@@ -428,7 +428,7 @@ class SetupHandler(Module, AutoCSR):
         )
 
         self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse()
+        self.ev.submodules.packet = ev.EventSourcePulse(name="ready", description="Indicates a `SETUP` packet has arrived and is waiting in the `SETUP` FIFO.")
         self.ev.finalize()
         self.trigger = trigger = self.ev.packet.trigger
         self.pending = pending = self.ev.packet.pending
@@ -542,10 +542,6 @@ class InHandler(Module, AutoCSR):
 
     """
     def __init__(self, usb_core):
-        self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse()
-        self.ev.finalize()
-        self.trigger = self.ev.packet.trigger
         self.dtb = Signal()
 
         # Keep track of the current DTB for each of the 16 endpoints
@@ -584,6 +580,11 @@ class InHandler(Module, AutoCSR):
             description="""Enables transmission of data in response to `IN` tokens, or resets
                         the contents of the FIFO."""
         )
+
+        self.submodules.ev = ev.EventManager()
+        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="Indicates that the host has successfully transfered an `IN` packet, and that the FIFO is now empty.")
+        self.ev.finalize()
+        self.trigger = self.ev.packet.trigger
 
         # Control bits
         ep_stall_mask = Signal(16)
@@ -697,10 +698,6 @@ class OutHandler(Module, AutoCSR):
 
     """
     def __init__(self, usb_core):
-        self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse()
-        self.ev.finalize()
-        self.trigger = self.ev.packet.trigger
 
         self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=66)
 
@@ -738,6 +735,11 @@ class OutHandler(Module, AutoCSR):
             ],
             description="Enables / disables STALL for a given endpoint"
         )
+
+        self.submodules.ev = ev.EventManager()
+        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="Indicates that an `OUT` packet has successfully been transfered to the host.")
+        self.ev.finalize()
+        self.trigger = self.ev.packet.trigger
 
         # If we start an OUT stage with data in the FIFO, ignore it
         ignore = Signal()
