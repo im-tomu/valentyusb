@@ -9,11 +9,9 @@ from migen.genlib import cdc
 from litex.soc.interconnect import stream
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect import csr_eventmanager as ev
-from litex.soc.interconnect.csr import *
+from litex.soc.interconnect.csr import CSRStorage, CSRStatus, CSRField, AutoCSR
 
 from litex.soc.cores.gpio import GPIOOut
-
-from dcsr import DCSRStorage, DCSRStatus, Field
 
 from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
@@ -118,12 +116,12 @@ class TriEndpointInterface(Module, AutoCSR):
         usb_core_reset = Signal()
 
         # When the USB host sends a USB reset, set our address back to 0.
-        self.address = DCSRStorage(
-            Field("addr", 7, description="Write the USB address from USB `SET_ADDRESS` packets."),
-            resettable=True,
+        self.address = ResetInserter()(CSRStorage(
+            name="address",
+            fields=[CSRField("addr", 7, description="Write the USB address from USB `SET_ADDRESS` packets.")],
             description="""Sets the USB device address, in order to ignore packets
                         going to other devices on the bus. This value is reset when the host
-                        issues a USB Device Reset condition.""")
+                        issues a USB Device Reset condition."""))
         self.comb += self.address.reset.eq(usb_core.usb_reset)
 
         self.submodules.stage = stage = ClockDomainsRenamer("usb_12")(ResetInserter()(FSM(reset_state="IDLE")))
@@ -402,26 +400,30 @@ class SetupHandler(Module, AutoCSR):
         self.begin = Signal()
 
         # Register Interface
-        self.data = data = DCSRStatus(
-            Field("data", 8, description="The next byte of SETUP data", writeable=False),
+        self.data = data = CSRStatus(
+            fields=[CSRField("data", 8, description="The next byte of SETUP data")],
             description="""Data from the last `SETUP` transactions.  It will be 10 bytes long, because
                         it will include the CRC16.  This is a FIFO, so write a 1 to `CTRL.ADVANCE`
                         to advance the queue."""
         )
 
-        self.ctrl = ctrl = DCSRStorage(
-            Field("advance", description="Write a `1` here to advance the `DATA` FIFO.", pulse=True),
-            Field("handled", description="Write a `1` here to indicate SETUP has been handled.", pulse=True),
-            Field("reset", description="Write a `1` here to reset the `SETUP` handler.", pulse=True),
+        self.ctrl = ctrl = CSRStorage(
+            fields=[
+                CSRField("advance", description="Write a `1` here to advance the `DATA` FIFO.", pulse=True),
+                CSRField("handled", description="Write a `1` here to indicate SETUP has been handled.", pulse=True),
+                CSRField("reset", description="Write a `1` here to reset the `SETUP` handler.", pulse=True),
+            ],
             description="Controls for managing how to handle `SETUP` transactions."
         )
 
-        self.status = status = DCSRStatus(
-            Field("have", description="`1` if there is data in the FIFO."),
-            Field("is_in", description="`1` if an IN stage was detected."),
-            Field("epno", 4, description="The destination endpoint for the most recent SETUP token."),
-            Field("pend", description="`1` if there is an IRQ pending."),
-            Field("data", description="`1` if a DATA stage is expected."),
+        self.status = status = CSRStatus(
+            fields=[
+                CSRField("have", description="`1` if there is data in the FIFO."),
+                CSRField("is_in", description="`1` if an IN stage was detected."),
+                CSRField("epno", 4, description="The destination endpoint for the most recent SETUP token."),
+                CSRField("pend", description="`1` if there is an IRQ pending."),
+                CSRField("data", description="`1` if a DATA stage is expected."),
+            ],
             description="Status about the most recent `SETUP` transactions, and the state of the FIFO."
         )
 
@@ -462,20 +464,20 @@ class SetupHandler(Module, AutoCSR):
 
                 # Wire up the `STATUS` register
                 self.comb += [
-                    status.w.have.eq(buf.readable),
-                    status.w.is_in.eq(is_in),
-                    status.w.epno.eq(epno),
-                    status.w.pend.eq(pending),
-                    status.w.data.eq(have_data_stage),
+                    status.fields.have.eq(buf.readable),
+                    status.fields.is_in.eq(is_in),
+                    status.fields.epno.eq(epno),
+                    status.fields.pend.eq(pending),
+                    status.fields.data.eq(have_data_stage),
                 ]
 
                 # Wire up the "SETUP" endpoint.
                 self.comb += [
                     # Set the FIFO output to be the current buffer HEAD
-                    data.w.data.eq(buf.dout),
+                    data.fields.data.eq(buf.dout),
 
                     # Advance the FIFO when anything is written to the control bit
-                    buf.re.eq(ctrl.r.advance),
+                    buf.re.eq(ctrl.fields.advance),
 
                     If(usb_core.tok == PID.SETUP,
                         buf.din.eq(data_recv_payload),
@@ -489,7 +491,7 @@ class SetupHandler(Module, AutoCSR):
                 self.sync += [
                     # When a `1` is written to the `CTRL.HANDLED` bit, indicate
                     # that the packet has been handled.
-                    If(ctrl.r.handled, self.handled.eq(1)),
+                    If(ctrl.fields.handled, self.handled.eq(1)),
                     # The 6th and 7th bytes of SETUP data are
                     # the wLength field.  If these are nonzero,
                     # then there will be a Data stage following
@@ -513,7 +515,7 @@ class SetupHandler(Module, AutoCSR):
 
         self.submodules.inner = inner = ResetInserter()(SetupHandlerInner())
         self.comb += [
-            inner.reset.eq(self.reset | self.begin | ctrl.r.reset),
+            inner.reset.eq(self.reset | self.begin | ctrl.fields.reset),
             self.ev.packet.clear.eq(self.begin),
         ]
 
@@ -554,25 +556,31 @@ class InHandler(Module, AutoCSR):
 
         self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=64))
 
-        self.data = DCSRStorage(
-            Field("data", 8, description="The next byte to add to the queue."),
+        self.data = CSRStorage(
+            fields=[
+                CSRField("data", 8, description="The next byte to add to the queue."),
+            ],
             description="""Each byte written into this register gets added to an outgoing FIFO. Any
                         bytes that are written here will be transmitted in the order in which
                         they were added.  The FIFO queue is automatically advanced with each write.
                         The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined."""
         )
-        self.status = DCSRStatus(
-            Field("have", description="This value is '0' if the FIFO is empty."),
-            Field("idle", description="This value is '1' if the packet has finished transmitting."),
-            Field("pend", offset=7, description="`1` if there is an IRQ pending."),
+        self.status = CSRStatus(
+            fields=[
+                CSRField("have", description="This value is '0' if the FIFO is empty."),
+                CSRField("idle", description="This value is '1' if the packet has finished transmitting."),
+                CSRField("pend", offset=7, description="`1` if there is an IRQ pending."),
+            ],
             description="""Status about the IN handler.  As soon as you write to `IN_DATA`,
                         `IN_STATUS.HAVE` should go to `1`."""
         )
 
-        self.ctrl = ctrl = DCSRStorage(
-            Field("ep", 4, description="The endpoint number for the transaction that is queued in the FIFO."),
-            Field("stall", description="Write a 1 here to stall the EP written in `EP`.", pulse=True),
-            Field("reset", description="Write a 1 here to clear the contents of the FIFO.", pulse=True),
+        self.ctrl = ctrl = CSRStorage(
+            fields=[
+                CSRField("ep", 4, description="The endpoint number for the transaction that is queued in the FIFO."),
+                CSRField("stall", description="Write a 1 here to stall the EP written in `EP`.", pulse=True),
+                CSRField("reset", description="Write a 1 here to clear the contents of the FIFO.", pulse=True),
+            ],
             description="""Enables transmission of data in response to `IN` tokens, or resets
                         the contents of the FIFO."""
         )
@@ -580,21 +588,21 @@ class InHandler(Module, AutoCSR):
         # Control bits
         ep_stall_mask = Signal(16)
         self.comb += [
-            ep_stall_mask.eq(1 << ctrl.r.ep),
+            ep_stall_mask.eq(1 << ctrl.fields.ep),
         ]
 
         # Keep track of which endpoints are currently stalled
         self.stalled = Signal()
         self.sync += [
-            If(ctrl.r.reset,
+            If(ctrl.fields.reset,
                 stall_status.eq(0),
-            ).Elif(usb_core.setup | (ctrl.re & ~ctrl.r.stall),
+            ).Elif(usb_core.setup | (ctrl.re & ~ctrl.fields.stall),
                 # If a SETUP packet comes in, clear the STALL bit.
                 stall_status.eq(stall_status & ~ep_stall_mask),
             ).Elif(ctrl.re,
                 stall_status.eq(stall_status | ep_stall_mask),
             ),
-            self.stalled.eq(stall_status >> ctrl.r.ep),
+            self.stalled.eq(stall_status >> ctrl.fields.ep),
         ]
 
         # How to respond to requests:
@@ -604,7 +612,7 @@ class InHandler(Module, AutoCSR):
 
         self.reset = Signal()
         self.comb += [
-            buf.reset.eq(ctrl.r.reset | self.reset),
+            buf.reset.eq(ctrl.fields.reset | self.reset),
         ]
 
         # This value goes "1" when data is pending, and returns to "0" when it's done.
@@ -628,16 +636,16 @@ class InHandler(Module, AutoCSR):
 
         self.comb += [
             # We will respond with "ACK" if the register matches the current endpoint number
-            If(usb_core.endp == ctrl.r.ep,
+            If(usb_core.endp == ctrl.fields.ep,
                 self.response.eq(queued)
             ).Else(
                 self.response.eq(0)
             ),
 
             # Wire up the "status" register
-            self.status.w.have.eq(buf.readable),
-            self.status.w.idle.eq(~queued),
-            self.status.w.pend.eq(self.ev.packet.pending),
+            self.status.fields.have.eq(buf.readable),
+            self.status.fields.idle.eq(~queued),
+            self.status.fields.pend.eq(self.ev.packet.pending),
 
             self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit),
 
@@ -649,13 +657,13 @@ class InHandler(Module, AutoCSR):
             buf.we.eq(self.data.re),
             buf.din.eq(self.data.storage),
             is_in_packet.eq(usb_core.tok == PID.IN),
-            is_our_packet.eq(usb_core.endp == ctrl.r.ep),
+            is_our_packet.eq(usb_core.endp == ctrl.fields.ep),
         ]
 
         self.sync += [
             If(self.reset,
                 queued.eq(0),
-                dtbs.eq(dtbs | (1 << ctrl.r.ep)),
+                dtbs.eq(dtbs | (1 << ctrl.fields.ep)),
             )
             # When the user updates the `ctrl` register, enable writing.
             .Elif(ctrl.re,
@@ -667,7 +675,7 @@ class InHandler(Module, AutoCSR):
                 If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
                     queued.eq(0),
                     # Toggle the "DTB" line if we transmitted data
-                    dtbs.eq(dtbs ^ (1 << ctrl.r.ep)),
+                    dtbs.eq(dtbs ^ (1 << ctrl.fields.ep)),
                 ),
             ),
         ]
@@ -696,30 +704,38 @@ class OutHandler(Module, AutoCSR):
 
         self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=66)
 
-        self.data = DCSRStatus(
-            Field("data", 8, description="The top byte of the receive FIFO."),
+        self.data = CSRStatus(
+            fields=[
+                CSRField("data", 8, description="The top byte of the receive FIFO."),
+            ],
             description="""Data received from the host will go into a FIFO.  This register
                         reflects the contents of the top byte in that FIFO."""
         )
 
-        self.status = DCSRStatus(
-            Field("have", description="`1` if there is data in the FIFO."),
-            Field("idle", description="`1` if the packet has finished receiving."),
-            Field("epno", 4, description="The destination endpoint for the most recent OUT packet."),
-            Field("pend", description="`1` if there is an IRQ pending."),
+        self.status = CSRStatus(
+            fields=[
+                CSRField("have", description="`1` if there is data in the FIFO."),
+                CSRField("idle", description="`1` if the packet has finished receiving."),
+                CSRField("epno", 4, description="The destination endpoint for the most recent OUT packet."),
+                CSRField("pend", description="`1` if there is an IRQ pending."),
+            ],
             description="Status about the current state of the `OUT` endpoint."
         )
 
-        self.ctrl = ctrl = DCSRStorage(
-            Field("advance", pulse=True, description="Write a `1` here to advance the `DATA` FIFO."),
-            Field("enable", description="Write a `1` here to enable recieving data"),
-            Field("reset", pulse=True, description="Write a `1` here to reset the OUT handler"),
+        self.ctrl = ctrl = CSRStorage(
+            fields=[
+                CSRField("advance", pulse=True, description="Write a `1` here to advance the `DATA` FIFO."),
+                CSRField("enable", description="Write a `1` here to enable recieving data"),
+                CSRField("reset", pulse=True, description="Write a `1` here to reset the OUT handler"),
+            ],
             description="Controls for receiving packet data."
         )
 
-        self.stall = stall = DCSRStorage(
-            Field("epno", 4, description="The endpoint to update STALL status for"),
-            Field("stall", description="`1` to enable STALL, `0` to disable it"),
+        self.stall = stall = CSRStorage(
+            fields=[
+                CSRField("epno", 4, description="The endpoint to update STALL status for"),
+                CSRField("stall", description="`1` to enable STALL, `0` to disable it"),
+            ],
             description="Enables / disables STALL for a given endpoint"
         )
 
@@ -733,12 +749,12 @@ class OutHandler(Module, AutoCSR):
         stall_status = Signal(16)
         ep_stall_mask = Signal(16)
         self.comb += [
-            ep_stall_mask.eq(1 << stall.r.epno),
+            ep_stall_mask.eq(1 << stall.fields.epno),
         ]
         self.sync += [
-            If(ctrl.r.reset,
+            If(ctrl.fields.reset,
                 stall_status.eq(0),
-            ).Elif(usb_core.setup | (stall.re & ~stall.r.stall),
+            ).Elif(usb_core.setup | (stall.re & ~stall.fields.stall),
                 # If a SETUP packet comes in, clear the STALL bit.
                 stall_status.eq(stall_status & ~ep_stall_mask),
             ).Elif(stall.re,
@@ -752,7 +768,7 @@ class OutHandler(Module, AutoCSR):
         #  - 0 - NAK
         # Send a NAK if the buffer contains data, or if "ENABLE" has not been set.
         self.response = Signal()
-        self.comb += self.response.eq(ctrl.r.enable & ~buf.readable)
+        self.comb += self.response.eq(ctrl.fields.enable & ~buf.readable)
 
         is_idle = Signal(reset=1)
 
@@ -766,15 +782,15 @@ class OutHandler(Module, AutoCSR):
         self.comb += [
             buf.din.eq(self.data_recv_payload),
             buf.we.eq(self.data_recv_put & ~ignore),
-            self.data.w.data.eq(buf.dout),
+            self.data.fields.data.eq(buf.dout),
 
             # When a "1" is written to ctrl, advance the FIFO
-            buf.re.eq(ctrl.r.advance),
+            buf.re.eq(ctrl.fields.advance),
 
-            self.status.w.have.eq(buf.readable),
-            self.status.w.idle.eq(is_idle),
-            self.status.w.epno.eq(epno),
-            self.status.w.pend.eq(self.ev.packet.pending),
+            self.status.fields.have.eq(buf.readable),
+            self.status.fields.idle.eq(is_idle),
+            self.status.fields.epno.eq(epno),
+            self.status.fields.pend.eq(self.ev.packet.pending),
 
             self.trigger.eq(usb_core.commit & is_our_packet & is_out_packet & self.response & ~ignore),
 
