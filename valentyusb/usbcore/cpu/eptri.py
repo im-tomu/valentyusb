@@ -712,7 +712,7 @@ class OutHandler(Module, AutoCSR):
         self.status = CSRStatus(
             fields=[
                 CSRField("have", description="`1` if there is data in the FIFO."),
-                CSRField("idle", description="`1` if the packet has finished receiving."),
+                CSRField("idle", reset=1, description="`1` if the packet has finished receiving."),
                 CSRField("epno", 4, description="The destination endpoint for the most recent OUT packet."),
                 CSRField("pend", description="`1` if there is an IRQ pending."),
             ],
