@@ -5,15 +5,17 @@ from enum import IntEnum
 from migen import *
 from migen.genlib import fsm
 
+from litex.soc.integration.doc import AutoDoc, ModuleDoc
+
 from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
 from .usbwishbonebridge import USBWishboneBridge
 
-class DummyUsb(Module):
-    """
+class DummyUsb(Module, AutoDoc, ModuleDoc):
+    """DummyUSB Self-Enumerating USB Controller
 
-    Implements a device that simply responds to the most common SETUP packets.
+    This implements a device that simply responds to the most common SETUP packets.
     It is intended to be used alongside the Wishbone debug bridge.
     """
 
