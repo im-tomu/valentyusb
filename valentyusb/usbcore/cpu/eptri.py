@@ -6,6 +6,7 @@ from migen import *
 from migen.genlib import fifo
 from migen.genlib import cdc
 
+from litex.soc.integration.doc import AutoDoc, ModuleDoc
 from litex.soc.interconnect import stream
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect import csr_eventmanager as ev
@@ -50,7 +51,7 @@ epin_queued: A response is queued and has yet to be acknowledged by the host
 ep_stall: a 32-bit field representing endpoitns to respond with STALL.
 """
 
-class TriEndpointInterface(Module, AutoCSR):
+class TriEndpointInterface(Module, AutoCSR, AutoDoc):
     """Implements a CPU interface with three FIFOs:
         * SETUP
         * IN
@@ -67,6 +68,11 @@ class TriEndpointInterface(Module, AutoCSR):
     """
 
     def __init__(self, iobuf, debug=False):
+
+        self.background = ModuleDoc(title="USB Device Tri-FIFO", body="""
+            This is a three-FIFO USB device.  It presents one FIFO each for ``IN``, ``OUT``, and
+            ``SETUP`` data.  This allows for up to 16 ``IN`` and 16 ``OUT`` endpoints
+            without sacrificing many USB resources.""")
 
         # USB Core
         self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
