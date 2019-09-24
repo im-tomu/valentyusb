@@ -7,13 +7,64 @@ from migen.genlib.fsm import FSM, NextState
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect import stream
 
+from litex.soc.integration.doc import ModuleDoc, AutoDoc
+
 from ..pid import PID, PIDTypes
 
-class USBWishboneBridge(Module):
+class USBWishboneBridge(Module, AutoDoc):
 
     def __init__(self, usb_core, clk_freq=12000000, magic_packet=0x43):
         self.wishbone = wishbone.Interface()
 
+        self.background = ModuleDoc(title="USB Wishbone Bridge", body="""
+            This bridge provides a transparent bridge to the target device's Wishbone bus over USB.
+            It can operate without interfering with the device's USB stack.  It is simple enough to
+            be able to work even if the USB stack is not enumerated, though the host may not cooperate.""")
+
+        self.protocol = ModuleDoc(title="USB Wishbone Debug Protocol", body="""
+        The protocol transfers four bytes a time in big-endian (i.e. USB) order.  It uses SETUP packets
+        with the special type (0x43) as an `attention` word.  This is then followed by an ``OUT`` packet.
+
+            .. wavedrom::
+                :caption: Write to Wishbone
+
+                { "signal": [
+                    ["Request",
+                        {  "name": 'data',        "wave": 'x222...22x', "data": '0x43 0x00 [ADDRESS] 0x04 0x00'   },
+                        {  "name": 'data bits',   "wave": 'xxx2222xxx', "data": '7:0 15:8 23:16 31:24'},
+                        {  "name": 'usb meaning', "wave": 'x222.2.2.x', "data": 'bReq bTyp wValue wIndex wLength' },
+                        {  "name": 'usb byte',    "wave": 'x22222222x', "data": '1 2 3 4 5 6 7 8'                 }
+                    ],
+                    {},
+                    ["Payload",
+                        {  "name": 'data',        "wave": 'x3...x', "data": '[DATA]'},
+                        {  "name": 'data bits',   "wave": 'x3333x', "data": '7:0 15:8 23:16 31:24'},
+                        {  "name": 'usb meaning', "wave": 'x3...x', "data": 'OUT'  },
+                        {  "name": 'usb byte',    "wave": 'x3333x', "data": '1 2 3 4'}
+                    ]
+                ]}
+
+        To read data from the device, set the top bit of the `bRequestType`, followed by an ``IN`` packet.
+
+            .. wavedrom::
+                :caption: Read from Wishbone
+
+                { "signal": [
+                    ['Request',
+                        {  "name": 'data',        "wave": 'x222...22x', "data": '0xC3 0x00 [ADDRESS] 0x04 0x00'   },
+                        {  "name": 'data bits',   "wave": 'xxx2222xxx', "data": '7:0 15:8 23:16 31:24'},
+                        {  "name": 'usb meaning', "wave": 'x222.2.2.x', "data": 'bReq bTyp wValue wIndex wLength' },
+                        {  "name": 'usb byte',    "wave": 'x22222222x', "data": '1 2 3 4 5 6 7 8'                 }
+                    ],
+                    {},
+                    ["Payload",
+                        {  "name": 'data',        "wave": 'x5...x', "data": '[DATA]'},
+                        {  "name": 'data bits',   "wave": 'x5555x', "data": '7:0 15:8 23:16 31:24'},
+                        {  "name": 'usb meaning', "wave": 'x5...x', "data": 'IN'  },
+                        {  "name": 'usb byte',    "wave": 'x5555x', "data": '1 2 3 4'}
+                    ]
+                ]}
+        """)
         # # #
 
         byte_counter = Signal(3, reset_less=True)
