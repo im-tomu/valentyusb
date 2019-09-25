@@ -682,7 +682,7 @@ class InHandler(Module, AutoCSR):
             fields=[
                 CSRField("have", description="This value is '0' if the FIFO is empty."),
                 CSRField("idle", description="This value is '1' if the packet has finished transmitting."),
-                CSRField("pend", offset=7, description="`1` if there is an IRQ pending."),
+                CSRField("pend", offset=6, description="`1` if there is an IRQ pending."),
             ],
             description="""Status about the IN handler.  As soon as you write to `IN_DATA`,
                         `IN_STATUS.HAVE` should go to `1`."""
