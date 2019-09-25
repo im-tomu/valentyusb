@@ -92,7 +92,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             including the handshake that is required.
             """)
 
-        self.control_transfers = ModuleDoc(title="Interrupt and Bulk Transfers", body="""
+        self.interrupt_bulk_transfers = ModuleDoc(title="Interrupt and Bulk Transfers", body="""
             Interrupt and bulk transfers are similar from an implementation standpoint --
             they differ only in terms of how often they are transmitted.
 
