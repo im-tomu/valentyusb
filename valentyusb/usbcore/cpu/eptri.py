@@ -477,21 +477,21 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         # self.comb += self.invalid_states.status.eq(invalid_states)
 
 class SetupHandler(Module, AutoCSR):
-    """Handle `SETUP` packets.
+    """Handle ``SETUP`` packets
 
-    `SETUP` packets must always respond with `ACK`.  They are followed by a `DATA0`
+    ``SETUP`` packets must always respond with ``ACK``.  They are followed by a ``DATA0``
     packet, and may be followed by additional DATA stages.
 
     Since SETUP packets must always be handled, there is a separate FIFO that
     handles this data.  Hence the name `eptri`.
 
-    The device must always acknowledge the `SETUP` packet right away, but need
+    The device must always acknowledge the ``SETUP`` packet right away, but need
     not send the acknowledgement stage right away.  You can use this to parse
     the data at a leisurely pace.
 
-    When the device receives a `SETUP` transaction, an interrupt will fire
-    and the `SETUP_STATUS` register will have `SETUP_STATUS.HAVE` set to 1.
-    Drain the FIFO by reading from `SETUP_DATA`, then setting
+    When the device receives a ``SETUP`` transaction, an interrupt will fire
+    and the ``SETUP_STATUS`` register will have ``SETUP_STATUS.HAVE`` set to ``1``.
+    Drain the FIFO by reading from ``SETUP_DATA``, then setting
     `SETUP_CTRL.ADVANCE`.
 
     Attributes
@@ -648,13 +648,13 @@ class SetupHandler(Module, AutoCSR):
 class InHandler(Module, AutoCSR):
     """Endpoint for Device->Host transactions.
 
-    When a host requests data from a device, it sends an `IN` token.  The device
-    should then respond with `DATA0`, `DATA1`, or `NAK`.  This handler is
+    When a host requests data from a device, it sends an ``IN`` token.  The device
+    should then respond with ``DATA0`, ``DATA1``, or ``NAK``.  This handler is
     responsible for managing this response, as well as supplying the USB system
     with data.
 
-    To send data, fill the FIFO by writing bytes to `IN_DATA`.  When you're ready
-    to transmit, write the destination endpoint number to `IN_CTRL`.
+    To send data, fill the FIFO by writing bytes to ``IN_DATA``.  When you're ready
+    to transmit, write the destination endpoint number to ``IN_CTRL``.
 
     Attributes
     ----------
@@ -801,16 +801,16 @@ class InHandler(Module, AutoCSR):
         ]
 
 class OutHandler(Module, AutoCSR):
-    """Endpoint for Host->Device transactions.
+    """Endpoint for Host->Device transaction
 
-    When a host wants to send data to a device, it sends an `OUT` token.  The device
-    should then respond with `ACK`, or `NAK`.  This handler is responsible for managing
+    When a host wants to send data to a device, it sends an ``OUT`` token.  The device
+    should then respond with ``ACK``, or ``NAK``.  This handler is responsible for managing
     this response, as well as reading data from the USB subsystem.
 
-    To enable receiving data, write a `1` to the `OUT_CTRL.ENABLE` bit.
+    To enable receiving data, write a ``1`` to the ``OUT_CTRL.ENABLE`` bit.
 
-    To drain the FIFO, write a `1` to `OUT_CTRL.ADVANCE`.  Don't forget to re-
-    enable the FIFO by ensuring `OUT_CTRL.ENABLE` is set after advacing the FIFO!
+    To drain the FIFO, read from ``OUT.DATA``.  Don't forget to re-
+    enable the FIFO by ensuring ``OUT_CTRL.ENABLE`` is set after advacing the FIFO!
 
     Attributes
     ----------
