@@ -59,6 +59,18 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
     Each of the three FIFOs has a relatively similar register set.
 
+    Args
+    ----
+
+    iobuf (:obj:`io.IoBuf`): PHY interface to the raw pins.  This object
+        encapsulate the pin interface to the outside world so that
+        `TriEndpointInterface` does not need to have platform-specific
+        IO handling.
+
+    debug (bool, optional): Whether to add a debug bridge to this interface.
+        Adding a debug bridge generates a Wishbone Master, which can take
+        a large number of resources.  In exchange, it offers transparent debug.
+
     Attributes
     ----------
 
