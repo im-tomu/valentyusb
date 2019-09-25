@@ -237,10 +237,10 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         # When the USB host sends a USB reset, set our address back to 0.
         self.address = ResetInserter()(CSRStorage(
             name="address",
-            fields=[CSRField("addr", 7, description="Write the USB address from USB `SET_ADDRESS` packets.")],
+            fields=[CSRField("addr", 7, description="Write the USB address from USB ``SET_ADDRESS`` packets.")],
             description="""Sets the USB device address, in order to ignore packets
-                        going to other devices on the bus. This value is reset when the host
-                        issues a USB Device Reset condition."""))
+                           going to other devices on the bus. This value is reset when the host
+                           issues a USB Device Reset condition."""))
         self.comb += self.address.reset.eq(usb_core.usb_reset)
 
         self.submodules.stage = stage = ClockDomainsRenamer("usb_12")(ResetInserter()(FSM(reset_state="IDLE")))
@@ -492,7 +492,7 @@ class SetupHandler(Module, AutoCSR):
     When the device receives a ``SETUP`` transaction, an interrupt will fire
     and the ``SETUP_STATUS`` register will have ``SETUP_STATUS.HAVE`` set to ``1``.
     Drain the FIFO by reading from ``SETUP_DATA``, then setting
-    `SETUP_CTRL.ADVANCE`.
+    ``SETUP_CTRL.ADVANCE``.
 
     Attributes
     ----------
@@ -502,14 +502,14 @@ class SetupHandler(Module, AutoCSR):
         you're switching applications.
 
     begin : Signal
-        Assert this when a `SETUP` token is received.  This will clear out the current buffer
+        Assert this when a ``SETUP`` token is received.  This will clear out the current buffer
         (if any) and prepare the endpoint to receive data.
 
     handled : Signal
-        This gets set to `1` when the `SETUP` packet has been handled.
+        This gets set to ``1`` when the ``SETUP`` packet has been handled.
 
     is_in : Signal
-        This is a `1` if the `SETUP` packet will be followed by an `IN` stage.
+        This is a ``1`` if the ``SETUP`` packet will be followed by an ``IN`` stage.
 
     """
 
@@ -520,32 +520,35 @@ class SetupHandler(Module, AutoCSR):
 
         # Register Interface
         self.data = data = CSRStatus(
-            fields=[CSRField("data", 8, description="The next byte of SETUP data")],
-            description="""Data from the last `SETUP` transactions.  It will be 10 bytes long, because
-                        it will include the CRC16.  This is a FIFO, and the queue is advanced automatically."""
+            fields=[CSRField("data", 8, description="The next byte of ``SETUP`` data")],
+            description="""Data from the last ``SETUP`` transactions.  It will be 10 bytes long, because
+                           it will include the CRC16.  This is a FIFO, and the queue is advanced automatically."""
         )
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("handled", offset=1, description="Write a `1` here to indicate SETUP has been handled.", pulse=True),
-                CSRField("reset", description="Write a `1` here to reset the `SETUP` handler.", pulse=True),
+                CSRField("handled", offset=1, description="Write a ``1`` here to indicate SETUP has been handled.", pulse=True),
+                CSRField("reset", description="Write a ``1`` here to reset the `SETUP` handler.", pulse=True),
             ],
-            description="Controls for managing how to handle `SETUP` transactions."
+            description="Controls for managing how to handle ``SETUP`` transactions."
         )
 
         self.status = status = CSRStatus(
             fields=[
-                CSRField("have", description="`1` if there is data in the FIFO."),
-                CSRField("is_in", description="`1` if an IN stage was detected."),
+                CSRField("have", description="``1`` if there is data in the FIFO."),
+                CSRField("is_in", description="``1`` if an IN stage was detected."),
                 CSRField("epno", 4, description="The destination endpoint for the most recent SETUP token."),
-                CSRField("pend", description="`1` if there is an IRQ pending."),
-                CSRField("data", description="`1` if a DATA stage is expected."),
+                CSRField("pend", description="``1`` if there is an IRQ pending."),
+                CSRField("data", description="``1`` if a DATA stage is expected."),
             ],
-            description="Status about the most recent `SETUP` transactions, and the state of the FIFO."
+            description="Status about the most recent ``SETUP`` transactions, and the state of the FIFO."
         )
 
         self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse(name="ready", description="Indicates a `SETUP` packet has arrived and is waiting in the `SETUP` FIFO.")
+        self.ev.submodules.packet = ev.EventSourcePulse(name="ready",
+                                            description="""
+                                            Indicates a ``SETUP`` packet has arrived
+                                            and is waiting in the ``SETUP`` FIFO.""")
         self.ev.finalize()
         self.trigger = trigger = self.ev.packet.trigger
         self.pending = pending = self.ev.packet.pending
@@ -673,29 +676,31 @@ class InHandler(Module, AutoCSR):
             fields=[
                 CSRField("data", 8, description="The next byte to add to the queue."),
             ],
-            description="""Each byte written into this register gets added to an outgoing FIFO. Any
-                        bytes that are written here will be transmitted in the order in which
-                        they were added.  The FIFO queue is automatically advanced with each write.
-                        The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined."""
+            description="""
+                    Each byte written into this register gets added to an outgoing FIFO. Any
+                    bytes that are written here will be transmitted in the order in which
+                    they were added.  The FIFO queue is automatically advanced with each write.
+                    The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined."""
         )
         self.status = CSRStatus(
             fields=[
-                CSRField("have", description="This value is '0' if the FIFO is empty."),
-                CSRField("idle", description="This value is '1' if the packet has finished transmitting."),
-                CSRField("pend", offset=6, description="`1` if there is an IRQ pending."),
+                CSRField("have", description="This value is ``0`` if the FIFO is empty."),
+                CSRField("idle", description="This value is ``1`` if the packet has finished transmitting."),
+                CSRField("pend", offset=6, description="``1`` if there is an IRQ pending."),
             ],
             description="""Status about the IN handler.  As soon as you write to `IN_DATA`,
-                        `IN_STATUS.HAVE` should go to `1`."""
+                           ``IN_STATUS.HAVE`` should go to ``1``."""
         )
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
                 CSRField("ep", 4, description="The endpoint number for the transaction that is queued in the FIFO."),
-                CSRField("stall", description="Write a 1 here to stall the EP written in `EP`.", pulse=True),
-                CSRField("reset", description="Write a 1 here to clear the contents of the FIFO.", pulse=True),
+                CSRField("stall", description="Write a ``1`` here to stall the EP written in ``EP``.", pulse=True),
+                CSRField("reset", description="Write a ``1`` here to clear the contents of the FIFO.", pulse=True),
             ],
-            description="""Enables transmission of data in response to `IN` tokens, or resets
-                        the contents of the FIFO."""
+            description="""
+                        Enables transmission of data in response to ``IN`` tokens,
+                        or resets the contents of the FIFO."""
         )
 
         self.submodules.ev = ev.EventManager()
@@ -799,7 +804,8 @@ class InHandler(Module, AutoCSR):
         ]
 
 class OutHandler(Module, AutoCSR):
-    """Endpoint for Host->Device transaction
+    """
+    Endpoint for Host->Device transaction
 
     When a host wants to send data to a device, it sends an ``OUT`` token.  The device
     should then respond with ``ACK``, or ``NAK``.  This handler is responsible for managing
@@ -822,7 +828,8 @@ class OutHandler(Module, AutoCSR):
             fields=[
                 CSRField("data", 8, description="The top byte of the receive FIFO."),
             ],
-            description="""Data received from the host will go into a FIFO.  This register
+            description="""
+                        Data received from the host will go into a FIFO.  This register
                         reflects the contents of the top byte in that FIFO.  Reading from
                         this register advances the FIFO pointer."""
         )
@@ -831,7 +838,7 @@ class OutHandler(Module, AutoCSR):
             fields=[
                 CSRField("have", description="``1`` if there is data in the FIFO."),
                 CSRField("idle", reset=1, description="``1`` if the packet has finished receiving."),
-                CSRField("epno", 4, description="The destination endpoint for the most recent OUT packet."),
+                CSRField("epno", 4, description="The destination endpoint for the most recent ``OUT`` packet."),
                 CSRField("pend", description="``1`` if there is an IRQ pending."),
             ],
             description="Status about the current state of the `OUT` endpoint."
@@ -840,7 +847,7 @@ class OutHandler(Module, AutoCSR):
         self.ctrl = ctrl = CSRStorage(
             fields=[
                 CSRField("enable", offset=1, description="Write a ``1`` here to enable recieving data"),
-                CSRField("reset", pulse=True, description="Write a ``1`` here to reset the OUT handler"),
+                CSRField("reset", pulse=True, description="Write a ``1`` here to reset the ``OUT`` handler"),
             ],
             description="Controls for receiving packet data."
         )
@@ -854,9 +861,11 @@ class OutHandler(Module, AutoCSR):
         )
 
         self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="""Indicates that an
-                                                                            ``OUT`` packet has successfully been
-                                                                            transfered to the host.""")
+        self.ev.submodules.packet = ev.EventSourcePulse(name="done",
+                                                        description="""
+                                                        Indicates that an ``OUT`` packet
+                                                        has successfully been transfered
+                                                        to the host.""")
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
 
