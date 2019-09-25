@@ -522,14 +522,12 @@ class SetupHandler(Module, AutoCSR):
         self.data = data = CSRStatus(
             fields=[CSRField("data", 8, description="The next byte of SETUP data")],
             description="""Data from the last `SETUP` transactions.  It will be 10 bytes long, because
-                        it will include the CRC16.  This is a FIFO, so write a 1 to `CTRL.ADVANCE`
-                        to advance the queue."""
+                        it will include the CRC16.  This is a FIFO, and the queue is advanced automatically."""
         )
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("advance", description="Write a `1` here to advance the `DATA` FIFO.", pulse=True),
-                CSRField("handled", description="Write a `1` here to indicate SETUP has been handled.", pulse=True),
+                CSRField("handled", offset=1, description="Write a `1` here to indicate SETUP has been handled.", pulse=True),
                 CSRField("reset", description="Write a `1` here to reset the `SETUP` handler.", pulse=True),
             ],
             description="Controls for managing how to handle `SETUP` transactions."
@@ -595,8 +593,8 @@ class SetupHandler(Module, AutoCSR):
                     # Set the FIFO output to be the current buffer HEAD
                     data.fields.data.eq(buf.dout),
 
-                    # Advance the FIFO when anything is written to the control bit
-                    buf.re.eq(ctrl.fields.advance),
+                    # Advance the FIFO when a byte is read
+                    buf.re.eq(data.we),
 
                     If(usb_core.tok == PID.SETUP,
                         buf.din.eq(data_recv_payload),
@@ -820,29 +818,29 @@ class OutHandler(Module, AutoCSR):
 
         self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=66)
 
-        self.data = CSRStatus(
+        self.data = data = CSRStatus(
             fields=[
                 CSRField("data", 8, description="The top byte of the receive FIFO."),
             ],
             description="""Data received from the host will go into a FIFO.  This register
-                        reflects the contents of the top byte in that FIFO."""
+                        reflects the contents of the top byte in that FIFO.  Reading from
+                        this register advances the FIFO pointer."""
         )
 
         self.status = CSRStatus(
             fields=[
-                CSRField("have", description="`1` if there is data in the FIFO."),
-                CSRField("idle", reset=1, description="`1` if the packet has finished receiving."),
+                CSRField("have", description="``1`` if there is data in the FIFO."),
+                CSRField("idle", reset=1, description="``1`` if the packet has finished receiving."),
                 CSRField("epno", 4, description="The destination endpoint for the most recent OUT packet."),
-                CSRField("pend", description="`1` if there is an IRQ pending."),
+                CSRField("pend", description="``1`` if there is an IRQ pending."),
             ],
             description="Status about the current state of the `OUT` endpoint."
         )
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("advance", pulse=True, description="Write a `1` here to advance the `DATA` FIFO."),
-                CSRField("enable", description="Write a `1` here to enable recieving data"),
-                CSRField("reset", pulse=True, description="Write a `1` here to reset the OUT handler"),
+                CSRField("enable", offset=1, description="Write a ``1`` here to enable recieving data"),
+                CSRField("reset", pulse=True, description="Write a ``1`` here to reset the OUT handler"),
             ],
             description="Controls for receiving packet data."
         )
@@ -850,13 +848,15 @@ class OutHandler(Module, AutoCSR):
         self.stall = stall = CSRStorage(
             fields=[
                 CSRField("epno", 4, description="The endpoint to update STALL status for"),
-                CSRField("stall", description="`1` to enable STALL, `0` to disable it"),
+                CSRField("stall", description="``1`` to enable STALL, ``0`` to disable it"),
             ],
             description="Enables / disables STALL for a given endpoint"
         )
 
         self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="Indicates that an `OUT` packet has successfully been transfered to the host.")
+        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="""Indicates that an
+                                                                            ``OUT`` packet has successfully been
+                                                                            transfered to the host.""")
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
 
@@ -905,8 +905,8 @@ class OutHandler(Module, AutoCSR):
             buf.we.eq(self.data_recv_put & ~ignore),
             self.data.fields.data.eq(buf.dout),
 
-            # When a "1" is written to ctrl, advance the FIFO
-            buf.re.eq(ctrl.fields.advance),
+            # When data is read, advance the FIFO
+            buf.re.eq(data.we),
 
             self.status.fields.have.eq(buf.readable),
             self.status.fields.idle.eq(is_idle),
