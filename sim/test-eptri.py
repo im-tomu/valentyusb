@@ -593,6 +593,7 @@ def test_control_transfer_in(dut):
     yield harness.reset()
 
     yield harness.connect()
+    yield harness.write(harness.csrs['usb_address'], 20)
     yield harness.control_transfer_in(
         20,
         # Get descriptor, Index 0, Type 03, LangId 0000, wLength 10?
@@ -819,17 +820,6 @@ def test_sof_stuffing(dut):
     yield harness.host_send_sof(0x0519)
 
 @cocotb.test()
-def test_addr_is_correct(dut):
-    harness = UsbTest(dut)
-    yield harness.reset()
-
-    yield harness.connect()
-    yield harness.host_send_sof(0x04ff)
-    yield harness.host_send_sof(0x0512)
-    yield harness.host_send_sof(0x06e1)
-    yield harness.host_send_sof(0x0519)
-
-@cocotb.test()
 def test_sof_is_ignored(dut):
     harness = UsbTest(dut)
     yield harness.reset()
@@ -838,6 +828,7 @@ def test_sof_is_ignored(dut):
     addr = 0x20
     epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
     epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+    yield harness.write(harness.csrs['usb_address'], addr)
 
     data = [0, 1, 8, 0, 4, 3, 0, 0]
     @cocotb.coroutine
@@ -915,12 +906,15 @@ def test_control_transfer_in_nak_data(dut):
     yield harness.connect()
 
     addr = 22
+    yield harness.write(harness.csrs['usb_address'], addr)
     # Get descriptor, Index 0, Type 03, LangId 0000, wLength 64
     setup_data = [0x80, 0x06, 0x00, 0x03, 0x00, 0x00, 0x40, 0x00]
     in_data = [0x04, 0x03, 0x09, 0x04]
 
     epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
     # yield harness.clear_pending(epaddr_in)
+
+    yield harness.write(harness.csrs['usb_address'], addr)
 
     # Setup stage
     # -----------
@@ -1007,6 +1001,7 @@ def test_control_transfer_in_out(dut):
 
     yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.OUT))
     yield harness.clear_pending(EndpointType.epaddr(0, EndpointType.IN))
+    yield harness.write(harness.csrs['usb_address'], 20)
 
     yield harness.control_transfer_in(
         20,
@@ -1214,6 +1209,7 @@ def test_in_transfer(dut):
 
     addr = 28
     epaddr = EndpointType.epaddr(1, EndpointType.IN)
+    yield harness.write(harness.csrs['usb_address'], addr)
 
     d = [0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8]
 
@@ -1245,6 +1241,7 @@ def test_in_transfer_stuff_last(dut):
 
     addr = 28
     epaddr = EndpointType.epaddr(1, EndpointType.IN)
+    yield harness.write(harness.csrs['usb_address'], addr)
 
     d = [0x37, 0x75, 0x00, 0xe0]
 
