@@ -169,7 +169,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
         # impact our latency at all as this signal runs at a rate of ~1 MHz.
         data_recv_put_delayed = self.data_recv_put_delayed = Signal()
         data_recv_payload_delayed = self.data_recv_payload_delayed = Signal(8)
-        self.sync += [
+        self.sync.usb_12 += [
             data_recv_put_delayed.eq(usb_core.data_recv_put),
             data_recv_payload_delayed.eq(usb_core.data_recv_payload),
         ]
@@ -177,7 +177,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
         # Wire up debug signals if required
         if debug:
             debug_bridge = USBWishboneBridge(usb_core)
-            self.submodules.debug_bridge = ClockDomainsRenamer("usb_12")(debug_bridge)
+            self.submodules.debug_bridge = debug_bridge
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
                 debug_sink_data.eq(self.debug_bridge.sink_data),
@@ -202,7 +202,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
             usb_core.data_send_have.eq(have_response),
         ]
 
-        self.sync += [
+        self.sync.usb_12 += [
             usb_core.reset.eq(usb_core.error),
             last_start.eq(usb_core.start),
             If(last_start,
