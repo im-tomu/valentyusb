@@ -70,7 +70,7 @@ class USBWishboneBridge(Module, AutoDoc):
         byte_counter = Signal(3, reset_less=True)
         byte_counter_reset = Signal()
         byte_counter_ce = Signal()
-        self.sync += \
+        self.sync.usb_12 += \
             If(byte_counter_reset,
                 byte_counter.eq(0)
             ).Elif(byte_counter_ce,
@@ -104,7 +104,7 @@ class USBWishboneBridge(Module, AutoDoc):
         rx_data_ce = Signal()
         tx_data_ce = Signal()
 
-        self.sync += [
+        self.sync.usb_12 += [
             If(cmd_ce, cmd.eq(usb_core.data_recv_payload[7:8])),
             If(address_ce, address.eq(Cat(address[8:32], usb_core.data_recv_payload))),
             If(rx_data_ce,
@@ -115,7 +115,7 @@ class USBWishboneBridge(Module, AutoDoc):
         ]
 
 
-        fsm = ResetInserter()(FSM(reset_state="IDLE"))
+        fsm = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
         self.submodules += fsm
         fsm.act("IDLE",
             self.n_debug_in_progress.eq(1),
@@ -192,6 +192,35 @@ class USBWishboneBridge(Module, AutoDoc):
             )
         )
 
+        # Add a bridge to allow this module (in the usb_12 domain) to access
+        # the main Wishbone bridge (potentially in some other domain).
+        # Ensure this bridge is placed in the "sys" domain.
+        self.submodules.wb_cd_bridge = wb_cd_bridge = FSM(reset_state="IDLE")
+        op_done = Signal()
+        wr_op = Signal()
+        start_op = Signal()
+        wb_cd_bridge.act("IDLE",
+            op_done.eq(0),
+            If(start_op,
+                NextState("DO_OP"),
+            ),
+        )
+        wb_cd_bridge.act("DO_OP",
+            self.wishbone.stb.eq(1),
+            self.wishbone.we.eq(wr_op),
+            self.wishbone.cyc.eq(1),
+            If(self.wishbone.ack | self.wishbone.err,
+                op_done.eq(1),
+                NextState("OP_DONE"),
+            ),
+        )
+        wb_cd_bridge.act("OP_DONE",
+            op_done.eq(1),
+            If(~start_op,
+                NextState("IDLE"),
+            ),
+        )
+
         self.comb += [
             # Trim off the last two bits of the address, because wishbone addresses
             # are word-based, and a word is 32-bits.  Therefore, the last two bits
@@ -202,20 +231,18 @@ class USBWishboneBridge(Module, AutoDoc):
         ]
         fsm.act("WRITE_DATA",
             self.n_debug_in_progress.eq(0),
-            self.wishbone.stb.eq(1),
-            self.wishbone.we.eq(1),
-            self.wishbone.cyc.eq(1),
-            If(self.wishbone.ack | self.wishbone.err,
+            wr_op.eq(1),
+            start_op.eq(1),
+            If(op_done,
                 NextState("WAIT_SEND_ACK_START"),
             )
         )
 
         fsm.act("READ_DATA",
             self.n_debug_in_progress.eq(0),
-            self.wishbone.stb.eq(1),
-            self.wishbone.we.eq(0),
-            self.wishbone.cyc.eq(1),
-            If(self.wishbone.ack | self.wishbone.err,
+            wr_op.eq(0),
+            start_op.eq(1),
+            If(op_done,
                 tx_data_ce.eq(1),
                 NextState("SEND_DATA_WAIT_START")
             )
