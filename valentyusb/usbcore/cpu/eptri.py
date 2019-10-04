@@ -198,8 +198,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         # Wire up debug signals if required
         if debug:
-            debug_bridge = USBWishboneBridge(self.usb_core)
-            self.submodules.debug_bridge = ClockDomainsRenamer("usb_12")(debug_bridge)
+            self.submodules.debug_bridge = debug_bridge = USBWishboneBridge(self.usb_core)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
             ]
