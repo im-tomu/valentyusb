@@ -205,6 +205,9 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
         self.sync.usb_12 += [
             usb_core.reset.eq(usb_core.error),
             last_start.eq(usb_core.start),
+            If(usb_core.usb_reset,
+                address.eq(0),
+            ),
             If(last_start,
                 If(usb_core.tok == PID.SETUP,
                     setup_index.eq(0),
