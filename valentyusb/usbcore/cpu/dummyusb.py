@@ -21,7 +21,14 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
 
     def __init__(self, iobuf, debug=False, vid=0x1209, pid=0x5bf0,
         product="Fomu Bridge",
-        manufacturer="Foosn"):
+        manufacturer="Foosn",
+        cdc=False):
+        """
+        Arguments:
+
+        cdc: True if the Wishbone bus isn't in the same clock domain
+        as `usb_12`, then insert a clock domain crossing construct.
+        """
         # USB Core
         self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
         if usb_core.iobuf.usb_pullup is not None:
@@ -176,7 +183,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
 
         # Wire up debug signals if required
         if debug:
-            debug_bridge = USBWishboneBridge(usb_core)
+            debug_bridge = USBWishboneBridge(usb_core, cdc=cdc)
             self.submodules.debug_bridge = debug_bridge
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
