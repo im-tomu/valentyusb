@@ -71,6 +71,11 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         Adding a debug bridge generates a Wishbone Master, which can take
         a large number of resources.  In exchange, it offers transparent debug.
 
+    cdc (bool, optional): By default, ``eptri`` assumes that the CSR bus is in
+        the same 12 MHz clock domain as the USB stack.  If ``cdc`` is set to
+        True, then additional buffers will be placed on the ``.we`` and ``.re``
+        lines to handle this difference.
+
     Attributes
     ----------
 
@@ -79,7 +84,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         master for you to connect to your desired Wishbone bus.
     """
 
-    def __init__(self, iobuf, debug=False):
+    def __init__(self, iobuf, debug=False, cdc=False):
 
         self.background = ModuleDoc(title="USB Device Tri-FIFO", body="""
             This is a three-FIFO USB device.  It presents one FIFO each for ``IN``, ``OUT``, and
@@ -198,7 +203,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         # Wire up debug signals if required
         if debug:
-            self.submodules.debug_bridge = debug_bridge = USBWishboneBridge(self.usb_core)
+            self.submodules.debug_bridge = debug_bridge = USBWishboneBridge(self.usb_core, cdc=cdc)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
             ]
@@ -703,7 +708,10 @@ class InHandler(Module, AutoCSR):
         )
 
         self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="Indicates that the host has successfully transfered an `IN` packet, and that the FIFO is now empty.")
+        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="""
+                            Indicates that the host has successfully transferred an `IN` packet,
+                            and that the FIFO is now empty.
+                            """)
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
 
@@ -813,7 +821,7 @@ class OutHandler(Module, AutoCSR):
     To enable receiving data, write a ``1`` to the ``OUT_CTRL.ENABLE`` bit.
 
     To drain the FIFO, read from ``OUT.DATA``.  Don't forget to re-
-    enable the FIFO by ensuring ``OUT_CTRL.ENABLE`` is set after advacing the FIFO!
+    enable the FIFO by ensuring ``OUT_CTRL.ENABLE`` is set after advancing the FIFO!
 
     Attributes
     ----------
@@ -845,7 +853,7 @@ class OutHandler(Module, AutoCSR):
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("enable", offset=1, description="Write a ``1`` here to enable recieving data"),
+                CSRField("enable", offset=1, description="Write a ``1`` here to enable receiving data"),
                 CSRField("reset", pulse=True, description="Write a ``1`` here to reset the ``OUT`` handler"),
             ],
             description="Controls for receiving packet data."
@@ -863,7 +871,7 @@ class OutHandler(Module, AutoCSR):
         self.ev.submodules.packet = ev.EventSourcePulse(name="done",
                                                         description="""
                                                         Indicates that an ``OUT`` packet
-                                                        has successfully been transfered
+                                                        has successfully been transferred
                                                         to the host.""")
         self.ev.finalize()
         self.trigger = self.ev.packet.trigger
