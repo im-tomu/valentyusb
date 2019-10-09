@@ -16,7 +16,7 @@ from ..pid import PID, PIDTypes
 
 class USBWishboneBridge(Module, AutoDoc):
 
-    def __init__(self, usb_core, clk_freq=12000000, magic_packet=0x43):
+    def __init__(self, usb_core, clk_freq=12000000, magic_packet=0x43, cdc=False):
         self.wishbone = wishbone.Interface()
 
         self.background = ModuleDoc(title="USB Wishbone Bridge", body="""
@@ -80,13 +80,6 @@ class USBWishboneBridge(Module, AutoDoc):
                 byte_counter.eq(byte_counter + 1)
             )
 
-        # Add a bridge to allow this module (in the usb_12 domain) to access
-        # the main Wishbone bridge (potentially in some other domain).
-        # Ensure this bridge is placed in the "sys" domain.
-        self.submodules.wb_cd_bridge = wb_cd_bridge = FSM(reset_state="IDLE")
-        self.submodules.usb_to_wb = usb_to_wb = PulseSynchronizer("usb_12", "sys")
-        self.submodules.wb_to_uwb = wb_to_usb = PulseSynchronizer("sys", "usb_12")
-
         # Unlike the UART or Ethernet bridges, we explicitly only
         # support two commands: reading and writing.  This gets
         # integrated into the USB protocol, so it's not really a
@@ -94,6 +87,28 @@ class USBWishboneBridge(Module, AutoDoc):
         # while 0 is "USB Host to Device", and is therefore a "write".
         cmd = Signal(1, reset_less=True)
         cmd_ce = Signal()
+
+        # Add a bridge to allow this module (in the usb_12 domain) to access
+        # the main Wishbone bridge (potentially in some other domain).
+        # Ensure this bridge is placed in the "sys" domain.
+        send_to_wishbone = Signal()
+        reply_from_wishbone = Signal()
+        transfer_active = Signal()
+        if cdc:
+            self.submodules.wb_cd_bridge = wb_cd_bridge = FSM(reset_state="IDLE")
+            self.submodules.usb_to_wb = usb_to_wb = PulseSynchronizer("usb_12", "sys")
+            self.submodules.wb_to_uwb = wb_to_usb = PulseSynchronizer("sys", "usb_12")
+            send_to_wishbone = usb_to_wb.i
+            reply_from_wishbone = wb_to_usb.o
+        else:
+            self.comb += [
+                If(send_to_wishbone | transfer_active,
+                    self.wishbone.stb.eq(1),
+                    self.wishbone.we.eq(~cmd),
+                    self.wishbone.cyc.eq(1),
+                ),
+                reply_from_wishbone.eq(self.wishbone.ack | self.wishbone.err),
+            ]
 
         # Instead of self.source and self.sink, we let the wrapping
         # module handle packing and unpacking the data.
@@ -175,7 +190,7 @@ class USBWishboneBridge(Module, AutoDoc):
             If(usb_core.end,
                 byte_counter_reset.eq(1),
                 If(cmd,
-                    usb_to_wb.i.eq(1),
+                    send_to_wishbone.eq(1),
                     NextState("READ_DATA"),
                 ).Else(
                     NextState("RECEIVE_DATA"),
@@ -196,7 +211,7 @@ class USBWishboneBridge(Module, AutoDoc):
                     If(byte_counter == 3,
                         NextState("WAIT_RECEIVE_DATA_END"),
                     ).Elif(usb_core.end,
-                        usb_to_wb.i.eq(1),
+                        send_to_wishbone.eq(1),
                         NextState("WRITE_DATA"),
                     )
                 )
@@ -208,25 +223,26 @@ class USBWishboneBridge(Module, AutoDoc):
             # Wait for the end of the USB packet, if
             # it hasn't come already.
             If(usb_core.end,
-                usb_to_wb.i.eq(1),
+                send_to_wishbone.eq(1),
                 NextState("WRITE_DATA")
             )
         )
 
-        wb_cd_bridge.act("IDLE",
-            If(usb_to_wb.o,
-                NextState("DO_OP"),
-            ),
-        )
-        wb_cd_bridge.act("DO_OP",
-            self.wishbone.stb.eq(1),
-            self.wishbone.we.eq(~cmd),
-            self.wishbone.cyc.eq(1),
-            If(self.wishbone.ack | self.wishbone.err,
-                NextState("IDLE"),
-                wb_to_usb.i.eq(1),
-            ),
-        )
+        if cdc:
+            wb_cd_bridge.act("IDLE",
+                If(usb_to_wb.o,
+                    NextState("DO_OP"),
+                ),
+            )
+            wb_cd_bridge.act("DO_OP",
+                self.wishbone.stb.eq(1),
+                self.wishbone.we.eq(~cmd),
+                self.wishbone.cyc.eq(1),
+                If(self.wishbone.ack | self.wishbone.err,
+                    NextState("IDLE"),
+                    wb_to_usb.i.eq(1),
+                ),
+            )
 
         self.comb += [
             # Trim off the last two bits of the address, because wishbone addresses
@@ -238,14 +254,16 @@ class USBWishboneBridge(Module, AutoDoc):
         ]
         fsm.act("WRITE_DATA",
             self.n_debug_in_progress.eq(0),
-            If(wb_to_usb.o,
+            transfer_active.eq(1),
+            If(reply_from_wishbone,
                 NextState("WAIT_SEND_ACK_START"),
             )
         )
 
         fsm.act("READ_DATA",
             self.n_debug_in_progress.eq(0),
-            If(wb_to_usb.o,
+            transfer_active.eq(1),
+            If(reply_from_wishbone,
                 NextState("SEND_DATA_WAIT_START")
             )
         )
