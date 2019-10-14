@@ -830,7 +830,7 @@ class OutHandler(Module, AutoCSR):
     """
     def __init__(self, usb_core):
 
-        self.submodules.data_buf = buf = fifo.SyncFIFOBuffered(width=8, depth=66)
+        self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=66))
 
         self.data = data = CSRStatus(
             fields=[
@@ -920,6 +920,7 @@ class OutHandler(Module, AutoCSR):
         self.comb += [
             buf.din.eq(self.data_recv_payload),
             buf.we.eq(self.data_recv_put & ~ignore),
+            buf.reset.eq(ctrl.fields.reset),
             self.data.fields.data.eq(buf.dout),
 
             # When data is read, advance the FIFO
