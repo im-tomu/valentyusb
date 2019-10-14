@@ -32,25 +32,29 @@ class RxPipeline(Module):
         self.o_pkt_in_progress = Signal()
         self.o_pkt_end = Signal()
 
-        # A reset condition is one where the device is in SE0 for more
-        # than 2.5 uS, which is ~30 clock cycles as 12 MHz.
-        self.o_reset = Signal()
-        reset_counter = Signal(7)
-        self.comb += self.o_reset.eq(reset_counter[6])
-        self.sync.usb_12 += [
-            If(self.i_usbp | self.i_usbn,
-                reset_counter.eq(0),
-            ).Elif(~reset_counter[6],
-                reset_counter.eq(reset_counter + 1),
-            )
-        ]
-
         # 48MHz domain
         # Clock recovery
         clock_data_recovery = RxClockDataRecovery(self.i_usbp, self.i_usbn)
         self.submodules.clock_data_recovery = ClockDomainsRenamer("usb_48")(clock_data_recovery)
         self.comb += [
             self.o_bit_strobe.eq(clock_data_recovery.line_state_valid),
+        ]
+
+        # A reset condition is one where the device is in SE0 for more
+        # than 2.5 uS, which is ~30 bit times.
+        self.o_reset = Signal()
+        reset_counter = Signal(7)
+        self.comb += self.o_reset.eq(reset_counter[6])
+        self.sync.usb_48 += [
+            If(clock_data_recovery.line_state_valid,
+                If(clock_data_recovery.line_state_se0,
+                    If(~reset_counter[6],
+                        reset_counter.eq(reset_counter + 1),
+                    )
+                ).Else(
+                    reset_counter.eq(0),
+                )
+            )
         ]
 
         # NRZI decoding
