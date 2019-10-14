@@ -749,6 +749,10 @@ class InHandler(Module, AutoCSR):
         # This value goes "1" when data is pending, and returns to "0" when it's done.
         queued = Signal()
 
+        # This goes to "1" when "queued" is 1 when a "start" occurs.  It is used
+        # to avoid skipping packets when a packet is queued during a transmission.
+        transmitted = Signal()
+
         # Outgoing data will be placed on this signal
         self.data_out = Signal(8)
 
@@ -794,17 +798,22 @@ class InHandler(Module, AutoCSR):
         self.sync += [
             If(self.reset,
                 queued.eq(0),
+                transmitted.eq(0),
                 dtbs.eq(dtbs | (1 << ctrl.fields.ep)),
             )
             # When the user updates the `ctrl` register, enable writing.
             .Elif(ctrl.re,
                 queued.eq(1),
             )
+            .Elif(usb_core.start & queued,
+                transmitted.eq(1),
+            )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(usb_core.end,
+            .Elif(usb_core.end & transmitted,
                 If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
                     queued.eq(0),
+                    transmitted.eq(0),
                     # Toggle the "DTB" line if we transmitted data
                     dtbs.eq(dtbs ^ (1 << ctrl.fields.ep)),
                 ),
