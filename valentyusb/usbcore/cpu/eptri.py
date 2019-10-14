@@ -943,7 +943,7 @@ class OutHandler(Module, AutoCSR):
             ).Elif(self.data_recv_put,
                 is_idle.eq(0),
             ),
-            If(is_out_packet,
+            If(self.trigger,
                 epno.eq(usb_core.endp),
             ),
         ]
