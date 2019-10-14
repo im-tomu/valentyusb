@@ -1471,3 +1471,51 @@ def test_reset(dut):
     val = yield harness.read(harness.csrs['usb_address'])
     if val != 0:
         raise TestFailure("after reset, usb address should have been 0, but was {}".format(val))
+
+@cocotb.test()
+def in_nak_different_ep(dut):
+    """Send more than one packet of OUT data, and ensure the second packet is NAKed"""
+
+    """Test that we can transfer data in without immediately draining it"""
+    epaddr_out = EndpointType.epaddr(0, EndpointType.OUT)
+    epaddr_in = EndpointType.epaddr(0, EndpointType.IN)
+
+    epaddr_d_out = EndpointType.epaddr(3, EndpointType.OUT)
+    epaddr__in = EndpointType.epaddr(3, EndpointType.IN)
+
+    harness = UsbTest(dut)
+    yield harness.reset()
+
+    yield harness.connect()
+    yield harness.write(harness.csrs['usb_address'], 0)
+
+### Enable OUT endpoint
+    yield harness.write(harness.csrs['usb_out_ctrl'], 0x02)
+
+### SEND FIRST PACKET
+    # Set the address.  Again, don't drain the device side yet.
+    yield harness.host_send_token_packet(PID.OUT, 0, epaddr_d_out)
+    yield harness.host_send_data_packet(PID.DATA0, [0x00, 0x05, 11, 0x00, 0x00, 0x00, 0x00, 0x00])
+    yield harness.host_expect_ack()
+
+### VERIFY HOST IS BUSY
+    # Send a few packets while we "process" the data as a slow host
+    yield harness.host_send_token_packet(PID.OUT, 0, epaddr_d_out)
+    yield harness.host_send_data_packet(PID.DATA1, [0x00, 0x05, 11, 0x00, 0x00, 0x00, 0x00, 0x00])
+    yield harness.host_expect_nak()
+
+### VERIFY DEVICE SEES CORRECT ADDRESS
+    incoming_ep = yield harness.read(harness.csrs['usb_out_status'])
+    if ((incoming_ep >> 2) & 0xf) != 3:
+        raise TestFailure("incorrect first-stage incoming address.  Expected 3, got: {} (status: {:02x})".format((incoming_ep >> 2) & 0xf, incoming_ep))
+
+### SEND PACKET TO A DIFFERENT EP WITHOUT DRAINING
+    # Send a few packets while we "process" the data as a slow host
+    yield harness.host_send_token_packet(PID.OUT, 0, epaddr_out)
+    yield harness.host_send_data_packet(PID.DATA1, [0x02, 0x02, 14, 0x10, 0x00, 0x00, 0x00, 0x00])
+    yield harness.host_expect_nak()
+
+### VERIFY DEVICE STILL SEES CORRECT ADDRESS
+    incoming_ep = yield harness.read(harness.csrs['usb_out_status'])
+    if ((incoming_ep >> 2) & 0xf) != 3:
+        raise TestFailure("incorrect first-stage incoming address.  Expected 3, got: {} (status: {:02x})".format((incoming_ep >> 2) & 0xf, incoming_ep))
