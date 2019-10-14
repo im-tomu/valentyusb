@@ -209,29 +209,20 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             ]
 
         ems = []
-        # trigger_all = []
 
         # IRQ
         self.submodules.setup = setup_handler = ClockDomainsRenamer("usb_12")(SetupHandler(usb_core))
+        self.comb += setup_handler.usb_reset.eq(usb_core.usb_reset)
         ems.append(setup_handler.ev)
-        # trigger_all.append(setup_handler.trigger.eq(1)),
 
         in_handler = ClockDomainsRenamer("usb_12")(InHandler(usb_core))
         self.submodules.__setattr__("in", in_handler)
         ems.append(in_handler.ev)
-        # trigger_all.append(in_handler.trigger.eq(1)),
 
         self.submodules.out = out_handler = ClockDomainsRenamer("usb_12")(OutHandler(usb_core))
         ems.append(out_handler.ev)
-        # trigger_all.append(out_handler.trigger.eq(1)),
 
         self.submodules.ev = ev.SharedIRQ(*ems)
-
-        # self.comb += [
-        #     If(~iobuf.usb_pullup,
-        #         *trigger_all,
-        #     ),
-        # ]
 
         # If a debug packet comes in, the DTB should be 1.  Otherwise, the DTB should
         # be whatever the in_handler says it is.
@@ -459,14 +450,14 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         #     ),
         # ]
 
-        # self.stage_num = CSRStatus(8)
-        # self.last_stage_num = CSRStatus(8)
-        # last_stage_num = Signal(8)
-        # self.sync += If(stage_num != last_stage_num,
-        #     self.last_stage_num.status.eq(last_stage_num),
-        #     last_stage_num.eq(stage_num),
-        # )
-        # self.comb += self.stage_num.status.eq(stage_num)
+        self.stage_num = CSRStatus(8)
+        self.last_stage_num = CSRStatus(8)
+        last_stage_num = Signal(8)
+        self.sync += If(stage_num != last_stage_num,
+            self.last_stage_num.status.eq(last_stage_num),
+            last_stage_num.eq(stage_num),
+        )
+        self.comb += self.stage_num.status.eq(stage_num)
 
         # self.error_count = CSRStatus(8)
         # # self.comb += self.error_count.status.eq(error_count)
@@ -515,12 +506,17 @@ class SetupHandler(Module, AutoCSR):
     is_in : Signal
         This is a ``1`` if the ``SETUP`` packet will be followed by an ``IN`` stage.
 
+    usb_reset : Signal
+        This signal feeds into the EventManager, which is used to indicate to the device
+        that a USB reset has occurred.
+
     """
 
     def __init__(self, usb_core):
 
         self.reset = Signal()
         self.begin = Signal()
+        self.usb_reset = Signal()
 
         # Register Interface
         self.data = data = CSRStatus(
@@ -553,9 +549,14 @@ class SetupHandler(Module, AutoCSR):
                                             description="""
                                             Indicates a ``SETUP`` packet has arrived
                                             and is waiting in the ``SETUP`` FIFO.""")
+        self.ev.submodules.reset = ev.EventSourcePulse(name="reset",
+                                                        description="""
+                                                        Indicates a USB ``RESET`` condition
+                                                        has occurred, and the ``ADDRESS`` is now ``0``.""")
         self.ev.finalize()
         self.trigger = trigger = self.ev.packet.trigger
         self.pending = pending = self.ev.packet.pending
+        self.comb += self.ev.reset.trigger.eq(self.usb_reset)
 
         self.data_recv_payload = data_recv_payload = Signal(8)
         self.data_recv_put = data_recv_put = Signal()
