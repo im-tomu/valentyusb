@@ -450,14 +450,14 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         #     ),
         # ]
 
-        self.stage_num = CSRStatus(8)
-        self.last_stage_num = CSRStatus(8)
-        last_stage_num = Signal(8)
-        self.sync += If(stage_num != last_stage_num,
-            self.last_stage_num.status.eq(last_stage_num),
-            last_stage_num.eq(stage_num),
-        )
-        self.comb += self.stage_num.status.eq(stage_num)
+        # self.stage_num = CSRStatus(8)
+        # self.last_stage_num = CSRStatus(8)
+        # last_stage_num = Signal(8)
+        # self.sync += If(stage_num != last_stage_num,
+        #     self.last_stage_num.status.eq(last_stage_num),
+        #     last_stage_num.eq(stage_num),
+        # )
+        # self.comb += self.stage_num.status.eq(stage_num)
 
         # self.error_count = CSRStatus(8)
         # # self.comb += self.error_count.status.eq(error_count)
