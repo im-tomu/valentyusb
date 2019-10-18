@@ -272,7 +272,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
                 usb_core.arm.eq(1),
             ).Elif(usb_core.tok == PID.IN,
                 NextState("IN"),
-                usb_core.sta.eq(in_handler.stalled), # XXX FIX THIS
+                usb_core.sta.eq(in_handler.stalled),
                 usb_core.arm.eq(in_handler.response),
             ).Elif(usb_core.tok == PID.OUT,
                 NextState("OUT"),
@@ -353,13 +353,13 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
                     If(in_handler.stalled & usb_core.poll,
                         in_handler.reset.eq(1),
                         NextState("IDLE")
-                    )
+                    ),
+                    in_handler.trigger.eq(usb_core.commit),
                 ).Elif(usb_core.tok == PID.OUT,
                     usb_core.sta.eq(0),
                     usb_core.arm.eq(1),
                     # After an IN transfer, the host sends an OUT
                     # packet.  We must ACK this and then return to IDLE.
-                    out_handler.trigger.eq(1),
                     NextState("WAIT_DONE"),
                 )
             )
@@ -377,9 +377,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
                 ).Elif(usb_core.tok == PID.IN,
                     usb_core.sta.eq(0),
                     usb_core.arm.eq(1),
-                    If(usb_core.commit,
-                        NextState("IDLE"),
-                    ),
+                    NextState("WAIT_DONE"),
                 )
             ),
         )
@@ -392,14 +390,19 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             # Only continue once the buffer has been drained.
             usb_core.arm.eq(setup_handler.empty),
             If(usb_core.commit & setup_handler.empty,
+                If(usb_core.tok == PID.IN,
+                    in_handler.trigger.eq(1),
+                ).Elif(usb_core.tok == PID.OUT,
+                    out_handler.trigger.eq(1),
+                ),
                 NextState("IDLE")
             ),
         )
 
         stage.act("IN",
             stage_num.eq(8),
-            # If(usb_core.tok == PID.IN,
-                # # IN packet (device-to-host)
+            If(usb_core.tok == PID.IN,
+                # IN packet (device-to-host)
                 usb_core.data_send_have.eq(in_handler.data_out_have),
                 usb_core.data_send_payload.eq(in_handler.data_out),
                 in_handler.data_out_advance.eq(usb_core.data_send_get),
@@ -413,7 +416,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
                 If(usb_core.end,
                     NextState("IDLE"),
                 ),
-            # ),
+            ),
         )
 
         stage.act("OUT",
@@ -436,7 +439,12 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             stage_num.eq(10),
             usb_core.sta.eq(0),
             usb_core.arm.eq(1),
-            If(usb_core.end,
+            If(usb_core.commit,
+                If(usb_core.tok == PID.IN,
+                    in_handler.trigger.eq(1),
+                ).Else(
+                    out_handler.trigger.eq(1),
+                ),
                 NextState("IDLE"),
             ),
         )
@@ -724,6 +732,7 @@ class InHandler(Module, AutoCSR):
 
         # Keep track of which endpoints are currently stalled
         self.stalled = Signal()
+        self.comb += self.stalled.eq(stall_status >> usb_core.endp)
         self.sync += [
             If(ctrl.fields.reset,
                 stall_status.eq(0),
@@ -733,7 +742,6 @@ class InHandler(Module, AutoCSR):
             ).Elif(ctrl.re,
                 stall_status.eq(stall_status | ep_stall_mask),
             ),
-            self.stalled.eq(stall_status >> ctrl.fields.ep),
         ]
 
         # How to respond to requests:
@@ -802,7 +810,7 @@ class InHandler(Module, AutoCSR):
                 dtbs.eq(dtbs | (1 << ctrl.fields.ep)),
             )
             # When the user updates the `ctrl` register, enable writing.
-            .Elif(ctrl.re,
+            .Elif(ctrl.re & ~ctrl.fields.stall,
                 queued.eq(1),
             )
             .Elif(usb_core.start & queued,
@@ -810,7 +818,7 @@ class InHandler(Module, AutoCSR):
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(usb_core.end & transmitted,
+            .Elif(usb_core.commit & transmitted,
                 If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
                     queued.eq(0),
                     transmitted.eq(0),
@@ -857,6 +865,7 @@ class OutHandler(Module, AutoCSR):
                 CSRField("idle", reset=1, description="``1`` if the packet has finished receiving."),
                 CSRField("epno", 4, description="The destination endpoint for the most recent ``OUT`` packet."),
                 CSRField("pend", description="``1`` if there is an IRQ pending."),
+                CSRField("arm", description="``1`` if the ``enable`` flag is set."),
             ],
             description="Status about the current state of the `OUT` endpoint."
         )
@@ -890,6 +899,8 @@ class OutHandler(Module, AutoCSR):
         ignore = Signal()
         self.sync += If(usb_core.poll, ignore.eq(buf.readable))
 
+        arm = Signal()
+        was_armed = Signal()
         epno = Signal(4)
 
         self.stalled = Signal()
@@ -907,7 +918,10 @@ class OutHandler(Module, AutoCSR):
             ).Elif(stall.re,
                 stall_status.eq(stall_status | ep_stall_mask),
             ),
-            self.stalled.eq(stall_status >> epno),
+            If(ctrl.re & ctrl.fields.enable,
+                arm.eq(1),
+            ),
+            self.stalled.eq(stall_status >> usb_core.endp),
         ]
 
         # How to respond to requests:
@@ -915,9 +929,8 @@ class OutHandler(Module, AutoCSR):
         #  - 0 - NAK
         # Send a NAK if the buffer contains data, or if "ENABLE" has not been set.
         self.response = Signal()
-        self.comb += self.response.eq(ctrl.fields.enable & ~buf.readable)
-
         is_idle = Signal(reset=1)
+        self.comb += self.response.eq(arm & ~buf.readable & is_idle)
 
         # Used to detect when an OUT packet finished
         is_out_packet = Signal()
@@ -939,8 +952,9 @@ class OutHandler(Module, AutoCSR):
             self.status.fields.idle.eq(is_idle),
             self.status.fields.epno.eq(epno),
             self.status.fields.pend.eq(self.ev.packet.pending),
+            self.status.fields.arm.eq(arm),
 
-            self.trigger.eq(usb_core.commit & is_our_packet & is_out_packet & self.response & ~ignore),
+            self.trigger.eq(~arm & was_armed),
 
             is_out_packet.eq(usb_core.tok == PID.OUT),
             is_our_packet.eq(usb_core.endp == epno),
@@ -948,8 +962,10 @@ class OutHandler(Module, AutoCSR):
 
         # If we get a packet, turn off the "IDLE" flag and keep it off until the packet has finished.
         self.sync += [
-            If(usb_core.commit & buf.readable,
+            was_armed.eq(arm),
+            If(usb_core.commit & is_our_packet & is_out_packet & self.response & ~ignore,
                 is_idle.eq(1),
+                arm.eq(0),
             ).Elif(self.data_recv_put,
                 is_idle.eq(0),
             ),
