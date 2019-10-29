@@ -258,16 +258,18 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             )
         )
 
-        tok_waits = Signal(8)
+        # tok_waits = Signal(8)
         stage.act("CHECK_TOK",
             # stage_num.eq(1),
-            NextValue(tok_waits, tok_waits + 1),
+            # NextValue(tok_waits, tok_waits + 1),
             If(usb_core.idle,
                 NextState("IDLE"),
+            ).Elif(wrap(~setup_handler.handled) & wrap(usb_core.endp == setup_handler.epno),
+                NextState("NOTREADY"),
             ).Elif(usb_core.tok == PID.SETUP,
                 NextState("SETUP"),
                 setup_handler.begin.eq(1),
-                # SETUP packets must be ACKed
+                # SETUP packets must be ACKed unconditionally
                 usb_core.sta.eq(0),
                 usb_core.arm.eq(1),
             ).Elif(usb_core.tok == PID.IN,
@@ -301,6 +303,19 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         else:
             stage.act("DEBUG", NextState("IDLE"))
 
+        stage.act("NOTREADY",
+
+            # Don't STALL, since the packet is still being processed
+            usb_core.sta.eq(0),
+
+            # NAK since the packet isn't handled yet
+            usb_core.arm.eq(0),
+
+            If(usb_core.end,
+                NextState("IDLE"),
+            ),
+        )
+
         stage.act("SETUP",
             stage_num.eq(3),
             # SETUP packet
@@ -321,81 +336,8 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
                 NextState("DEBUG")
             ),
 
-            If(usb_core.setup,
-                If(~setup_handler.have_data_stage,
-                    NextState("WAIT_CONTROL_ACK"),
-                ).Elif(setup_handler.is_in,
-                    NextState("CONTROL_IN"),
-                    usb_core.sta.eq(in_handler.stalled),
-                    usb_core.arm.eq(in_handler.response),
-                ).Else(
-                    NextState("CONTROL_OUT"),
-                    usb_core.sta.eq(out_handler.stalled),
-                    usb_core.arm.eq(out_handler.response),
-                )
-            ).Elif(usb_core.end,
-                # invalid_state_ce.eq(1),
+            If(usb_core.end,
                 NextState("IDLE"),
-            ),
-        )
-
-        stage.act("CONTROL_IN",
-            stage_num.eq(4),
-            # If(usb_core.tok == PID.SETUP, NextState("SETUP")),
-            If(usb_core.endp == 0,
-                If(usb_core.tok == PID.IN,
-                    usb_core.data_send_have.eq(in_handler.data_out_have),
-                    usb_core.data_send_payload.eq(in_handler.data_out),
-                    in_handler.data_out_advance.eq(usb_core.data_send_get),
-
-                    usb_core.sta.eq(in_handler.stalled),
-                    usb_core.arm.eq(setup_handler.handled & in_handler.response),
-                    If(in_handler.stalled & usb_core.poll,
-                        in_handler.reset.eq(1),
-                        NextState("IDLE")
-                    ),
-                    in_handler.trigger.eq(usb_core.commit),
-                ).Elif(usb_core.tok == PID.OUT,
-                    usb_core.sta.eq(0),
-                    usb_core.arm.eq(1),
-                    # After an IN transfer, the host sends an OUT
-                    # packet.  We must ACK this and then return to IDLE.
-                    NextState("WAIT_DONE"),
-                )
-            )
-        )
-
-        stage.act("CONTROL_OUT",
-            stage_num.eq(5),
-            If(usb_core.endp == 0,
-                If(usb_core.tok == PID.OUT,
-                    out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
-                    out_handler.data_recv_put.eq(usb_core.data_recv_put),
-                    usb_core.sta.eq(out_handler.stalled),
-                    usb_core.arm.eq(setup_handler.handled & out_handler.response),
-                    out_handler.trigger.eq(usb_core.commit),
-                ).Elif(usb_core.tok == PID.IN,
-                    usb_core.sta.eq(0),
-                    usb_core.arm.eq(1),
-                    NextState("WAIT_DONE"),
-                )
-            ),
-        )
-
-
-        # ACK the IN packet by sending a single OUT packet with no data
-        stage.act("WAIT_CONTROL_ACK",
-            stage_num.eq(6),
-            usb_core.sta.eq(0),
-            # Only continue once the buffer has been drained.
-            usb_core.arm.eq(setup_handler.empty),
-            If(usb_core.commit & setup_handler.empty,
-                If(usb_core.tok == PID.IN,
-                    in_handler.trigger.eq(1),
-                ).Elif(usb_core.tok == PID.OUT,
-                    out_handler.trigger.eq(1),
-                ),
-                NextState("IDLE")
             ),
         )
 
@@ -409,7 +351,6 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
                 usb_core.sta.eq(in_handler.stalled),
                 usb_core.arm.eq(in_handler.response),
-                in_handler.trigger.eq(usb_core.commit),
 
                 # After an IN transfer, the host sends an OUT
                 # packet.  We must ACK this and then return to IDLE.
@@ -421,31 +362,19 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         stage.act("OUT",
             stage_num.eq(9),
-            # OUT packet (host-to-device)
-            out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
-            out_handler.data_recv_put.eq(usb_core.data_recv_put),
-            usb_core.sta.eq(out_handler.stalled),
-            usb_core.arm.eq(out_handler.response),
-            out_handler.trigger.eq(usb_core.commit),
+            If(usb_core.tok == PID.OUT,
+                # OUT packet (host-to-device)
+                out_handler.data_recv_payload.eq(usb_core.data_recv_payload),
+                out_handler.data_recv_put.eq(usb_core.data_recv_put),
 
-            # After an OUT transfer, the host sends an IN
-            # packet.  We must ACK this and then return to IDLE.
-            If(usb_core.end,
-                NextState("IDLE"),
-            ),
-        )
+                usb_core.sta.eq(out_handler.stalled),
+                usb_core.arm.eq(out_handler.response),
 
-        stage.act("WAIT_DONE",
-            stage_num.eq(10),
-            usb_core.sta.eq(0),
-            usb_core.arm.eq(1),
-            If(usb_core.commit,
-                If(usb_core.tok == PID.IN,
-                    in_handler.trigger.eq(1),
-                ).Else(
-                    out_handler.trigger.eq(1),
+                # After an OUT transfer, the host sends an IN
+                # packet.  We must ACK this and then return to IDLE.
+                If(usb_core.end,
+                    NextState("IDLE"),
                 ),
-                NextState("IDLE"),
             ),
         )
 
@@ -511,6 +440,9 @@ class SetupHandler(Module, AutoCSR):
     handled : Signal
         This gets set to ``1`` when the ``SETUP`` packet has been handled.
 
+    epno : Signal(4)
+        The endpoint number the SETUP packet came in on (probably is always ``0``)
+
     is_in : Signal
         This is a ``1`` if the ``SETUP`` packet will be followed by an ``IN`` stage.
 
@@ -524,6 +456,7 @@ class SetupHandler(Module, AutoCSR):
 
         self.reset = Signal()
         self.begin = Signal()
+        self.epno = epno = Signal()
         self.usb_reset = Signal()
 
         # Register Interface
@@ -535,18 +468,18 @@ class SetupHandler(Module, AutoCSR):
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("handled", offset=1, description="Write a ``1`` here to indicate SETUP has been handled.", pulse=True),
-                CSRField("reset", description="Write a ``1`` here to reset the `SETUP` handler.", pulse=True),
+                CSRField("ack", offset=1, description="Write a ``1`` here to indicate SETUP has been handled.", pulse=True),
+                CSRField("reset", offset=5, description="Write a ``1`` here to reset the `SETUP` handler.", pulse=True),
             ],
             description="Controls for managing how to handle ``SETUP`` transactions."
         )
 
         self.status = status = CSRStatus(
             fields=[
-                CSRField("have", description="``1`` if there is data in the FIFO."),
-                CSRField("is_in", description="``1`` if an IN stage was detected."),
                 CSRField("epno", 4, description="The destination endpoint for the most recent SETUP token."),
+                CSRField("have", description="``1`` if there is data in the FIFO."),
                 CSRField("pend", description="``1`` if there is an IRQ pending."),
+                CSRField("is_in", description="``1`` if an IN stage was detected."),
                 CSRField("data", description="``1`` if a DATA stage is expected."),
             ],
             description="Status about the most recent ``SETUP`` transactions, and the state of the FIFO."
@@ -572,14 +505,12 @@ class SetupHandler(Module, AutoCSR):
         # Since we must always ACK a SETUP packet, set this to 0.
         self.response = Signal()
 
-        epno = Signal(4)
-
         class SetupHandlerInner(Module):
             def __init__(self):
                 self.submodules.data = buf = fifo.SyncFIFOBuffered(width=8, depth=10)
 
                 # Stays 0 until the packet is handled, at which point it becomes 1.
-                self.handled = Signal()
+                self.handled = Signal(reset=1)
 
                 # Indicates which byte of `SETUP` data we're currently on.
                 data_byte = Signal(4)
@@ -624,12 +555,13 @@ class SetupHandler(Module, AutoCSR):
                 self.sync += [
                     # When a `1` is written to the `CTRL.HANDLED` bit, indicate
                     # that the packet has been handled.
-                    If(ctrl.fields.handled, self.handled.eq(1)),
+                    If(ctrl.fields.ack, self.handled.eq(1)),
                     # The 6th and 7th bytes of SETUP data are
                     # the wLength field.  If these are nonzero,
                     # then there will be a Data stage following
                     # this Setup stage.
                     If(data_recv_put,
+                        self.handled.eq(0),
                         If(data_byte == 0,
                             epno.eq(usb_core.endp),
                             is_in.eq(data_recv_payload[7]),
@@ -690,44 +622,45 @@ class InHandler(Module, AutoCSR):
                 CSRField("data", 8, description="The next byte to add to the queue."),
             ],
             description="""
-                    Each byte written into this register gets added to an outgoing FIFO. Any
-                    bytes that are written here will be transmitted in the order in which
-                    they were added.  The FIFO queue is automatically advanced with each write.
-                    The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined."""
-        )
-        self.status = CSRStatus(
-            fields=[
-                CSRField("have", description="This value is ``0`` if the FIFO is empty."),
-                CSRField("idle", description="This value is ``1`` if the packet has finished transmitting."),
-                CSRField("pend", offset=6, description="``1`` if there is an IRQ pending."),
-            ],
-            description="""Status about the IN handler.  As soon as you write to `IN_DATA`,
-                           ``IN_STATUS.HAVE`` should go to ``1``."""
+                Each byte written into this register gets added to an outgoing FIFO. Any
+                bytes that are written here will be transmitted in the order in which
+                they were added.  The FIFO queue is automatically advanced with each write.
+                The FIFO queue is 64 bytes deep.  If you exceed this amount, the result is undefined."""
         )
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("ep", 4, description="The endpoint number for the transaction that is queued in the FIFO."),
+                CSRField("epno", 4, description="The endpoint number for the transaction that is queued in the FIFO."),
                 CSRField("stall", description="Write a ``1`` here to stall the EP written in ``EP``.", pulse=True),
                 CSRField("reset", description="Write a ``1`` here to clear the contents of the FIFO.", pulse=True),
             ],
             description="""
-                        Enables transmission of data in response to ``IN`` tokens,
-                        or resets the contents of the FIFO."""
+                Enables transmission of data in response to ``IN`` tokens,
+                or resets the contents of the FIFO."""
+        )
+
+        self.status = CSRStatus(
+            fields=[
+                CSRField("idle", description="This value is ``1`` if the packet has finished transmitting."),
+                CSRField("have", offset=4, description="This value is ``0`` if the FIFO is empty."),
+                CSRField("pend", offset=5, description="``1`` if there is an IRQ pending."),
+            ],
+            description="""
+                Status about the IN handler.  As soon as you write to `IN_DATA`,
+                ``IN_STATUS.HAVE`` should go to ``1``."""
         )
 
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="""
-                            Indicates that the host has successfully transferred an `IN` packet,
-                            and that the FIFO is now empty.
-                            """)
+            Indicates that the host has successfully transferred an ``IN`` packet,
+            and that the FIFO is now empty.
+            """)
         self.ev.finalize()
-        self.trigger = self.ev.packet.trigger
 
         # Control bits
         ep_stall_mask = Signal(16)
         self.comb += [
-            ep_stall_mask.eq(1 << ctrl.fields.ep),
+            ep_stall_mask.eq(1 << ctrl.fields.epno),
         ]
 
         # Keep track of which endpoints are currently stalled
@@ -751,11 +684,12 @@ class InHandler(Module, AutoCSR):
 
         self.reset = Signal()
         self.comb += [
-            buf.reset.eq(ctrl.fields.reset | self.reset),
+            buf.reset.eq(ctrl.fields.reset),
         ]
 
         # This value goes "1" when data is pending, and returns to "0" when it's done.
         queued = Signal()
+        was_queued = Signal()
 
         # This goes to "1" when "queued" is 1 when a "start" occurs.  It is used
         # to avoid skipping packets when a packet is queued during a transmission.
@@ -774,23 +708,19 @@ class InHandler(Module, AutoCSR):
         # self.dtb_reset = Signal()
 
         # Used to detect when an IN packet finished
-        is_in_packet = Signal()
         is_our_packet = Signal()
 
         self.comb += [
             # We will respond with "ACK" if the register matches the current endpoint number
-            If(usb_core.endp == ctrl.fields.ep,
-                self.response.eq(queued)
-            ).Else(
-                self.response.eq(0)
-            ),
+            self.response.eq(queued & is_our_packet),
 
             # Wire up the "status" register
             self.status.fields.have.eq(buf.readable),
             self.status.fields.idle.eq(~queued),
             self.status.fields.pend.eq(self.ev.packet.pending),
 
-            self.trigger.eq(is_in_packet & is_our_packet & usb_core.commit),
+            # Cause a trigger event when the `queued` value goes to 0
+            self.ev.packet.trigger.eq(~queued & was_queued),
 
             self.dtb.eq(dtbs >> usb_core.endp),
 
@@ -799,32 +729,34 @@ class InHandler(Module, AutoCSR):
             buf.re.eq(self.data_out_advance),
             buf.we.eq(self.data.re),
             buf.din.eq(self.data.storage),
-            is_in_packet.eq(usb_core.tok == PID.IN),
-            is_our_packet.eq(usb_core.endp == ctrl.fields.ep),
+            is_our_packet.eq(usb_core.endp == ctrl.fields.epno),
         ]
 
         self.sync += [
-            If(self.reset,
-                queued.eq(0),
-                transmitted.eq(0),
-                dtbs.eq(dtbs | (1 << ctrl.fields.ep)),
+            If(self.reset | ctrl.fields.reset,
+                If(ctrl.fields.reset,
+                    queued.eq(0),
+                    was_queued.eq(0),
+                    transmitted.eq(0),
+                ),
+                dtbs.eq(Replicate(1, 16)),
             )
             # When the user updates the `ctrl` register, enable writing.
             .Elif(ctrl.re & ~ctrl.fields.stall,
                 queued.eq(1),
             )
-            .Elif(usb_core.start & queued,
+            .Elif(usb_core.poll & self.response,
                 transmitted.eq(1),
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(usb_core.commit & transmitted,
-                If(is_in_packet & is_our_packet & usb_core.arm & ~usb_core.sta,
-                    queued.eq(0),
-                    transmitted.eq(0),
-                    # Toggle the "DTB" line if we transmitted data
-                    dtbs.eq(dtbs ^ (1 << ctrl.fields.ep)),
-                ),
+            .Elif(usb_core.commit & transmitted & queued & ~self.stalled,
+                queued.eq(0),
+                transmitted.eq(0),
+                # Toggle the "DTB" line if we transmitted data
+                dtbs.eq(dtbs ^ (1 << ctrl.fields.epno)),
+            ).Else(
+                was_queued.eq(queued),
             ),
         ]
 
@@ -854,87 +786,79 @@ class OutHandler(Module, AutoCSR):
                 CSRField("data", 8, description="The top byte of the receive FIFO."),
             ],
             description="""
-                        Data received from the host will go into a FIFO.  This register
-                        reflects the contents of the top byte in that FIFO.  Reading from
-                        this register advances the FIFO pointer."""
-        )
-
-        self.status = CSRStatus(
-            fields=[
-                CSRField("have", description="``1`` if there is data in the FIFO."),
-                CSRField("idle", reset=1, description="``1`` if the packet has finished receiving."),
-                CSRField("epno", 4, description="The destination endpoint for the most recent ``OUT`` packet."),
-                CSRField("pend", description="``1`` if there is an IRQ pending."),
-                CSRField("arm", description="``1`` if the ``enable`` flag is set."),
-            ],
-            description="Status about the current state of the `OUT` endpoint."
+                Data received from the host will go into a FIFO.  This register
+                reflects the contents of the top byte in that FIFO.  Reading from
+                this register advances the FIFO pointer."""
         )
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("enable", offset=1, description="Write a ``1`` here to enable receiving data"),
+                CSRField("epno", 4, description="The endpoint number to update the ``enable`` and ``status`` bits for."),
+                CSRField("enable", description="Write a ``1`` here to enable receiving data"),
                 CSRField("reset", pulse=True, description="Write a ``1`` here to reset the ``OUT`` handler"),
+                CSRField("stall", description="Write a ``1`` here to stall an endpoint"),
             ],
-            description="Controls for receiving packet data."
+            description="""
+                Controls for receiving packet data.  To enable an endpoint, write its value to ``epno``,
+                with the ``enable`` bit set to ``1`` to enable an endpoint, or ``0`` to disable it.
+                Resetting the OutHandler will set all ``enable`` bits to 0.
+
+                Similarly, you can adjust the ``STALL`` state by setting or clearing the ``stall`` bit."""
         )
 
-        self.stall = stall = CSRStorage(
+        self.status = CSRStatus(
             fields=[
-                CSRField("epno", 4, description="The endpoint to update STALL status for"),
-                CSRField("stall", description="``1`` to enable STALL, ``0`` to disable it"),
+                CSRField("epno", 4, description="The destination endpoint for the most recent ``OUT`` packet."),
+                CSRField("have", description="``1`` if there is data in the FIFO."),
+                CSRField("pend", description="``1`` if there is an IRQ pending."),
             ],
-            description="Enables / disables STALL for a given endpoint"
+            description="Status about the current state of the `OUT` endpoint."
         )
 
         self.submodules.ev = ev.EventManager()
-        self.ev.submodules.packet = ev.EventSourcePulse(name="done",
-                                                        description="""
-                                                        Indicates that an ``OUT`` packet
-                                                        has successfully been transferred
-                                                        to the host.""")
+        self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="""
+            Indicates that an ``OUT`` packet has successfully been transferred
+            to the host.""")
         self.ev.finalize()
-        self.trigger = self.ev.packet.trigger
 
         # If we start an OUT stage with data in the FIFO, ignore it
         ignore = Signal()
-        self.sync += If(usb_core.poll, ignore.eq(buf.readable))
-
-        arm = Signal()
-        was_armed = Signal()
-        epno = Signal(4)
+        self.sync += If(usb_core.start, ignore.eq(buf.readable))
 
         self.stalled = Signal()
+        self.enabled = Signal()
         stall_status = Signal(16)
-        ep_stall_mask = Signal(16)
+        enable_status = Signal(16)
+        ep_mask = Signal(16)
         self.comb += [
-            ep_stall_mask.eq(1 << stall.fields.epno),
+            If(usb_core.setup | usb_core.commit,
+                ep_mask.eq(1 << usb_core.endp),
+            ).Else(
+                ep_mask.eq(1 << ctrl.fields.epno),
+            ),
+            self.stalled.eq(stall_status >> usb_core.endp),
+            self.enabled.eq(enable_status >> usb_core.endp),
         ]
         self.sync += [
             If(ctrl.fields.reset,
                 stall_status.eq(0),
-            ).Elif(usb_core.setup | (stall.re & ~stall.fields.stall),
+            ).Elif(usb_core.setup | (ctrl.re & ~ctrl.fields.stall),
                 # If a SETUP packet comes in, clear the STALL bit.
-                stall_status.eq(stall_status & ~ep_stall_mask),
-            ).Elif(stall.re,
-                stall_status.eq(stall_status | ep_stall_mask),
+                stall_status.eq(stall_status & ~ep_mask),
+            ).Elif(ctrl.re,
+                stall_status.eq(stall_status | ep_mask),
             ),
-            If(ctrl.re & ctrl.fields.enable,
-                arm.eq(1),
-            ),
-            self.stalled.eq(stall_status >> usb_core.endp),
         ]
+
+        # The endpoint number of the most recently received packet
+        epno = Signal(4)
 
         # How to respond to requests:
         #  - 1 - ACK
         #  - 0 - NAK
         # Send a NAK if the buffer contains data, or if "ENABLE" has not been set.
         self.response = Signal()
-        is_idle = Signal(reset=1)
-        self.comb += self.response.eq(arm & ~buf.readable & is_idle)
-
-        # Used to detect when an OUT packet finished
-        is_out_packet = Signal()
-        is_our_packet = Signal()
+        self.comb += self.response.eq(self.enabled & ~buf.readable)
 
         # Connect the buffer to the USB system
         self.data_recv_payload = Signal(8)
@@ -948,28 +872,37 @@ class OutHandler(Module, AutoCSR):
             # When data is read, advance the FIFO
             buf.re.eq(data.we),
 
-            self.status.fields.have.eq(buf.readable),
-            self.status.fields.idle.eq(is_idle),
             self.status.fields.epno.eq(epno),
+            self.status.fields.have.eq(buf.readable),
             self.status.fields.pend.eq(self.ev.packet.pending),
-            self.status.fields.arm.eq(arm),
 
-            self.trigger.eq(~arm & was_armed),
-
-            is_out_packet.eq(usb_core.tok == PID.OUT),
-            is_our_packet.eq(usb_core.endp == epno),
+            # When data is successfully transferred, the buffer becomes full.
+            # This is true even if "no" data was transferred, because the
+            # buffer will then contain two bytes of CRC16 data.
+            # Therefore, if the FIFO is readable, an interrupt must be triggered.
+            self.ev.packet.trigger.eq(buf.readable & usb_core.commit),
         ]
 
         # If we get a packet, turn off the "IDLE" flag and keep it off until the packet has finished.
         self.sync += [
-            was_armed.eq(arm),
-            If(usb_core.commit & is_our_packet & is_out_packet & self.response & ~ignore,
-                is_idle.eq(1),
-                arm.eq(0),
-            ).Elif(self.data_recv_put,
-                is_idle.eq(0),
-            ),
-            If(self.trigger,
-                epno.eq(usb_core.endp),
+            If(ctrl.fields.reset,
+                enable_status.eq(0),
+            ).Elif(usb_core.end & ~ignore & self.enabled,
+                If(buf.readable & usb_core.commit,
+                    epno.eq(usb_core.endp),
+                ),
+                # Disable this EP when a transfer finishes, or when we STALL
+                enable_status.eq(enable_status & ~ep_mask),
+            ).Elif(ctrl.re,
+                # Enable or disable the EP as necessary
+                If(ctrl.fields.enable,
+                    enable_status.eq(enable_status | ep_mask),
+                ).Else(
+                    enable_status.eq(enable_status & ~ep_mask),
+                ),
             ),
         ]
+        # self.enable_status = CSRStatus(8)
+        # self.comb += self.enable_status.status.eq(enable_status)
+        # self.stall_status = CSRStatus(8)
+        # self.comb += self.stall_status.status.eq(stall_status)
