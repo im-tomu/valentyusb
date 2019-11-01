@@ -227,6 +227,22 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             """))
         self.comb += self.address.reset.eq(usb_core.usb_reset)
 
+        self.next_ev = CSRStatus(
+            fields=[
+                CSRField("in", 1, description="``1`` if the next event is an ``IN`` event"),
+                CSRField("out", 1, description="``1`` if the next event is an ``OUT`` event"),
+                CSRField("setup", 1, description="``1`` if the next event is an ``SETUP`` event"),
+                CSRField("reset", 1, description="``1`` if the next event is a ``RESET`` event"),
+            ],
+            description="""
+                In ``eptri``, there are three endpoints.  It is possible for an IRQ to fire
+                and have all three bits set.  Under these circumstances it can be difficult
+                to know which event to process first.  Use this register to determine which
+                event needs to be processed first.
+                Only one bit will ever be set at a time.
+            """,
+        )
+
         # Handlers
         self.submodules.setup = setup_handler = ClockDomainsRenamer("usb_12")(SetupHandler(usb_core))
         self.comb += setup_handler.usb_reset.eq(usb_core.usb_reset)
@@ -240,6 +256,35 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         ems.append(out_handler.ev)
 
         self.submodules.ev = ev.SharedIRQ(*ems)
+
+        in_next = Signal()
+        out_next = Signal()
+        self.sync += [
+            # If the in_handler is set but not the out_handler, that one is next
+            If(in_handler.ev.packet.pending & ~out_handler.ev.packet.pending,
+                in_next.eq(1),
+                out_next.eq(0),
+            # If the out_handler is set first, mark that as `next`
+            ).Elif(~in_handler.ev.packet.pending & out_handler.ev.packet.pending,
+                in_next.eq(0),
+                out_next.eq(1),
+            # If neither is set, then clear the bits.
+            ).Elif(~in_handler.ev.packet.pending & ~out_handler.ev.packet.pending,
+                in_next.eq(0),
+                out_next.eq(0),
+            ),
+            # If both are set, don't do anything.
+        ]
+        self.comb += [
+            If(setup_handler.ev.reset.pending,
+                self.next_ev.fields.reset.eq(1),
+            ).Elif(setup_handler.ev.packet.pending,
+                self.next_ev.fields.setup.eq(1),
+            ).Else(
+                getattr(self.next_ev.fields, "in").eq(in_next),
+                self.next_ev.fields.out.eq(out_next),
+            )
+        ]
 
         # If a debug packet comes in, the DTB should be 1.  Otherwise, the DTB should
         # be whatever the in_handler says it is.
@@ -260,8 +305,8 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         stage.act("CHECK_TOK",
             If(usb_core.idle,
                 NextState("IDLE"),
-            ).Elif(wrap(~setup_handler.handled) & wrap(usb_core.endp == setup_handler.epno),
-                NextState("NOTREADY"),
+            # ).Elif(wrap(~setup_handler.handled) & wrap(usb_core.endp == setup_handler.epno),
+            #     NextState("NOTREADY"),
             ).Elif(usb_core.tok == PID.SETUP,
                 NextState("SETUP"),
                 setup_handler.begin.eq(1),
@@ -299,18 +344,18 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         else:
             stage.act("DEBUG", NextState("IDLE"))
 
-        stage.act("NOTREADY",
+        # stage.act("NOTREADY",
 
-            # Don't STALL, since the packet is still being processed
-            usb_core.sta.eq(0),
+        #     # Don't STALL, since the packet is still being processed
+        #     usb_core.sta.eq(0),
 
-            # NAK since the packet isn't handled yet
-            usb_core.arm.eq(0),
+        #     # NAK since the packet isn't handled yet
+        #     usb_core.arm.eq(0),
 
-            If(usb_core.end,
-                NextState("IDLE"),
-            ),
-        )
+        #     If(usb_core.end,
+        #         NextState("IDLE"),
+        #     ),
+        # )
 
         stage.act("SETUP",
             # SETUP packet
@@ -322,8 +367,6 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
             # Always ACK a SETUP packet
             usb_core.arm.eq(1),
-
-            # If the transfer size is nonzero, proceed to handle data packets
 
             If(debug_packet_detected,
                 NextState("DEBUG")
