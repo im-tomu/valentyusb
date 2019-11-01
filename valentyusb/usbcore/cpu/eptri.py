@@ -193,9 +193,9 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             the ``IN`` FIFO.
 
             To stall an ``OUT`` endpoint, write to ``OUT_CTRL.EPNO`` with the ``OUT_CTRL.STALL``
-            and ``OUT_CTRL.ENABLE`` bits set.  To unstall, write to ``OUT_CTRL.EPNO`` with the
-            ``OUT_CTRL.STALL`` bit cleared.  Note that ``OUT_CTRL.ENABLE`` must be set in order
-            to transmit any packet, whether it's an ``ACK``, ``NAK``, or ``STALL``.
+            bit set.  To unstall, write to ``OUT_CTRL.EPNO`` with the ``OUT_CTRL.STALL`` bit
+            cleared.  Note that ``OUT_CTRL.ENABLE`` should not be set at the same time as
+            ``OUT_CTRL.STALL``, as this will cause a conflict.
             """)
 
         # USB Core
@@ -305,8 +305,6 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         stage.act("CHECK_TOK",
             If(usb_core.idle,
                 NextState("IDLE"),
-            # ).Elif(wrap(~setup_handler.handled) & wrap(usb_core.endp == setup_handler.epno),
-            #     NextState("NOTREADY"),
             ).Elif(usb_core.tok == PID.SETUP,
                 NextState("SETUP"),
                 setup_handler.begin.eq(1),
@@ -343,19 +341,6 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             )
         else:
             stage.act("DEBUG", NextState("IDLE"))
-
-        # stage.act("NOTREADY",
-
-        #     # Don't STALL, since the packet is still being processed
-        #     usb_core.sta.eq(0),
-
-        #     # NAK since the packet isn't handled yet
-        #     usb_core.arm.eq(0),
-
-        #     If(usb_core.end,
-        #         NextState("IDLE"),
-        #     ),
-        # )
 
         stage.act("SETUP",
             # SETUP packet
@@ -443,9 +428,6 @@ class SetupHandler(Module, AutoCSR):
         Assert this when a ``SETUP`` token is received.  This will clear out the current buffer
         (if any) and prepare the endpoint to receive data.
 
-    handled : Signal
-        This gets set to ``1`` when the ``SETUP`` packet has been handled.
-
     epno : Signal(4)
         The endpoint number the SETUP packet came in on (probably is always ``0``)
 
@@ -474,7 +456,6 @@ class SetupHandler(Module, AutoCSR):
 
         self.ctrl = ctrl = CSRStorage(
             fields=[
-                CSRField("ack", offset=1, description="Write a ``1`` here to indicate SETUP has been handled.", pulse=True),
                 CSRField("reset", offset=5, description="Write a ``1`` here to reset the `SETUP` handler.", pulse=True),
             ],
             description="Controls for managing how to handle ``SETUP`` transactions."
@@ -514,9 +495,6 @@ class SetupHandler(Module, AutoCSR):
         class SetupHandlerInner(Module):
             def __init__(self):
                 self.submodules.data = buf = fifo.SyncFIFOBuffered(width=8, depth=10)
-
-                # Stays 0 until the packet is handled, at which point it becomes 1.
-                self.handled = Signal(reset=1)
 
                 # Indicates which byte of `SETUP` data we're currently on.
                 data_byte = Signal(4)
@@ -559,15 +537,11 @@ class SetupHandler(Module, AutoCSR):
                 ]
 
                 self.sync += [
-                    # When a `1` is written to the `CTRL.HANDLED` bit, indicate
-                    # that the packet has been handled.
-                    If(ctrl.fields.ack, self.handled.eq(1)),
                     # The 6th and 7th bytes of SETUP data are
                     # the wLength field.  If these are nonzero,
                     # then there will be a Data stage following
                     # this Setup stage.
                     If(data_recv_put,
-                        self.handled.eq(0),
                         If(data_byte == 0,
                             epno.eq(usb_core.endp),
                             is_in.eq(data_recv_payload[7]),
@@ -591,7 +565,6 @@ class SetupHandler(Module, AutoCSR):
         ]
 
         # Expose relevant Inner signals to the top
-        self.handled = inner.handled
         self.have_data_stage = inner.have_data_stage
         self.is_in = inner.is_in
         self.empty = inner.empty
