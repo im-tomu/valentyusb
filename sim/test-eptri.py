@@ -657,14 +657,16 @@ def test_control_transfer_in_lazy(dut):
             0x08, 0x09, 0x0A, 0x0B]
     for b in data:
         yield harness.write(harness.csrs['usb_in_data'], b)
-    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     # Send a few packets while we "process" the data as a slow host
-    for i in range(10):
+    for i in range(2):
         yield harness.host_send_token_packet(PID.IN, 0, 0)
         yield harness.host_expect_nak()
 
-    # Read the data, which should unblock the sending
+    # Queue the IN response packet
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
+
+    # Read the data
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("1. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
@@ -684,7 +686,7 @@ def test_control_transfer_in_lazy(dut):
     yield harness.host_expect_ack()
 
     # Send a few packets while we "process" the data as a slow host
-    for i in range(10):
+    for i in range(2):
         yield harness.host_send_token_packet(PID.IN, 0, 0)
         yield harness.host_expect_nak()
 
@@ -710,7 +712,7 @@ def test_control_transfer_in_lazy(dut):
     yield harness.host_expect_ack()
 
     # Send a few packets while we "process" the data as a slow host
-    for i in range(10):
+    for i in range(2):
         yield harness.host_send_token_packet(PID.IN, 0, 0)
         yield harness.host_expect_nak()
 
@@ -732,6 +734,7 @@ def test_control_transfer_in_lazy(dut):
     # yield harness.host_expect_ack()
 
     yield harness.write(harness.csrs['usb_address'], 11)
+
 ### SETUP packet without draining
     harness.dut._log.info("sending a packet without draining SETUP")
     # Send a SETUP packet without draining it on the device side
@@ -744,18 +747,18 @@ def test_control_transfer_in_lazy(dut):
             0x08, 0x09, 0x0A, 0x0B]
     for b in data:
         yield harness.write(harness.csrs['usb_in_data'], b)
-    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     # Send a few packets while we "process" the data as a slow host
     for i in range(2):
         yield harness.host_send_token_packet(PID.IN, 11, 0)
         yield harness.host_expect_nak()
 
-    # Read the data, which should unblock the sending
+    # Read the data and queue the IN packet, which should unblock the sending
     harness.dut._log.info("draining SETUP which should unblock it")
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("3. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     # Perform the final send
     yield harness.host_send_token_packet(PID.IN, 11, 0)
@@ -795,14 +798,17 @@ def test_control_transfer_out_lazy(dut):
             0x08, 0x09, 0x0A, 0x0B]
     for b in data:
         yield harness.write(harness.csrs['usb_in_data'], b)
-    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
 
     # Send a few packets while we "process" the data as a slow host
+    harness.dut._log.info("\"processing\" data on a slow host (should send NAKs)")
     for i in range(2):
         yield harness.host_send_token_packet(PID.IN, 0, 0)
         yield harness.host_expect_nak()
 
-    # Read the data, which should unblock the sending
+    # Queue the response packet for transmission
+    yield harness.write(harness.csrs['usb_in_ctrl'], 0)
+
+    # Read the data, which drains it out of the SETUP buffer
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("1. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
@@ -1668,7 +1674,7 @@ def test_stall_out(dut):
     setup_data = yield harness.drain_setup()
     if len(setup_data) != 10:
         raise TestFailure("1. expected setup data to be 10 bytes, but was {} bytes: {}".format(len(setup_data), setup_data))
-    yield harness.write(harness.csrs['usb_out_ctrl'], 0x50) # Set STALL and ENABLE
+    yield harness.write(harness.csrs['usb_out_ctrl'], 0x40) # Set STALL
 
     # Perform the final "read"
     yield harness.host_send_token_packet(PID.OUT, 0, 0)
