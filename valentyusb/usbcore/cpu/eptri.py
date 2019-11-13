@@ -843,8 +843,8 @@ class OutHandler(Module, AutoCSR):
         is_out_packet = Signal()
 
         # Keep track of whether we're currently responding.
-        self.comb += self.response.eq(self.enabled & is_out_packet & ~self.ev.packet.pending)
         self.comb += is_out_packet.eq(usb_core.tok == PID.OUT)
+        self.comb += self.response.eq(self.enabled & is_out_packet & ~self.ev.packet.pending)
         self.sync += If(usb_core.poll, responding.eq(self.response))
 
         # Connect the buffer to the USB system
