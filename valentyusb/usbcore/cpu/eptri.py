@@ -594,7 +594,7 @@ class InHandler(Module, AutoCSR):
         self.dtb = Signal()
 
         # Keep track of the current DTB for each of the 16 endpoints
-        dtbs = Signal(16, reset=0xffff)
+        dtbs = Signal(16, reset=0x0001)
 
         # A list of endpoints that are stalled
         stall_status = Signal(16)
@@ -720,7 +720,7 @@ class InHandler(Module, AutoCSR):
                 queued.eq(0),
                 was_queued.eq(0),
                 transmitted.eq(0),
-                dtbs.eq(Replicate(1, 16)),
+                dtbs.eq(0x0001),
             ).Elif(self.dtb_reset,
                 dtbs.eq(dtbs | 1),
             )
