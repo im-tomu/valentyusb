@@ -253,7 +253,6 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         ems.append(in_handler.ev)
 
         self.submodules.out = out_handler = ClockDomainsRenamer("usb_12")(OutHandler(usb_core))
-        self.comb += out_handler.usb_reset.eq(usb_core.usb_reset)
         ems.append(out_handler.ev)
 
         self.submodules.ev = ev.SharedIRQ(*ems)
@@ -853,7 +852,7 @@ class OutHandler(Module, AutoCSR):
         self.comb += [
             buf.din.eq(self.data_recv_payload),
             buf.we.eq(self.data_recv_put & responding),
-            buf.reset.eq(ctrl.fields.reset | self.usb_reset),
+            buf.reset.eq(ctrl.fields.reset),
             self.data.fields.data.eq(buf.dout),
 
             # When data is read, advance the FIFO
@@ -872,7 +871,7 @@ class OutHandler(Module, AutoCSR):
 
         # If we get a packet, turn off the "IDLE" flag and keep it off until the packet has finished.
         self.sync += [
-            If(ctrl.fields.reset | self.usb_reset,
+            If(ctrl.fields.reset,
                 enable_status.eq(0),
             ).Elif(usb_core.commit & responding,
                 epno.eq(usb_core.endp),
