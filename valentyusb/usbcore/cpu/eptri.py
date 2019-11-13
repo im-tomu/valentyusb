@@ -261,8 +261,11 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         in_next = Signal()
         out_next = Signal()
         self.sync += [
+            If(usb_core.usb_reset,
+                in_next.eq(0),
+                out_next.eq(0),
             # If the in_handler is set but not the out_handler, that one is next
-            If(in_handler.ev.packet.pending & ~out_handler.ev.packet.pending,
+            ).Elif(in_handler.ev.packet.pending & ~out_handler.ev.packet.pending,
                 in_next.eq(1),
                 out_next.eq(0),
             # If the out_handler is set first, mark that as `next`
@@ -279,11 +282,12 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         self.comb += [
             If(setup_handler.ev.reset.pending,
                 self.next_ev.fields.reset.eq(1),
+            ).Elif(in_next,
+                getattr(self.next_ev.fields, "in").eq(1),
+            ).Elif(out_next,
+                self.next_ev.fields.out.eq(out_next),
             ).Elif(setup_handler.ev.packet.pending,
                 self.next_ev.fields.setup.eq(1),
-            ).Else(
-                getattr(self.next_ev.fields, "in").eq(in_next),
-                self.next_ev.fields.out.eq(out_next),
             )
         ]
 
