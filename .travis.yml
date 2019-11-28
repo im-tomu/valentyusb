@@ -1,8 +1,53 @@
 language: python
 python:
-  - "3.6"
-install:
-  - pip install -U -r requirements.txt
-script:
-  - pytest --collect-only valentyusb
-  - pytest -v valentyusb
+  - "3.7"
+jobs:
+  include:
+    - name: "Pytest"
+      install:
+        - pip install -U -r requirements.txt
+      script:
+        - pytest --collect-only valentyusb
+        - pytest -v valentyusb
+    # Travis does not support matrix expansion in stages,
+    # so we use YAML anchors to get parallel builds
+    - &test_body
+      env:
+        - T=valentyusb  S=test-eptri       OP=sim
+      install:
+        # We need to install those in virtualenv, as cocotb will use this instead of conda
+        - pip install -r test-suite/conf/requirements.txt
+        - pip install -e test-suite/usb-test-suite-cocotb-usb/
+        - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+        - bash miniconda.sh -b -p $HOME/miniconda
+        - source "$HOME/miniconda/etc/profile.d/conda.sh"
+        - hash -r
+        - conda config --set always_yes yes --set changeps1 no
+        - conda update -q conda
+        - conda info -a
+        - conda env create --file test-suite/conf/environment.yml
+        - conda activate usb-test-suite-env
+        # conda complains if it does not have the libs as well
+        - pip install -r test-suite/conf/requirements.txt
+        - cd test-suite/litex
+        - ./litex_setup.py init install
+        - cd -
+      script:
+        - cd test-suite/usb-test-suite-testbenches
+        - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP
+
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-enum        OP=sim
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-w10enum     OP=sim
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-clocks      OP=sim
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-macOSenum   OP=sim
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-valenty-cdc OP=sim

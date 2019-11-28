@@ -1,0 +1,9 @@
+[submodule "test-suite/usb-test-suite-testbenches"]
+	path = test-suite/usb-test-suite-testbenches
+	url = https://github.com/antmicro/usb-test-suite-testbenches.git
+[submodule "test-suite/usb-test-suite-cocotb-usb"]
+	path = test-suite/usb-test-suite-cocotb-usb
+	url = https://github.com/antmicro/usb-test-suite-cocotb-usb.git
+[submodule "test-suite/litex"]
+	path = test-suite/litex
+	url = https://github.com/enjoy-digital/litex.git
