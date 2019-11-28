@@ -3,12 +3,6 @@ python:
   - "3.7"
 jobs:
   include:
-    - name: "Pytest"
-      install:
-        - pip install -U -r requirements.txt
-      script:
-        - pytest --collect-only valentyusb
-        - pytest -v valentyusb
     # Travis does not support matrix expansion in stages,
     # so we use YAML anchors to get parallel builds
     - &test_body
