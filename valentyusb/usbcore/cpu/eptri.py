@@ -89,12 +89,11 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         self.background = ModuleDoc(title="USB Device Tri-FIFO", body="""
             This is a three-FIFO USB device.  It presents one FIFO each for ``IN``, ``OUT``, and
             ``SETUP`` data.  This allows for up to 16 ``IN`` and 16 ``OUT`` endpoints
-            without sacrificing many USB resources.
+            without sacrificing many FPGA resources.
 
             USB supports four types of transfers: control, bulk, interrupt, and isochronous.
             This device does not yet support isochronous transfers, however it supports the
-            other types of transfers.  It contains special logic for handing control transfers,
-            including the handshake that is required.
+            other types of transfers.
             """)
 
         self.interrupt_bulk_transfers = ModuleDoc(title="Interrupt and Bulk Transfers", body="""
@@ -102,7 +101,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             they differ only in terms of how often they are transmitted.
 
             These transfers can be made to any endpoint, and may even be interleaved.  However,
-            due to the nature of `TriEndpointInterface` any attempt by the host to interleave
+            due to the nature of ``TriEndpointInterface`` any attempt by the host to interleave
             transfers will result in a ``NAK``, and the host will retry later when the buffer
             is empty.
 
@@ -110,19 +109,19 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             ^^^^^^^^^^^^
 
             To make an ``IN`` transfer (i.e. to send data to the host), write the data to
-            ``IN.DATA``.  This is a FIFO, and each write to this endpoint will advance the
+            ``IN_DATA``.  This is a FIFO, and each write to this endpoint will advance the
             FIFO pointer automatically.  This FIFO is 64 bytes deep.  USB ``DATA`` packets
             contain a CRC16 checksum, which is automatically added to any ``IN`` transfers.
 
-            `TriEndpointInterface` will continue to respond ``NAK`` until you arm the buffer.
-            Do this by writing the endpoint number to ``IN.CTRL``.  This will tell the device
+            ``TriEndpointInterface`` will continue to respond ``NAK`` until you arm the buffer.
+            Do this by writing the endpoint number to ``IN_CTRL.EPNO``.  This will tell the device
             that it should send the data the next time the host asks for it.
 
             Once the data has been transferred, the device will raise an interrupt and you
-            can begin re-filling the buffer.
+            can begin re-filling the buffer, or fill it with data for a different endpoint.
 
-            To send an empty packet, avoid writing any data to ``IN.DATA`` and simply write
-            the endpoint number to ``IN.CTRL``.
+            To send an empty packet, avoid writing any data to ``IN_DATA`` and simply write
+            the endpoint number to ``IN_CTRL.EPNO``.
 
             The CRC16 will be automatically appended to the end of the transfer.
 
@@ -132,7 +131,8 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             To respond to an ``OUT`` transfer (i.e. to receive data from the host), enable
             a particular endpoint by writing to ``OUT_CTRL.EPNO`` with the ``OUT_CTRL.ENABLE``
             bit set.  This will tell the device to stop responding ``NAK`` to that particular
-            endpoint and to accept any incoming data into a 66-byte FIFO.
+            endpoint and to accept any incoming data into a 66-byte FIFO, provided the FIFO
+            is empty.
 
             Once the host sends data, an interrupt will be raised and that particular endpoint's
             ``ENABLE`` will be set to ``0``.  This prevents any additional data from entering
@@ -143,10 +143,15 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             be two-bytes, and a full 64-byte transfer will be 66 bytes.
 
             To determine which endpoint the ``OUT`` packet was sent to, refer to
-            ``OUT_STATUS.EPNO``, which is only updated when a successful packet is received.
+            ``OUT_STATUS.EPNO``.  This field is only updated when a successful packet is received,
+            and will not change until the ``OUT`` FIFO is re-armed.
 
-            You will need to re-enable the endpoint by re-setting ``OUT_CTRL.ENABLE`` after you
-            have drained the FIFO.
+            The ``OUT`` FIFO will continue to respond to the host with with ``NAK`` until the
+            ``OUT_EV_PENDING.DONE`` bit is cleared.
+
+            Additionally, to continue receiving data on that particular endpoint, you will need
+            to re-enable it by writing the endpoint number, along with the ``OUT_CTRL.ENABLE``
+            to ``OUT_CTRL``.
             """)
         self.control_transfers = ModuleDoc(title="Control Transfers", body="""
             Control transfers are complicated, and are the first sort of transfer that
@@ -154,18 +159,19 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
             The first phase is the ``SETUP`` phase, where the host sends an 8-byte ``SETUP``
             packet.  These ``SETUP`` packets must always be acknowledged, so any such packet
-            from the host will get loaded into a ``SETUP`` buffer immediately, and an interrupt
+            from the host will get loaded into the ``SETUP`` FIFO immediately, and an interrupt
             event raised.  If, for some reason, the device hasn't drained this ``SETUP``
-            buffer, the buffer will be cleared automatically.
+            FIFO from a previous transaction, the FIFO will be cleared automatically.
 
             Once the ``SETUP`` packet is handled, the host will send an ``IN`` or ``OUT``
             packet.  If the host sends an ``OUT`` packet, then the ``OUT`` buffer must be
-            cleared and the ``OUT_CTRL.ENABLE`` bit must be set.  The device will not
-            accept any data as long as these two conditions are not met.
+            cleared, the ``OUT.DONE`` interrupt handled, and the ``OUT_CTRL.ENABLE`` bit
+            must be set for the appropriate endpoint, usually EP0.  The device will not
+            accept any data as long as these three conditions are not met.
 
             If the host sends an ``IN`` packet, the device will respond with ``NAK`` if
-            no data has queued.  To queue data, fill the ``IN.DATA`` buffer, then write
-            ``0`` to ``IN.CTRL``.
+            no data has queued.  To queue data, fill the ``IN_DATA`` buffer, then write
+            ``0`` to ``IN_CTRL``.
 
             You can continue to fill the buffer (for ``IN`` packets) or drain the buffer
             and re-enable the endpoint (for ``OUT`` packets) until the host has finished
@@ -800,7 +806,8 @@ class OutHandler(Module, AutoCSR):
         self.submodules.ev = ev.EventManager()
         self.ev.submodules.packet = ev.EventSourcePulse(name="done", description="""
             Indicates that an ``OUT`` packet has successfully been transferred
-            from the host.""")
+            from the host.  This bit must be cleared in order to receive
+            additional packets.""")
         self.ev.finalize()
 
         self.usb_reset = Signal()
@@ -887,7 +894,8 @@ class OutHandler(Module, AutoCSR):
                 ),
             ),
         ]
-        self.enable_status = CSRStatus(8)
-        self.comb += self.enable_status.status.eq(enable_status)
-        self.stall_status = CSRStatus(8)
-        self.comb += self.stall_status.status.eq(stall_status)
+        # These are useful for debugging
+        # self.enable_status = CSRStatus(8, description)
+        # self.comb += self.enable_status.status.eq(enable_status)
+        # self.stall_status = CSRStatus(8)
+        # self.comb += self.stall_status.status.eq(stall_status)
