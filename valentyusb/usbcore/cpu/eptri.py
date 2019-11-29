@@ -487,14 +487,14 @@ class SetupHandler(Module, AutoCSR):
                                             description="""
                                             Indicates a ``SETUP`` packet has arrived
                                             and is waiting in the ``SETUP`` FIFO.""")
-        self.ev.submodules.reset = ev.EventSourcePulse(name="reset",
+        self.ev.submodules.reset = ev.EventSourceProcess(name="reset",
                                                         description="""
                                                         Indicates a USB ``RESET`` condition
                                                         has occurred, and the ``ADDRESS`` is now ``0``.""")
         self.ev.finalize()
         self.trigger = trigger = self.ev.packet.trigger
         self.pending = pending = self.ev.packet.pending
-        self.comb += self.ev.reset.trigger.eq(self.usb_reset)
+        self.comb += self.ev.reset.trigger.eq(~self.usb_reset)
 
         self.data_recv_payload = data_recv_payload = Signal(8)
         self.data_recv_put = data_recv_put = Signal()
