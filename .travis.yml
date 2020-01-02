@@ -3,20 +3,18 @@ python:
   - "3.7"
 jobs:
   include:
-    - name: "Pytest"
-      # Clone these here rather than as part of the main repo,
-      # in order to avoid cloning a second copy of litex when
-      # this is used as part of another repo.
-      install:
-        - git -C test-suite clone https://github.com/antmicro/usb-test-suite-testbenches.git
-        - git -C test-suite clone https://github.com/antmicro/usb-test-suite-cocotb-usb.git
-        - git -C test-suite clone https://github.com/enjoy-digital/litex.git
     # Travis does not support matrix expansion in stages,
     # so we use YAML anchors to get parallel builds
     - &test_body
       env:
         - T=valentyusb  S=test-eptri       OP=sim
       install:
+        # Clone these here rather than as part of the main repo,
+        # in order to avoid cloning a second copy of litex when
+        # this is used as part of another repo.
+        - git -C test-suite clone https://github.com/antmicro/usb-test-suite-testbenches.git
+        - git -C test-suite clone https://github.com/antmicro/usb-test-suite-cocotb-usb.git
+        - git -C test-suite clone https://github.com/enjoy-digital/litex.git
         # We need to install those in virtualenv, as cocotb will use this instead of conda
         - pip install -r test-suite/conf/requirements.txt
         - pip install -e test-suite/usb-test-suite-cocotb-usb/
