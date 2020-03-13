@@ -298,14 +298,16 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         # If a debug packet comes in, the DTB should be 1.  Otherwise, the DTB should
         # be whatever the in_handler says it is.
-        self.comb += usb_core.dtb.eq(in_handler.dtb | debug_packet_detected)
+        self.comb += usb_core.dtb.eq(in_handler.dtb_12 | debug_packet_detected)
         usb_core_reset = Signal()
 
         self.submodules.stage = stage = ClockDomainsRenamer("usb_12")(ResetInserter()(FSM(reset_state="IDLE")))
-        self.comb += stage.reset.eq(usb_core.usb_reset)
+        self.comb += stage.reset.eq(usb_core.usb_reset_12)
 
+        self.submodules.address_12 = BusSynchronizer(7, "sys", "usb_12")
+        self.comb += self.address_12.i.eq(self.address.storage)
         stage.act("IDLE",
-            NextValue(usb_core.addr, self.address.storage),
+            NextValue(usb_core.addr, self.address_12.o),
 
             If(usb_core.start,
                 NextState("CHECK_TOK")
@@ -376,7 +378,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             If(usb_core.tok == PID.IN,
                 # IN packet (device-to-host)
                 usb_core.data_send_have.eq(in_handler.data_out_have),
-                usb_core.data_send_payload.eq(in_handler.data_out),
+                usb_core.data_send_payload.eq(in_handler.data_out_usb12),
                 in_handler.data_out_advance.eq(usb_core.data_send_get),
 
                 usb_core.sta.eq(in_handler.stalled),
@@ -454,6 +456,8 @@ class SetupHandler(Module, AutoCSR):
 
         self.reset = Signal()
         self.begin = Signal()
+        self.begin_sys = Signal()
+        self.specials += MultiReg(self.begin, self.begin_sys)
         self.epno = epno = Signal()
         self.usb_reset = Signal()
 
@@ -521,31 +525,24 @@ class SetupHandler(Module, AutoCSR):
                 self.comb += self.empty.eq(~buf.readable)
 
                 # Wire up the `STATUS` register
-                readable_sys = Signal()
-                is_in_sys = Signal()
                 epno_sys = Signal(epno.nbits)
-                pending_sys = Signal()
-                data_sys = Signal(have_data_stage.nbits)
-                self.specials += MultiReg(is_in, is_in_sys)
-                self.specials += MultiReg(buf.readable, readable_sys)
-                self.specials += MultiReg(pending, pending_sys)
+
+                self.specials += MultiReg(is_in, status.fields.is_in)
+                self.specials += MultiReg(buf.readable, status.fields.have)
+                self.specials += MultiReg(pending, status.fields.pend)
                 self.submodules.epnosync = BusSynchronizer(epno_sys.nbits, "usb_12", "sys")
-                self.submodules.datasync = BusSynchronizer(data_sys.nbits, "usb_12", "sys")
                 self.comb += [
                     self.epnosync.i.eq(epno),
                     self.epnosync.o.eq(epno_sys),
-                    self.datasync.i.eq(have_data_stage),
-                    self.datasync.o.eq(data_sys),
                 ]
+                self.specials += MultiReg(have_data_stage, status.fields.data)
                 self.comb += [
-                    status.fields.have.eq(readable_sys),
-                    status.fields.is_in.eq(is_in_sys),
                     status.fields.epno.eq(epno_sys),
-                    status.fields.pend.eq(pending_sys),
-                    status.fields.data.eq(data_sys),
                 ]
 
                 # Wire up the "SETUP" endpoint.
+                setup_sys = Signal()
+                self.specials += MultiReg(usb_core.setup, setup_sys)
                 self.comb += [
                     # Set the FIFO output to be the current buffer HEAD
                     data.fields.data.eq(buf.dout),
@@ -559,7 +556,7 @@ class SetupHandler(Module, AutoCSR):
                     ),
 
                     # Tie the trigger to the STATUS.HAVE bit
-                    trigger.eq(buf.readable & usb_core.setup),
+                    trigger.eq(buf.readable & setup_sys),
                 ]
 
                 self.sync.usb_12 += [
@@ -591,8 +588,8 @@ class SetupHandler(Module, AutoCSR):
             self.setupreset.o.eq(inner.reset_usb_12),
         ]
         self.comb += [
-            inner.reset_sys.eq(self.reset | self.begin | ctrl.fields.reset),
-            self.ev.packet.clear.eq(self.begin),
+            inner.reset_sys.eq(self.reset | self.begin_sys | ctrl.fields.reset),
+            self.ev.packet.clear.eq(self.begin_sys),
         ]
 
         # Expose relevant Inner signals to the top
@@ -617,7 +614,7 @@ class InHandler(Module, AutoCSR):
 
     """
     def __init__(self, usb_core):
-        self.dtb = Signal()
+        self.dtb_12 = Signal()
 
         # Keep track of the current DTB for each of the 16 endpoints
         dtbs = Signal(16, reset=0x0001)
@@ -675,6 +672,7 @@ class InHandler(Module, AutoCSR):
 
         # Keep track of which endpoints are currently stalled
         self.stalled = Signal()
+        stalled_sys = Signal()
         setup_sys = Signal()
         self.specials += MultiReg(usb_core.setup, setup_sys)
         endp_sys = Signal(4)
@@ -683,7 +681,8 @@ class InHandler(Module, AutoCSR):
             self.endpsync.i.eq(usb_core.endp),
             endp_sys.eq(self.endpsync.o),
         ]
-        self.comb += self.stalled.eq(stall_status >> endp_sys)
+        self.comb += stalled_sys.eq(stall_status >> endp_sys)
+        self.specials += MultiReg(stall_status >> endp_sys, self.stalled, "usb_12") # TODO: usb_core.endp(12) -> endp_sys(100) -> stalled(12) -- doesn't make sense?
         self.sync += [
             If(ctrl.fields.reset,
                 stall_status.eq(0),
@@ -699,6 +698,7 @@ class InHandler(Module, AutoCSR):
         #  - 0 - ACK
         #  - 1 - NAK
         self.response = Signal()
+        response_sys = Signal()
 
         # This value goes "1" when data is pending, and returns to "0" when it's done.
         queued = Signal()
@@ -728,6 +728,10 @@ class InHandler(Module, AutoCSR):
 
         # Pulse this to advance the data output
         self.data_out_advance = Signal()
+        self.submodules.data_out_sync = PulseSynchronizer("usb_12", "sys") # FIXME: this needs to be one pulse in, one pulse out...!
+        self.comb += [
+            self.data_out_sync.i.eq(self.data_out_advance),
+        ]
 
         # Used to detect when an IN packet finished
         is_our_packet = Signal()
@@ -739,10 +743,14 @@ class InHandler(Module, AutoCSR):
             self.toksync.i.eq(usb_core.tok),
             tok_sys.eq(self.toksync.o),
         ]
-        self.comb += [
-            # We will respond with "ACK" if the register matches the current endpoint number
-            self.response.eq(queued & is_our_packet & is_in_packet),
+        self.specials += MultiReg(queued & is_our_packet & is_in_packet, self.response, "usb_12") # We will respond with "ACK" if the register matches the current endpoint number
+        self.comb += response_sys.eq(queued & is_our_packet & is_in_packet)
 
+        self.specials += MultiReg(dtbs >> endp_sys, self.dtb_12)
+        self.dtb_sys = Signal()
+        self.comb += self.dtb_sys.eq(dtbs >> endp_sys)
+
+        self.comb += [
             # Wire up the "status" register
             self.status.fields.have.eq(buf.readable),
             self.status.fields.idle.eq(~queued),
@@ -751,40 +759,55 @@ class InHandler(Module, AutoCSR):
             # Cause a trigger event when the `queued` value goes to 0
             self.ev.packet.trigger.eq(~queued & was_queued),
 
-            self.dtb.eq(dtbs >> endp_sys),
-
             self.data_out.eq(buf.dout),
-            self.data_out_have.eq(buf.readable),
-            buf.re.eq(self.data_out_advance & is_in_packet & is_our_packet),
-            buf.we.eq(self.data.re),
-            buf.din.eq(self.data.storage),
+            buf.re.eq(self.data_out_sync.o & is_in_packet & is_our_packet),
             is_our_packet.eq(endp_sys == ctrl.fields.epno),
             is_in_packet.eq(tok_sys == PID.IN),
+        ]
+        self.specials += MultiReg(buf.readable, self.data_out_have, "usb_12")
+        self.data_out_usb12 = Signal(8)
+        self.submodules.data_sync = BusSynchronizer(8, "sys", "usb_12")
+        self.comb += [
+            self.data_sync.i.eq(buf.dout),
+            self.data_out_usb12.eq(self.data_sync.o)
+        ]
+
+        self.submodules.bufwesync = PulseSynchronizer("sys", "usb_12")
+        self.comb += [
+            self.bufwesync.i.eq(self.data.re),
+            buf.we.eq(self.bufwesync.o),
+        ]
+        self.submodules.bufdatsync = BusSynchronizer(8, "sys", "usb_12")
+        self.comb += [
+            self.bufdatsync.i.eq(self.data.storage),
+            buf.din.eq(self.bufdatsync.o),
         ]
 
         poll_sys = Signal()
         commit_sys = Signal()
+        dtb_reset_sys = Signal()
         self.specials += MultiReg(usb_core.poll, poll_sys)
         self.specials += MultiReg(usb_core.commit, commit_sys)
+        self.specials += MultiReg(self.dtb_reset, dtb_reset_sys)
         self.sync += [
             If(ctrl.fields.reset,
                 queued.eq(0),
                 was_queued.eq(0),
                 transmitted.eq(0),
                 dtbs.eq(0x0001),
-            ).Elif(self.dtb_reset,
+            ).Elif(dtb_reset_sys,
                 dtbs.eq(dtbs | 1),
             )
             # When the user updates the `ctrl` register, enable writing.
             .Elif(ctrl.re & ~ctrl.fields.stall,
                 queued.eq(1),
             )
-            .Elif(poll_sys & self.response,
+            .Elif(poll_sys & response_sys,
                 transmitted.eq(1),
             )
             # When the USB core finishes operating on this packet,
             # de-assert the queue flag
-            .Elif(commit_sys & transmitted & self.response & ~self.stalled,
+            .Elif(commit_sys & transmitted & response_sys & ~stalled_sys,
                 queued.eq(0),
                 transmitted.eq(0),
                 # Toggle the "DTB" line if we transmitted data
@@ -813,7 +836,7 @@ class OutHandler(Module, AutoCSR):
     """
     def __init__(self, usb_core):
 
-        self.submodules.data_buf = buf = ClockDomainsRenamer({"write":"sys","read":"usb_12"})(ResetInserter(["sys", "usb_12"])(fifo.AsyncFIFOBuffered(width=8, depth=128))) # 66
+        self.submodules.data_buf = buf = ClockDomainsRenamer({"write":"usb_12","read":"sys"})(ResetInserter(["sys", "usb_12"])(fifo.AsyncFIFOBuffered(width=8, depth=128))) # 66
 
         self.data = data = CSRStatus(
             fields=[
@@ -879,9 +902,9 @@ class OutHandler(Module, AutoCSR):
             ).Else(
                 ep_mask.eq(1 << ctrl.fields.epno),
             ),
-            self.stalled.eq(stall_status >> endp_sys),
-            self.enabled.eq(enable_status >> endp_sys),
         ]
+        self.specials += MultiReg(stall_status >> endp_sys, self.stalled, "usb_12")
+        self.specials += MultiReg(enable_status >> endp_sys, self.enabled, "usb_12")
         self.sync += [
             If(ctrl.fields.reset | self.usb_reset,
                 stall_status.eq(0),
@@ -901,8 +924,11 @@ class OutHandler(Module, AutoCSR):
         #  - 0 - NAK
         # Send a NAK if the buffer contains data, or if "ENABLE" has not been set.
         self.response = Signal()
+        response_sys = Signal()
         responding = Signal()
+        responding_usb12 = Signal()
         is_out_packet = Signal()
+        self.specials += MultiReg(responding, responding_usb12, "usb_12")
 
         poll_sys = Signal()
         self.specials += MultiReg(usb_core.poll, poll_sys)
@@ -914,8 +940,9 @@ class OutHandler(Module, AutoCSR):
         ]
         # Keep track of whether we're currently responding.
         self.comb += is_out_packet.eq(tok_sys == PID.OUT)
-        self.comb += self.response.eq(self.enabled & is_out_packet & ~self.ev.packet.pending)
-        self.sync += If(poll_sys, responding.eq(self.response))
+        self.specials += MultiReg(self.enabled & is_out_packet & ~self.ev.packet.pending, self.response, "usb_12")
+        self.comb += response_sys.eq(self.enabled & is_out_packet & ~self.ev.packet.pending)
+        self.sync += If(poll_sys, responding.eq(response_sys))
 
         # Connect the buffer to the USB system
         self.data_recv_payload = Signal(8)
@@ -932,14 +959,12 @@ class OutHandler(Module, AutoCSR):
 
         ]
         self.specials += MultiReg(buf.readable, self.status.fields.have)
-        self.submodules.outdata = BusSynchronizer(8, "usb_12", "sys")
         self.comb += [
-            self.outdata.i.eq(buf.dout),
-            self.data.fields.data.eq(self.outdata.o)
+            self.data.fields.data.eq(buf.dout),
         ]
         self.comb += [
             buf.din.eq(self.data_recv_payload),
-            buf.we.eq(self.data_recv_put & responding),
+            buf.we.eq(self.data_recv_put & responding_usb12),
             buf.reset_sys.eq(ctrl.fields.reset),
 
             self.status.fields.epno.eq(epno),
