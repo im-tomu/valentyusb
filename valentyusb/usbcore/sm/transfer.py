@@ -3,6 +3,7 @@
 import unittest
 
 from migen import *
+from migen.genlib.cdc import MultiReg
 
 from ..endpoint import *
 from ..io import FakeIoBuf
@@ -37,7 +38,9 @@ class UsbTransfer(Module):
 
         # The state of the USB reset (SE0) signal
         self.usb_reset = Signal()
-        self.comb += self.usb_reset.eq(rx.o_reset)
+        self.specials += MultiReg(rx.o_reset, self.usb_reset)
+        self.usb_reset_12 = Signal()
+        self.comb += self.usb_reset_12.eq(rx.o_reset)
 
         # ----------------------
         # Data paths
