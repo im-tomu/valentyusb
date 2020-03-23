@@ -25,6 +25,4 @@ setup(
     ],
     packages=find_packages(exclude=("test-suite*", "sim*", "docs*")),
     install_requires=["litex"],
-    
-
 )
