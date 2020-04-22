@@ -199,9 +199,10 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             the ``IN`` FIFO.
 
             To stall an ``OUT`` endpoint, write to ``OUT_CTRL.EPNO`` with the ``OUT_CTRL.STALL``
-            bit set.  To unstall, write to ``OUT_CTRL.EPNO`` with the ``OUT_CTRL.STALL`` bit
-            cleared.  Note that ``OUT_CTRL.ENABLE`` should not be set at the same time as
-            ``OUT_CTRL.STALL``, as this will cause a conflict.
+            and ``OUT_CTRL.ENABLE`` bits set.  To unstall, write to ``OUT_CTRL.EPNO`` with the
+            ``OUT_CTRL.STALL`` bit and ``OUT_CTRL.ENABLE`` bits cleared.  Note that
+            ``OUT_CTRL.ENABLE`` indicates whether any response sould be sent at all, which is
+            why it must be set or cleared at the same time.
             """)
 
         # USB Core
@@ -209,7 +210,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
         self.iobuf = usb_core.iobuf
-       
+
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
 
