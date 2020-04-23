@@ -29,9 +29,8 @@ jobs:
         - conda activate usb-test-suite-env
         # conda complains if it does not have the libs as well
         - pip install -r test-suite/conf/requirements.txt
-        - cd test-suite/litex
-        - ./litex_setup.py init install
-        - cd -
+        - cp test-suite/litex/litex_setup.py test-suite
+        - ./test-suite/litex_setup.py init install --user
       script:
         - cd test-suite/usb-test-suite-testbenches
         - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP
