@@ -38,7 +38,7 @@ class UsbTransfer(Module):
 
         # The state of the USB reset (SE0) signal
         self.usb_reset = Signal()
-        self.specials += MultiReg(rx.o_reset, self.usb_reset)
+        self.specials += MultiReg(rx.o_reset, self.usb_reset, odomain="usb_12")
         self.usb_reset_12 = Signal()
         self.comb += self.usb_reset_12.eq(rx.o_reset)
 
