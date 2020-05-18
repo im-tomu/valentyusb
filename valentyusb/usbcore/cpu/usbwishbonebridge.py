@@ -4,7 +4,7 @@ from migen.genlib.misc import chooser, WaitTimer
 from migen.genlib.record import Record
 from migen.genlib.fsm import FSM, NextState
 from migen.genlib.fifo import AsyncFIFOBuffered
-from migen.genlib.cdc import PulseSynchronizer
+from migen.genlib.cdc import PulseSynchronizer, MultiReg
 from litex.soc.interconnect import stream
 
 from litex.soc.interconnect import wishbone
@@ -100,6 +100,8 @@ class USBWishboneBridge(Module, AutoDoc):
             self.submodules.wb_to_uwb = wb_to_usb = PulseSynchronizer("sys", "usb_12")
             send_to_wishbone = usb_to_wb.i
             reply_from_wishbone = wb_to_usb.o
+            cmd_sync = Signal()
+            self.specials += MultiReg(cmd, cmd_sync) # FIXME: reviewer, can we afford this delay?
         else:
             self.comb += [
                 If(send_to_wishbone | transfer_active,
@@ -141,11 +143,22 @@ class USBWishboneBridge(Module, AutoDoc):
         # The Litex Wishbone `dat_r` line is a shared medium, meaning the value
         # changes often.  Capture our own copy of this data when a wishbone ACK
         # occurs.
-        self.sync.sys += [
-            If(self.wishbone.ack,
-                rd_data.eq(self.wishbone.dat_r)
-            )
-        ]
+        if cdc:
+            rd_data_sys = Signal(32, reset_less=True)
+            self.sync.sys += [
+                If(self.wishbone.ack,
+                    rd_data_sys.eq(self.wishbone.dat_r)
+                )
+            ]
+            self.sync.usb_12 += [
+                rd_data.eq(rd_data_sys)
+            ]
+        else:
+            self.sync.sys += [
+                If(self.wishbone.ack,
+                    rd_data.eq(self.wishbone.dat_r)
+                )
+            ]
 
 
         fsm = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
@@ -236,7 +249,7 @@ class USBWishboneBridge(Module, AutoDoc):
             )
             wb_cd_bridge.act("DO_OP",
                 self.wishbone.stb.eq(1),
-                self.wishbone.we.eq(~cmd),
+                self.wishbone.we.eq(~cmd_sync),
                 self.wishbone.cyc.eq(1),
                 If(self.wishbone.ack | self.wishbone.err,
                     NextState("IDLE"),
@@ -244,7 +257,7 @@ class USBWishboneBridge(Module, AutoDoc):
                 ),
             )
 
-        self.comb += [
+        self.sync += [
             # Trim off the last two bits of the address, because wishbone addresses
             # are word-based, and a word is 32-bits.  Therefore, the last two bits
             # should always be zero.
