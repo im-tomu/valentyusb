@@ -33,7 +33,7 @@ jobs:
         - ./test-suite/litex_setup.py init install --user
       script:
         - cd test-suite/usb-test-suite-testbenches
-        - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP
+        - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP && ! grep -q failure results.xml
 
     - <<: *test_body
       env:
