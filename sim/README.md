@@ -42,6 +42,13 @@ $ gtkwave -S gtkwave.init dump.vcd
 
 In order to get additional levels of decode, you can right-click on the area with signals and say `Add empty row`, and then drag this above the `usb_d_n` signal.  This can be repeated up to four times.
 
+You may find the font to be a little small.  Create ~/.gtkwaverc and add this:
+
+```
+fontname_signals Monospace 14
+fontname_waves Monospace 14
+```
+
 ## About test names
 
 Cocotb does not stop the simulator during the course of the run.  In order to identify various sections of the simulation, you need to add the `test_name` signal and convert it to `Ascii`.  The `gtkwave.init` script does this for you.
