@@ -16,7 +16,7 @@ from ..pid import PID, PIDTypes
 
 class USBWishboneBridge(Module, AutoDoc):
 
-    def __init__(self, usb_core, clk_freq=12000000, magic_packet=0x43, cdc=False):
+    def __init__(self, usb_core, clk_freq=12000000, magic_packet=0x43, cdc=False, relax_timing=False):
         self.wishbone = wishbone.Interface()
 
         self.background = ModuleDoc(title="USB Wishbone Bridge", body="""
@@ -257,14 +257,19 @@ class USBWishboneBridge(Module, AutoDoc):
                 ),
             )
 
-        self.sync += [
-            # Trim off the last two bits of the address, because wishbone addresses
-            # are word-based, and a word is 32-bits.  Therefore, the last two bits
-            # should always be zero.
+        # Trim off the last two bits of the address, because wishbone addresses
+        # are word-based, and a word is 32-bits.  Therefore, the last two bits
+        # should always be zero.
+        addr_to_wishbone = [
             self.wishbone.adr.eq(address[2:]),
             self.wishbone.dat_w.eq(data),
             self.wishbone.sel.eq(2**len(self.wishbone.sel) - 1)
         ]
+        if relax_timing:
+            self.sync += addr_to_wishbone
+        else:
+            self.comb += addr_to_wishbone
+
         fsm.act("WRITE_DATA",
             self.n_debug_in_progress.eq(0),
             transfer_active.eq(1),

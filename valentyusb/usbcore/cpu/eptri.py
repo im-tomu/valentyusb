@@ -76,6 +76,11 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         True, then additional buffers will be placed on the ``.we`` and ``.re``
         lines to handle this difference.
 
+    relax_timing (bool, optional): ``eptri`` is optimized for small devices that
+        do not require high speed routing. As such, combinatorial logic is preferred.
+        Set ``relax_timing=True`` to enable registered accesses for certain operations
+        to allow for a higher Fmax at the expense of logic cells.
+
     Attributes
     ----------
 
@@ -84,7 +89,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         master for you to connect to your desired Wishbone bus.
     """
 
-    def __init__(self, iobuf, debug=False, cdc=False):
+    def __init__(self, iobuf, debug=False, cdc=False, relax_timing=False):
 
         self.background = ModuleDoc(title="USB Device Tri-FIFO", body="""
             This is a three-FIFO USB device.  It presents one FIFO each for ``IN``, ``OUT``, and
@@ -206,7 +211,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             """)
 
         # USB Core
-        self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
+        self.submodules.usb_core = usb_core = UsbTransfer(iobuf, cdc=cdc)
 
         self.submodules.pullup = GPIOOut(usb_core.iobuf.usb_pullup)
         self.iobuf = usb_core.iobuf
@@ -216,7 +221,9 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         # Wire up debug signals if required
         if debug:
-            self.submodules.debug_bridge = debug_bridge = USBWishboneBridge(self.usb_core, cdc=cdc)
+            self.submodules.debug_bridge = debug_bridge = USBWishboneBridge(self.usb_core,
+                                                                            cdc=cdc,
+                                                                            relax_timing=relax_timing)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
             ]

@@ -17,7 +17,7 @@ from ..utils.packet import *
 
 
 class UsbTransfer(Module):
-    def __init__(self, iobuf, auto_crc=True):
+    def __init__(self, iobuf, auto_crc=True, cdc=False):
         self.submodules.iobuf = ClockDomainsRenamer("usb_48")(iobuf)
 
         self.submodules.tx = tx = TxPipeline()
@@ -38,9 +38,12 @@ class UsbTransfer(Module):
 
         # The state of the USB reset (SE0) signal
         self.usb_reset = Signal()
-        self.specials += MultiReg(rx.o_reset, self.usb_reset, odomain="usb_12")
-        self.usb_reset_12 = Signal()
-        self.comb += self.usb_reset_12.eq(rx.o_reset)
+        if cdc:
+            self.specials += MultiReg(rx.o_reset, self.usb_reset, odomain="usb_12")
+            self.usb_reset_12 = Signal()
+            self.comb += self.usb_reset_12.eq(rx.o_reset)
+        else:
+            self.comb += self.usb_reset.eq(rx.o_reset)
 
         # ----------------------
         # Data paths

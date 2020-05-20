@@ -17,12 +17,54 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
 
     This implements a device that simply responds to the most common SETUP packets.
     It is intended to be used alongside the Wishbone debug bridge.
+
+    Args
+    ----
+
+    iobuf (:obj:`io.IoBuf`): PHY interface to the raw pins.  This object
+        encapsulate the pin interface to the outside world so that
+        `DummyUsb` does not need to have platform-specific
+        IO handling.
+
+    debug (bool, optional): Whether to add a debug bridge to this interface.
+        Adding a debug bridge generates a Wishbone Master, which can take
+        a large number of resources.  In exchange, it offers transparent debug.
+
+    cdc (bool, optional): By default, ``eptri`` assumes that the CSR bus is in
+        the same 12 MHz clock domain as the USB stack.  If ``cdc`` is set to
+        True, then additional buffers will be placed on the ``.we`` and ``.re``
+        lines to handle this difference.
+
+    relax_timing (bool, optional): ``eptri`` is optimized for small devices that
+        do not require high speed routing. As such, combinatorial logic is preferred.
+        Set ``relax_timing=True`` to enable registered accesses for certain operations
+        to allow for a higher Fmax at the expense of logic cells.
+
+    product (str, optional): When ``DummyUsb`` enumerates, this string will appear
+        as the "Product" string in the USB descriptor.
+
+    manufacturer (str, optional): When ``DummyUsb`` enumerates, this string will
+        appear as the "Manufacturer" string in the USB descriptor.
+
+    vid (int, optional): When ``DummyUsb`` enumerates, this 16-bit int will appear
+        as the "Vendor ID" in the configuration descriptor.
+
+    pid (int, optional): When ``DummyUsb`` enumerates, this 16-bit int will appear
+        as the "Product ID" in the configuration descriptor.
+
+    Attributes
+    ----------
+
+    debug_bridge (:obj:`wishbone.Interface`): The wishbone interface master for debug
+        If `debug=True`, this attribute will contain the Wishbone Interface
+        master for you to connect to your desired Wishbone bus.
     """
 
     def __init__(self, iobuf, debug=False, vid=0x1209, pid=0x5bf0,
         product="Fomu Bridge",
         manufacturer="Foosn",
-        cdc=False):
+        cdc=False,
+        relax_timing=False):
         """
         Arguments:
 
@@ -30,7 +72,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
         as `usb_12`, then insert a clock domain crossing construct.
         """
         # USB Core
-        self.submodules.usb_core = usb_core = UsbTransfer(iobuf)
+        self.submodules.usb_core = usb_core = UsbTransfer(iobuf, cdc=cdc)
         if usb_core.iobuf.usb_pullup is not None:
             self.comb += usb_core.iobuf.usb_pullup.eq(1)
         self.iobuf = usb_core.iobuf
@@ -183,7 +225,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
 
         # Wire up debug signals if required
         if debug:
-            debug_bridge = USBWishboneBridge(usb_core, cdc=cdc)
+            debug_bridge = USBWishboneBridge(usb_core, cdc=cdc, relax_timing=relax_timing)
             self.submodules.debug_bridge = debug_bridge
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
