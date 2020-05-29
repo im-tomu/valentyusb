@@ -91,7 +91,10 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
         setup_index = Signal(4)
 
         address = Signal(7, reset=0)
-        self.comb += usb_core.addr.eq(address),
+        if cdc:
+            self.sync.usb_12 += usb_core.addr.eq(address),
+        else:
+            self.comb += usb_core.addr.eq(address),
 
         def make_usbstr(s):
             usbstr = bytearray(2)
