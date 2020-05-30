@@ -12,7 +12,7 @@ jobs:
         # Clone these here rather than as part of the main repo,
         # in order to avoid cloning a second copy of litex when
         # this is used as part of another repo.
-        - git -C test-suite clone https://github.com/antmicro/usb-test-suite-testbenches.git
+        - git -C test-suite clone -b valentyusb-build-name https://github.com/xobs/usb-test-suite-testbenches.git
         - git -C test-suite clone https://github.com/antmicro/usb-test-suite-cocotb-usb.git
         - git -C test-suite clone https://github.com/enjoy-digital/litex.git
         # We need to install those in virtualenv, as cocotb will use this instead of conda
