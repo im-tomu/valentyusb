@@ -7,7 +7,7 @@ jobs:
     # so we use YAML anchors to get parallel builds
     - &test_body
       env:
-        - T=valentyusb  S=test-eptri       OP=sim
+        - T=valentyusb  S=test-eptri       OP=sim    CDC=0
       install:
         # Clone these here rather than as part of the main repo,
         # in order to avoid cloning a second copy of litex when
@@ -33,9 +33,7 @@ jobs:
         - ./test-suite/litex_setup.py init install --user
       script:
         - cd test-suite/usb-test-suite-testbenches
-        - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP && ! grep -q failure results.xml
-        - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP clean && ! grep -q failure results.xml
-        - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP CDC=1 && ! grep -q failure results.xml
+        - make PYTHONPATH=../litex:../.. TARGET=$T TEST_SCRIPT=$S $OP $CDC && ! grep -q failure results.xml
 
     - <<: *test_body
       env:
@@ -52,3 +50,21 @@ jobs:
     - <<: *test_body
       env:
         - T=valentyusb  S=test-valenty-cdc OP=sim
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-eptri       OP=sim    CDC=1
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-enum        OP=sim    CDC=1
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-w10enum     OP=sim    CDC=1
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-clocks      OP=sim    CDC=1
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-macOSenum   OP=sim    CDC=1
+    - <<: *test_body
+      env:
+        - T=valentyusb  S=test-valenty-cdc OP=sim    CDC=1
