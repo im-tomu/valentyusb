@@ -312,7 +312,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
             self.comb += usb_core.dtb.eq(in_handler.dtb | debug_packet_detected)
         usb_core_reset = Signal()
 
-        self.submodules.stage = stage = ClockDomainsRenamer("usb_12")(ResetInserter()(FSM(reset_state="IDLE")))
+        self.submodules.stage = stage = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
         self.comb += stage.reset.eq(usb_core.usb_reset_12)
 
         if cdc:
@@ -1007,7 +1007,7 @@ class OutHandler(Module, AutoCSR):
     """
     def __init__(self, usb_core, cdc=False):
         if cdc:
-            self.submodules.data_buf = buf = ResetInserter["usb_12", "sys"])(ClockDomainsRenamer({"write":"usb_12","read":"sys"})(fifo.AsyncFIFO(width=8, depth=128))) # 66
+            self.submodules.data_buf = buf = ResetInserter(["sys", "usb_12"])(ClockDomainsRenamer({"write":"usb_12","read":"sys"})(fifo.AsyncFIFO(width=8, depth=128))) # 66
         else:
             self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=66))
 
