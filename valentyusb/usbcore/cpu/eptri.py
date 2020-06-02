@@ -529,7 +529,7 @@ class SetupHandler(Module, AutoCSR):
         class SetupHandlerInner(Module):
             def __init__(self, cdc=False):
                 if cdc:
-                    self.submodules.setupfifo = ResetInserter()(ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
+                    self.submodules.setupfifo = ResetInserter(["usb_12", "sys"])(ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(
                         fifo.AsyncFIFO(width=8, depth=16)))  # 10
                 else:
                     self.submodules.setupfifo = fifo.SyncFIFOBuffered(width=8, depth=10)
@@ -687,7 +687,7 @@ class InHandler(Module, AutoCSR):
         stall_status = Signal(16)
 
         if cdc:
-            self.submodules.data_buf = buf = ResetInserter()(ClockDomainsRenamer({"write":"sys","read":"usb_12"})(fifo.AsyncFIFOBuffered(width=8, depth=64)))
+            self.submodules.data_buf = buf = ResetInserter(["usb_12", "sys"])(ClockDomainsRenamer({"write":"sys","read":"usb_12"})(fifo.AsyncFIFOBuffered(width=8, depth=64)))
         else:
             self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=64))
 
@@ -1007,7 +1007,7 @@ class OutHandler(Module, AutoCSR):
     """
     def __init__(self, usb_core, cdc=False):
         if cdc:
-            self.submodules.data_buf = buf = ResetInserter()(ClockDomainsRenamer({"write":"usb_12","read":"sys"})(fifo.AsyncFIFO(width=8, depth=128))) # 66
+            self.submodules.data_buf = buf = ResetInserter["usb_12", "sys"])(ClockDomainsRenamer({"write":"usb_12","read":"sys"})(fifo.AsyncFIFO(width=8, depth=128))) # 66
         else:
             self.submodules.data_buf = buf = ResetInserter()(fifo.SyncFIFOBuffered(width=8, depth=66))
 
