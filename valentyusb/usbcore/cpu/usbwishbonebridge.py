@@ -85,7 +85,7 @@ class USBWishboneBridge(Module, AutoDoc):
         # integrated into the USB protocol, so it's not really a
         # state.  1 is "USB Device to Host", and is therefore a "read",
         # while 0 is "USB Host to Device", and is therefore a "write".
-        cmd = Signal(1, reset_less=True)
+        self.cmd = cmd = Signal(1, reset_less=True)
         cmd_ce = Signal()
 
         # Add a bridge to allow this module (in the usb_12 domain) to access
@@ -100,7 +100,7 @@ class USBWishboneBridge(Module, AutoDoc):
             self.submodules.wb_to_uwb = wb_to_usb = PulseSynchronizer("sys", "usb_12")
             send_to_wishbone = usb_to_wb.i
             reply_from_wishbone = wb_to_usb.o
-            cmd_sync = Signal()
+            self.cmd_sync = cmd_sync = Signal()
             self.specials += MultiReg(cmd, cmd_sync)
         else:
             self.comb += [
@@ -124,11 +124,11 @@ class USBWishboneBridge(Module, AutoDoc):
         # Indicates whether a "debug" packet is currently being processed
         self.n_debug_in_progress = Signal(reset=1)
 
-        address = Signal(32, reset_less=True)
+        self.address = address = Signal(32, reset_less=True)
         address_ce = Signal()
 
-        data = Signal(32, reset_less=True)
-        rd_data = Signal(32, reset_less=True)
+        self.data = data = Signal(32, reset_less=True)
+        self.rd_data = rd_data = Signal(32, reset_less=True)
         rx_data_ce = Signal()
 
         # wishbone_response = Signal(32, reset_less=True)
@@ -144,7 +144,7 @@ class USBWishboneBridge(Module, AutoDoc):
         # changes often.  Capture our own copy of this data when a wishbone ACK
         # occurs.
         if cdc:
-            rd_data_sys = Signal(32, reset_less=True)
+            self.rd_data_sys = rd_data_sys = Signal(32, reset_less=True)
             self.sync.sys += [
                 If(self.wishbone.ack,
                     rd_data_sys.eq(self.wishbone.dat_r)
