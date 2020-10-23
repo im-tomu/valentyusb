@@ -70,7 +70,7 @@ class USBWishboneBridge(Module, AutoDoc):
         """)
         # # #
 
-        byte_counter = Signal(3, reset_less=True)
+        byte_counter = Signal(log2_int(64)+1, reset_less=True) # up to 64 for FS
         byte_counter_reset = Signal()
         byte_counter_ce = Signal()
         self.sync.usb_12 += \
@@ -126,6 +126,10 @@ class USBWishboneBridge(Module, AutoDoc):
 
         self.address = address = Signal(32, reset_less=True)
         address_ce = Signal()
+        address_inc = Signal()
+
+        self.length = length = Signal(16, reset_less=True)
+        length_ce = Signal()
 
         self.data = data = Signal(32, reset_less=True)
         self.rd_data = rd_data = Signal(32, reset_less=True)
@@ -134,7 +138,12 @@ class USBWishboneBridge(Module, AutoDoc):
         # wishbone_response = Signal(32, reset_less=True)
         self.sync.usb_12 += [
             If(cmd_ce, cmd.eq(usb_core.data_recv_payload[7:8])),
-            If(address_ce, address.eq(Cat(address[8:32], usb_core.data_recv_payload))),
+            If(address_ce,
+                address.eq(Cat(address[8:32], usb_core.data_recv_payload)),
+            ).Elif(address_inc,
+                address.eq(address + 4),
+            ),
+            If(length_ce, length.eq(Cat(length[8:16],usb_core.data_recv_payload))),
             If(rx_data_ce,
                 data.eq(Cat(data[8:32], usb_core.data_recv_payload))
             )
@@ -193,7 +202,9 @@ class USBWishboneBridge(Module, AutoDoc):
                 If((byte_counter >= 1),
                     If((byte_counter <= 4),
                         address_ce.eq(1),
-                    ),
+                    ).Elif((byte_counter <= 6),
+                        length_ce.eq(1),
+                    )
                 ),
             ),
             # We don't need to explicitly ACK the SETUP packet, because
@@ -221,11 +232,14 @@ class USBWishboneBridge(Module, AutoDoc):
                 If(usb_core.data_recv_put,
                     rx_data_ce.eq(1),
                     byte_counter_ce.eq(1),
-                    If(byte_counter == 3,
+                    If(byte_counter == (length - 1),
                         NextState("WAIT_RECEIVE_DATA_END"),
                     ).Elif(usb_core.end,
                         send_to_wishbone.eq(1),
                         NextState("WRITE_DATA"),
+                    ).Elif((byte_counter & 3) == 3,
+                        send_to_wishbone.eq(1),
+                        address_inc.eq(1),
                     )
                 )
             )
@@ -282,19 +296,20 @@ class USBWishboneBridge(Module, AutoDoc):
             self.n_debug_in_progress.eq(0),
             transfer_active.eq(1),
             If(reply_from_wishbone,
-                NextState("SEND_DATA_WAIT_START")
+                NextState("SEND_DATA_WAIT_START"),
+                #address_inc.eq(1),
             )
         )
 
         fsm.act("SEND_DATA_WAIT_START",
             self.n_debug_in_progress.eq(0),
-            byte_counter_reset.eq(1),
+            # byte_counter_reset.eq(1),  # this shouldn't be needed because it was set before this was entered
             If(usb_core.start,
                 NextState("SEND_DATA"),
             ),
         )
         self.comb += \
-            chooser(rd_data, byte_counter, self.sink_data, n=4, reverse=False)
+            chooser(rd_data, byte_counter[0:2], self.sink_data, n=4, reverse=False)
         fsm.act("SEND_DATA",
             self.n_debug_in_progress.eq(0),
             If(usb_core.endp != 0,
@@ -306,8 +321,13 @@ class USBWishboneBridge(Module, AutoDoc):
             self.sink_valid.eq(usb_core.endp == 0),
             If(usb_core.data_send_get,
                 byte_counter_ce.eq(1),
+                If( ((byte_counter & 3) == 3) & ((byte_counter + 1) != length),
+                    send_to_wishbone.eq(1),
+                    address_inc.eq(1),
+                    NextState("SEND_DATA"),
+                )
             ),
-            If(byte_counter == 4,
+            If(byte_counter == length,
                 NextState("WAIT_SEND_ACK_START")
             ),
             If(usb_core.end,
