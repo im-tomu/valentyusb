@@ -70,7 +70,7 @@ class USBWishboneBridge(Module, AutoDoc):
         """)
         # # #
 
-        byte_counter = Signal(log2_int(64)+1, reset_less=True) # up to 64 for FS
+        byte_counter = Signal(17, reset_less=True) # up to 64k + 1
         byte_counter_reset = Signal()
         byte_counter_ce = Signal()
         self.sync.usb_12 += \
@@ -87,6 +87,8 @@ class USBWishboneBridge(Module, AutoDoc):
         # while 0 is "USB Host to Device", and is therefore a "write".
         self.cmd = cmd = Signal(1, reset_less=True)
         cmd_ce = Signal()
+
+        self.data_phase = Signal()
 
         # Add a bridge to allow this module (in the usb_12 domain) to access
         # the main Wishbone bridge (potentially in some other domain).
@@ -173,6 +175,7 @@ class USBWishboneBridge(Module, AutoDoc):
         fsm = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
         self.submodules += fsm
         fsm.act("IDLE",
+            NextValue(self.data_phase, 0),
             self.n_debug_in_progress.eq(1),
             If(usb_core.data_recv_put,
                 If(usb_core.tok == PID.SETUP,
@@ -277,10 +280,17 @@ class USBWishboneBridge(Module, AutoDoc):
         addr_to_wishbone = [
             self.wishbone.adr.eq(address[2:]),
             self.wishbone.dat_w.eq(data),
-            self.wishbone.sel.eq(2**len(self.wishbone.sel) - 1)
+            self.wishbone.sel.eq(2**len(self.wishbone.sel) - 1),
         ]
         if relax_timing:
             self.sync += addr_to_wishbone
+            #self.sync += [
+            #    If(address[28:] == 0x2,
+            #        self.wishbone.cti.eq(7)
+            #    ).Else(
+            #        self.wishbone.cti.eq(0)
+            #    )
+            #]
         else:
             self.comb += addr_to_wishbone
 
@@ -315,10 +325,17 @@ class USBWishboneBridge(Module, AutoDoc):
             If(usb_core.endp != 0,
                 NextState("SEND_DATA_WAIT_START"),
             ),
-
             # Keep sink_valid high during the packet, which indicates we have data
             # to send.  This also causes an "ACK" to be transmitted.
-            self.sink_valid.eq(usb_core.endp == 0),
+            If( ((byte_counter & 63) == 63) & ((byte_counter + 1) != length),
+                self.sink_valid.eq(0), # signal to the host that it's time to switch phases
+                NextState("READ_DATA"),
+                send_to_wishbone.eq(1),
+                address_inc.eq(1),
+                NextValue(self.data_phase, ~self.data_phase),
+            ).Else(
+                self.sink_valid.eq(usb_core.endp == 0),
+            ),
             If(usb_core.data_send_get,
                 byte_counter_ce.eq(1),
                 If( ((byte_counter & 3) == 3) & ((byte_counter + 1) != length),

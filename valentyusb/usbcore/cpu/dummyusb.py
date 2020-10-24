@@ -227,10 +227,12 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
         ]
 
         # Wire up debug signals if required
+        data_phase = Signal()
         if debug:
             debug_bridge = USBWishboneBridge(usb_core, cdc=cdc, relax_timing=relax_timing)
             self.submodules.debug_bridge = debug_bridge
             self.comb += [
+                data_phase.eq(self.debug_bridge.data_phase),
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
                 debug_sink_data.eq(self.debug_bridge.sink_data),
                 debug_sink_data_ready.eq(self.debug_bridge.sink_valid),
@@ -238,7 +240,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
             ]
 
         self.comb += [
-            usb_core.dtb.eq(1),
+            usb_core.dtb.eq(1 ^ data_phase),
             If(debug_packet_detected,
                 usb_core.sta.eq(0),
                 usb_core.arm.eq(debug_ack_response),
