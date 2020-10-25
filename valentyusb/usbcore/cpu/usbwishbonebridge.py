@@ -176,6 +176,7 @@ class USBWishboneBridge(Module, AutoDoc):
         fsm = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
         self.submodules += fsm
         fsm.act("IDLE",
+            NextValue(not_first_byte, 0),
             NextValue(self.data_phase, 0),
             self.n_debug_in_progress.eq(1),
             If(usb_core.data_recv_put,
