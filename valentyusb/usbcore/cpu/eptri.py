@@ -218,6 +218,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
+        debug_phase = Signal()
 
         # Wire up debug signals if required
         if debug:
@@ -226,6 +227,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
                                                                             relax_timing=relax_timing)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
+                debug_phase.eq(self.debug_bridge.data_phase),
             ]
 
         ems = []
@@ -307,9 +309,21 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         # If a debug packet comes in, the DTB should be 1.  Otherwise, the DTB should
         # be whatever the in_handler says it is.
         if cdc:
-            self.comb += usb_core.dtb.eq(in_handler.dtb_12 | debug_packet_detected)
+            self.comb += [
+                If(debug_packet_detected,
+                   usb_core.dtb.eq( 1 ^ debug_phase ),
+                ).Else(
+                    usb_core.dtb.eq(in_handler.dtb_12),
+                )
+            ]
         else:
-            self.comb += usb_core.dtb.eq(in_handler.dtb | debug_packet_detected)
+            self.comb += [
+                If(debug_packet_detected,
+                   usb_core.dtb.eq( 1 ^ debug_phase ),
+                ).Else(
+                    usb_core.dtb.eq(in_handler.dtb),
+                )
+            ]
         usb_core_reset = Signal()
 
         self.submodules.stage = stage = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))

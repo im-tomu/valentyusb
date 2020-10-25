@@ -171,7 +171,8 @@ class USBWishboneBridge(Module, AutoDoc):
                 )
             ]
 
-
+        not_first_byte=Signal()
+        
         fsm = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
         self.submodules += fsm
         fsm.act("IDLE",
@@ -327,17 +328,9 @@ class USBWishboneBridge(Module, AutoDoc):
             ),
             # Keep sink_valid high during the packet, which indicates we have data
             # to send.  This also causes an "ACK" to be transmitted.
-            If( ((byte_counter & 63) == 63) & ((byte_counter + 1) != length),
-                byte_counter_ce.eq(1),
-                self.sink_valid.eq(0), # signal to the host that it's time to switch phases
-                NextState("READ_DATA"),
-                send_to_wishbone.eq(1),
-                address_inc.eq(1),
-                NextValue(self.data_phase, ~self.data_phase),
-            ).Else(
-                self.sink_valid.eq(usb_core.endp == 0),
-            ),
+            self.sink_valid.eq(usb_core.endp == 0),
             If(usb_core.data_send_get,
+                NextValue(not_first_byte, 1),
                 byte_counter_ce.eq(1),
                 If( ((byte_counter & 3) == 3) & ((byte_counter + 1) != length),
                     send_to_wishbone.eq(1),
@@ -345,7 +338,7 @@ class USBWishboneBridge(Module, AutoDoc):
                     NextState("SEND_DATA"),
                 )
             ),
-            If(byte_counter == length,
+            If( (byte_counter == length) | (((byte_counter & 0x3F) == 0x00) & not_first_byte),
                 NextState("WAIT_SEND_ACK_START")
             ),
             If(usb_core.end,
@@ -359,7 +352,15 @@ class USBWishboneBridge(Module, AutoDoc):
         fsm.act("WAIT_SEND_ACK_START",
             self.n_debug_in_progress.eq(0),
             If(usb_core.start,
-                NextState("SEND_ACK")
+               NextState("SEND_ACK")
+            ),
+            If(usb_core.end & (byte_counter != length),
+               #byte_counter_ce.eq(1),
+               send_to_wishbone.eq(1),
+               #address_inc.eq(1),
+               NextValue(not_first_byte, 0),
+               NextValue(self.data_phase, ~self.data_phase),
+               NextState("READ_DATA"),
             ),
         )
 
