@@ -249,7 +249,7 @@ class USBWishboneBridge(Module, AutoDoc):
                        byte_counter_ce.eq(1),
                     ),
                     burst_counter_ce.eq(1),
-                    If((burst_counter < 64) & ((burst_counter & 3) == 3),
+                    If((burst_counter <= 64) & ((burst_counter & 3) == 0) & (burst_counter != 0),
                        address_inc.eq(1),
                     ),
                     If(byte_counter == (length - 1) | (((byte_counter & 0x3F) == 0x3F) & not_first_byte),
