@@ -328,6 +328,7 @@ class USBWishboneBridge(Module, AutoDoc):
             # Keep sink_valid high during the packet, which indicates we have data
             # to send.  This also causes an "ACK" to be transmitted.
             If( ((byte_counter & 63) == 63) & ((byte_counter + 1) != length),
+                byte_counter_ce.eq(1),
                 self.sink_valid.eq(0), # signal to the host that it's time to switch phases
                 NextState("READ_DATA"),
                 send_to_wishbone.eq(1),
