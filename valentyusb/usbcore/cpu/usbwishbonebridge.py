@@ -321,8 +321,9 @@ class USBWishboneBridge(Module, AutoDoc):
         fsm.act("SEND_DATA_BURST_WAIT",
             self.n_debug_in_progress.eq(0),
             self.sink_valid.eq(usb_core.endp == 0),
-            send_to_wishbone.eq(1),
-            NextState("SEND_DATA"),
+            If(reply_from_wishbone,
+               NextState("SEND_DATA"),
+            )
         )
         self.comb += \
             chooser(rd_data, byte_counter[0:2], self.sink_data, n=4, reverse=False)
@@ -338,6 +339,7 @@ class USBWishboneBridge(Module, AutoDoc):
                 NextValue(not_first_byte, 1),
                 byte_counter_ce.eq(1),
                 If( ((byte_counter & 3) == 3) & ((byte_counter + 1) != length),
+                    send_to_wishbone.eq(1),
                     address_inc.eq(1),
                     NextState("SEND_DATA_BURST_WAIT"),
                 )
