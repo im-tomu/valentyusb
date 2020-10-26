@@ -398,7 +398,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                NextState("SEND_DATA"),
             )
         )
-        self.comb += \
+        self.sync.usb_12 += \
             chooser(self.rd_data, byte_counter[0:2], self.sink_data, n=4, reverse=False)
         fsm.act("SEND_DATA",
             self.n_debug_in_progress.eq(0),
