@@ -11,6 +11,7 @@ from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
 from .usbwishbonebridge import USBWishboneBridge
+from .usbwishboneburstbridge import USBWishboneBurstBridge
 
 class DummyUsb(Module, AutoDoc, ModuleDoc):
     """DummyUSB Self-Enumerating USB Controller
