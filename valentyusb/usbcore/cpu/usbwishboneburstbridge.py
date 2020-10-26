@@ -288,7 +288,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                     )
                 ),
             ),
-            If(byte_counter == 7, # length is stable, can start prefetching now
+            If(byte_counter == 8,
                 NextValue(prefetch_go, 1),
             ),
             # We don't need to explicitly ACK the SETUP packet, because
