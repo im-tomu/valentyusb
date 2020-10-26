@@ -18,6 +18,7 @@ from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
 from .usbwishbonebridge import USBWishboneBridge
+from .usbwishboneburstbridge import USBWishboneBurstBridge
 
 """
 Register Interface:
@@ -89,7 +90,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         master for you to connect to your desired Wishbone bus.
     """
 
-    def __init__(self, iobuf, debug=False, cdc=False, relax_timing=False):
+    def __init__(self, iobuf, debug=False, burst=False, cdc=False, relax_timing=False):
 
         self.background = ModuleDoc(title="USB Device Tri-FIFO", body="""
             This is a three-FIFO USB device.  It presents one FIFO each for ``IN``, ``OUT``, and
@@ -221,10 +222,16 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         debug_phase = Signal()
 
         # Wire up debug signals if required
-        if debug:
+        if debug and not burst:
             self.submodules.debug_bridge = debug_bridge = USBWishboneBridge(self.usb_core,
                                                                             cdc=cdc,
                                                                             relax_timing=relax_timing)
+            self.comb += [
+                debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
+                debug_phase.eq(self.debug_bridge.data_phase),
+            ]
+        elif debug and burst:
+            self.submodules.debug_bridge = debug_bridge = USBWishboneBurstBridge(self.usb_core)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
                 debug_phase.eq(self.debug_bridge.data_phase),

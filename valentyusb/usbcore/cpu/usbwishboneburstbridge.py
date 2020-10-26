@@ -140,17 +140,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         # Add a bridge to allow this module (in the usb_12 domain) to access
         # the main Wishbone bridge (potentially in some other domain).
         # Ensure this bridge is placed in the "sys" domain.
-        send_to_wishbone = Signal()
-        reply_from_wishbone = Signal()
-        transfer_active = Signal()
-
-        self.submodules.wb_cd_bridge = wb_cd_bridge = FSM(reset_state="IDLE")
-        self.submodules.usb_to_wb = usb_to_wb = PulseSynchronizer("usb_12", "sys")
-        self.submodules.wb_to_uwb = wb_to_usb = PulseSynchronizer("sys", "usb_12")
-        self.comb += [
-           usb_to_wb.i.eq(send_to_wishbone),
-           reply_from_wishbone.eq(wb_to_usb.o),
-        ]
         self.cmd_sys = cmd_sys = Signal()
         self.specials += MultiReg(cmd, cmd_sys)
         prefetch_go = Signal()
@@ -158,8 +147,8 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         self.specials += MultiReg(prefetch_go, prefetch_go_sys)
 
         ### cross clock domains using a FIFO. also makes burst access possible.
-        self.specials.write_fifo = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(AsyncFIFOBuffered(32, 64))
-        self.specials.read_fifo = ClockDomainsRenamer({"write": "sys", "read": "usb_12"})(AsyncFIFOBuffered(32, 64))
+        self.submodules.write_fifo = ClockDomainsRenamer({"write": "usb_12", "read": "sys"})(AsyncFIFOBuffered(width=32, depth=64//4))
+        self.submodules.read_fifo = ClockDomainsRenamer({"write": "sys", "read": "usb_12"})(AsyncFIFOBuffered(width=32, depth=64//4))
         self.comb += [
             # clk12 domain
             self.write_fifo.din.eq(data),      # data coming from USB interface
@@ -169,39 +158,50 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             self.wishbone.dat_w.eq(self.write_fifo.dout),
         ]
 
-        self.address_wb = Signal(32)
         self.submodules.address_synchronizer = BusSynchronizer(32, "usb_12", "sys")
         self.comb += self.address_synchronizer.i.eq(self.address),
         self.submodules.length_synchronizer = BusSynchronizer(16, "usb_12", "sys")
         self.length_sys = Signal(16)
         self.comb += [self.length_synchronizer.i.eq(self.length), self.length_sys.eq(self.length_synchronizer.o)]
 
-
         self.burstcount = Signal(16)
+        addr_to_wb = Signal(32)
+        self.comb += [
+            addr_to_wb.eq(self.address_synchronizer.o + self.burstcount),
+            self.wishbone.adr.eq(addr_to_wb[2:])
+        ]
         wbmanager = FSM(reset_state="IDLE") # in sys domain
         self.submodules += wbmanager
         wbmanager.act("IDLE",
-            NextValue(self.address_wb, self.address_synchronizer.o),
             NextValue(self.burstcount, 0),
             If(prefetch_go_sys & cmd_sys,  # 0xC3 (bit set) == read
                 NextState("READER")
             ).Elif(prefetch_go_sys & ~cmd_sys,
                 NextState("WRITER")
+            ),
+            If(self.write_fifo.readable, # clear entries in write fifo in case of e.g. error condition or previous abort
+                self.write_fifo.re.eq(1),
             )
         )
         wbmanager.act("READER",
-            If( (self.burstcount < self.length_sys) & (self.read_fifo.writable),
-                self.wishbone.stb.eq(1),
-                self.wishbone.we.eq(0),
-                self.wishbone.cyc.eq(1),
-                self.wishbone.cti.eq(0),  # classic cycle
-                self.wishbone.adr.eq( (self.address_wb + self.burstcount)[2:] ),
-                NextState("READER_WAIT")
+            If(self.burstcount < self.length_sys,
+                If(self.read_fifo.writable,
+                    self.wishbone.stb.eq(1),
+                    self.wishbone.we.eq(0),
+                    self.wishbone.cyc.eq(1),
+                    self.wishbone.cti.eq(0),  # classic cycle
+                    NextState("READER_WAIT")
+                )
             ).Else(
                 NextState("WAIT_DONE")
             )
         )
         wbmanager.act("READER_WAIT",
+            self.wishbone.stb.eq(1),
+            self.wishbone.we.eq(0),
+            self.wishbone.cyc.eq(1),
+            self.wishbone.cti.eq(0),  # classic cycle
+
             If(self.wishbone.ack | self.wishbone.err,
                 self.read_fifo.we.eq(1),
                 NextValue(self.burstcount, self.burstcount + 4),
@@ -215,9 +215,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                     self.wishbone.we.eq(1),
                     self.wishbone.cyc.eq(1),
                     self.wishbone.cti.eq(0),  # classic cycle
-                    self.wishbone.adr.eq( (self.address_wb + self.burstcount)[2:] ),
-                    self.write_fifo.re.eq(1),
-                    NextValue(self.burstcount, self.burstcount + 4),
                     NextState("WRITER_WAIT"),
                 )
             ).Else(
@@ -225,7 +222,14 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         wbmanager.act("WRITER_WAIT",
+            self.wishbone.stb.eq(1),
+            self.wishbone.we.eq(1),
+            self.wishbone.cyc.eq(1),
+            self.wishbone.cti.eq(0),  # classic cycle
+                      
             If(self.wishbone.ack | self.wishbone.err,
+                self.write_fifo.re.eq(1),
+                NextValue(self.burstcount, self.burstcount + 4),
                 NextState("WRITER")
             )
         )
@@ -247,6 +251,10 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             NextValue(not_first_byte, 0),
             NextValue(self.data_phase, 0),
             self.n_debug_in_progress.eq(1),
+            # drain any excess entries in read FIFO, in case we are recovering from e.g. an error condition
+            If(self.read_fifo.readable,
+                self.read_fifo.re.eq(1),
+            ),
             If(usb_core.data_recv_put,
                 If(usb_core.tok == PID.SETUP,
                     If(usb_core.endp == 0,
@@ -277,10 +285,11 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                         address_ce.eq(1),
                     ).Elif((byte_counter <= 6),
                         length_ce.eq(1),
-                    ).Elif(byte_counter == 9, # this is the final value during CRC, start prefetching now
-                        NextValue(prefetch_go, 1),
                     )
                 ),
+            ),
+            If(byte_counter == 9, # this is the final value during CRC, start prefetching now
+                NextValue(prefetch_go, 1),
             ),
             # We don't need to explicitly ACK the SETUP packet, because
             # they're always acknowledged implicitly.  Wait until the
@@ -289,7 +298,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             If(usb_core.end,
                 byte_counter_reset.eq(1),
                 If(cmd,
-                    send_to_wishbone.eq(1),
                     NextState("READ_DATA"),
                 ).Else(
                     NextState("RECEIVE_DATA"),
@@ -313,17 +321,13 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                     ),
                     burst_counter_ce.eq(1),
                     If((burst_counter <= 64) & ((burst_counter & 3) == 0) & (burst_counter != 0),
+                       self.write_fifo.we.eq(1),
                        address_inc.eq(1),
                     ),
                     If(byte_counter == (length - 1) | (((byte_counter & 0x3F) == 0x3F) & not_first_byte),
                         NextState("WAIT_RECEIVE_DATA_END"),
                     ).Elif(usb_core.end,
-                        self.write_fifo.we.eq(1),
-                        send_to_wishbone.eq(1),
                         NextState("WRITE_DATA"),
-                    ).Elif((byte_counter & 3) == 3,
-                        self.write_fifo.we.eq(1),
-                        send_to_wishbone.eq(1),
                     )
                 )
             )
@@ -335,15 +339,13 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             # it hasn't come already.
             If(usb_core.end,
                 self.write_fifo.we.eq(1),
-                send_to_wishbone.eq(1),
                 NextState("WRITE_DATA")
             )
         )
 
         fsm.act("WRITE_DATA",
             self.n_debug_in_progress.eq(0),
-            transfer_active.eq(1),
-            If(reply_from_wishbone,
+            If(self.write_fifo.writable,
                 NextState("WAIT_SEND_ACK_START_WRITE"),
             )
         )
@@ -378,8 +380,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
 
         fsm.act("READ_DATA",
             self.n_debug_in_progress.eq(0),
-            transfer_active.eq(1),
-            If(reply_from_wishbone,
+            If(self.read_fifo.readable,
                 NextState("SEND_DATA_WAIT_START"),
             )
         )
@@ -393,7 +394,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         fsm.act("SEND_DATA_BURST_WAIT",
             self.n_debug_in_progress.eq(0),
             self.sink_valid.eq(usb_core.endp == 0),
-            If(reply_from_wishbone,
+            If(self.read_fifo.readable,
                NextState("SEND_DATA"),
             )
         )
@@ -411,7 +412,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                 NextValue(not_first_byte, 1),
                 byte_counter_ce.eq(1),
                 If( ((byte_counter & 3) == 3) & ((byte_counter + 1) != length),
-                    send_to_wishbone.eq(1),
                     self.read_fifo.re.eq(1), # advance the read fifo by one position
                     address_inc.eq(1),
                     NextState("SEND_DATA_BURST_WAIT"),
@@ -435,7 +435,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             ),
             If(usb_core.end & (byte_counter != length),
                #byte_counter_ce.eq(1),
-               send_to_wishbone.eq(1),
                 #address_inc.eq(1),
                NextValue(not_first_byte, 0),
                NextValue(self.data_phase, ~self.data_phase),
@@ -458,6 +457,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             # ),
             self.send_ack.eq(usb_core.endp == 0),
             If(usb_core.end,
+                self.read_fifo.re.eq(1), # drain the last entry in the read fifo
                 NextState("IDLE"),
             )
         )

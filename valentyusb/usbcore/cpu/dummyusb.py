@@ -60,7 +60,7 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
         master for you to connect to your desired Wishbone bus.
     """
 
-    def __init__(self, iobuf, debug=False, vid=0x1209, pid=0x5bf0,
+    def __init__(self, iobuf, debug=False, burst=False, vid=0x1209, pid=0x5bf0,
         product="Fomu Bridge",
         manufacturer="Foosn",
         cdc=False,
@@ -228,8 +228,18 @@ class DummyUsb(Module, AutoDoc, ModuleDoc):
 
         # Wire up debug signals if required
         data_phase = Signal()
-        if debug:
+        if debug and not burst:
             debug_bridge = USBWishboneBridge(usb_core, cdc=cdc, relax_timing=relax_timing)
+            self.submodules.debug_bridge = debug_bridge
+            self.comb += [
+                data_phase.eq(self.debug_bridge.data_phase),
+                debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
+                debug_sink_data.eq(self.debug_bridge.sink_data),
+                debug_sink_data_ready.eq(self.debug_bridge.sink_valid),
+                debug_ack_response.eq(self.debug_bridge.send_ack | self.debug_bridge.sink_valid),
+            ]
+        elif debug and burst:
+            debug_bridge = USBWishboneBurstBridge(usb_core)
             self.submodules.debug_bridge = debug_bridge
             self.comb += [
                 data_phase.eq(self.debug_bridge.data_phase),
