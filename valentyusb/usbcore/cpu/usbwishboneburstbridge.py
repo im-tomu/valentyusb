@@ -119,8 +119,8 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         self.length = length = Signal(16, reset_less=True)
         length_ce = Signal()
 
-        self.data = data = Signal(32, reset_less=True)
-        self.rd_data = rd_data = Signal(32, reset_less=True)
+        self.data = data = Signal(32)
+        self.rd_data = Signal(32)
         rx_data_ce = Signal()
 
         # wishbone_response = Signal(32, reset_less=True)
@@ -152,7 +152,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         self.comb += [
             # clk12 domain
             self.write_fifo.din.eq(data),      # data coming from USB interface
-            rd_data.eq(self.read_fifo.dout),  # data going to USB interface
+            self.rd_data.eq(self.read_fifo.dout),  # data going to USB interface
             # sys domain
             self.read_fifo.din.eq(self.wishbone.dat_r),
             self.wishbone.dat_w.eq(self.write_fifo.dout),
@@ -399,7 +399,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         self.comb += \
-            chooser(rd_data, byte_counter[0:2], self.sink_data, n=4, reverse=False)
+            chooser(self.rd_data, byte_counter[0:2], self.sink_data, n=4, reverse=False)
         fsm.act("SEND_DATA",
             self.n_debug_in_progress.eq(0),
             If(usb_core.endp != 0,
