@@ -70,7 +70,7 @@ class USBWishboneBridge(Module, AutoDoc):
         """)
         # # #
 
-        byte_counter = Signal(17, reset_less=True) # up to 64k + 1
+        byte_counter = Signal(3, reset_less=True)
         byte_counter_reset = Signal()
         byte_counter_ce = Signal()
         self.sync.usb_12 += \
@@ -80,24 +80,13 @@ class USBWishboneBridge(Module, AutoDoc):
                 byte_counter.eq(byte_counter + 1)
             )
 
-        burst_counter = Signal(7, reset_less=True) # up to 64 + 1
-        burst_counter_ce = Signal()
-        self.sync.usb_12 += \
-            If(usb_core.start,
-                burst_counter.eq(0)
-            ).Elif(burst_counter_ce,
-                burst_counter.eq(burst_counter + 1)
-            )
-
         # Unlike the UART or Ethernet bridges, we explicitly only
         # support two commands: reading and writing.  This gets
         # integrated into the USB protocol, so it's not really a
         # state.  1 is "USB Device to Host", and is therefore a "read",
         # while 0 is "USB Host to Device", and is therefore a "write".
-        self.cmd = cmd = Signal(1, reset_less=True)
+        cmd = Signal(1, reset_less=True)
         cmd_ce = Signal()
-
-        self.data_phase = Signal()
 
         # Add a bridge to allow this module (in the usb_12 domain) to access
         # the main Wishbone bridge (potentially in some other domain).
@@ -111,7 +100,7 @@ class USBWishboneBridge(Module, AutoDoc):
             self.submodules.wb_to_uwb = wb_to_usb = PulseSynchronizer("sys", "usb_12")
             send_to_wishbone = usb_to_wb.i
             reply_from_wishbone = wb_to_usb.o
-            self.cmd_sync = cmd_sync = Signal()
+            cmd_sync = Signal()
             self.specials += MultiReg(cmd, cmd_sync)
         else:
             self.comb += [
@@ -135,26 +124,17 @@ class USBWishboneBridge(Module, AutoDoc):
         # Indicates whether a "debug" packet is currently being processed
         self.n_debug_in_progress = Signal(reset=1)
 
-        self.address = address = Signal(32, reset_less=True)
+        address = Signal(32, reset_less=True)
         address_ce = Signal()
-        address_inc = Signal()
 
-        self.length = length = Signal(16, reset_less=True)
-        length_ce = Signal()
-
-        self.data = data = Signal(32, reset_less=True)
-        self.rd_data = rd_data = Signal(32, reset_less=True)
+        data = Signal(32, reset_less=True)
+        rd_data = Signal(32, reset_less=True)
         rx_data_ce = Signal()
 
         # wishbone_response = Signal(32, reset_less=True)
         self.sync.usb_12 += [
             If(cmd_ce, cmd.eq(usb_core.data_recv_payload[7:8])),
-            If(address_ce,
-                address.eq(Cat(address[8:32], usb_core.data_recv_payload)),
-            ).Elif(address_inc,
-                address.eq(address + 4),
-            ),
-            If(length_ce, length.eq(Cat(length[8:16],usb_core.data_recv_payload))),
+            If(address_ce, address.eq(Cat(address[8:32], usb_core.data_recv_payload))),
             If(rx_data_ce,
                 data.eq(Cat(data[8:32], usb_core.data_recv_payload))
             )
@@ -164,7 +144,7 @@ class USBWishboneBridge(Module, AutoDoc):
         # changes often.  Capture our own copy of this data when a wishbone ACK
         # occurs.
         if cdc:
-            self.rd_data_sys = rd_data_sys = Signal(32, reset_less=True)
+            rd_data_sys = Signal(32, reset_less=True)
             self.sync.sys += [
                 If(self.wishbone.ack,
                     rd_data_sys.eq(self.wishbone.dat_r)
@@ -180,13 +160,10 @@ class USBWishboneBridge(Module, AutoDoc):
                 )
             ]
 
-        not_first_byte=Signal()
-        
+
         fsm = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
         self.submodules += fsm
         fsm.act("IDLE",
-            NextValue(not_first_byte, 0),
-            NextValue(self.data_phase, 0),
             self.n_debug_in_progress.eq(1),
             If(usb_core.data_recv_put,
                 If(usb_core.tok == PID.SETUP,
@@ -216,9 +193,7 @@ class USBWishboneBridge(Module, AutoDoc):
                 If((byte_counter >= 1),
                     If((byte_counter <= 4),
                         address_ce.eq(1),
-                    ).Elif((byte_counter <= 6),
-                        length_ce.eq(1),
-                    )
+                    ),
                 ),
             ),
             # We don't need to explicitly ACK the SETUP packet, because
@@ -245,20 +220,12 @@ class USBWishboneBridge(Module, AutoDoc):
             If(usb_core.endp == 0,
                 If(usb_core.data_recv_put,
                     rx_data_ce.eq(1),
-                    If(burst_counter < 64,
-                       byte_counter_ce.eq(1),
-                    ),
-                    burst_counter_ce.eq(1),
-                    If((burst_counter <= 64) & ((burst_counter & 3) == 0) & (burst_counter != 0),
-                       address_inc.eq(1),
-                    ),
-                    If(byte_counter == (length - 1) | (((byte_counter & 0x3F) == 0x3F) & not_first_byte),
+                    byte_counter_ce.eq(1),
+                    If(byte_counter == 3,
                         NextState("WAIT_RECEIVE_DATA_END"),
                     ).Elif(usb_core.end,
                         send_to_wishbone.eq(1),
                         NextState("WRITE_DATA"),
-                    ).Elif((byte_counter & 3) == 3,
-                        send_to_wishbone.eq(1),
                     )
                 )
             )
@@ -274,40 +241,6 @@ class USBWishboneBridge(Module, AutoDoc):
             )
         )
 
-        fsm.act("WRITE_DATA",
-            self.n_debug_in_progress.eq(0),
-            transfer_active.eq(1),
-            If(reply_from_wishbone,
-                NextState("WAIT_SEND_ACK_START_WRITE"),
-            )
-        )
-
-        fsm.act("WAIT_SEND_ACK_START_WRITE",
-            self.n_debug_in_progress.eq(0),
-            If(usb_core.start,
-               NextState("SEND_ACK_WRITE")
-            ),
-        )
-
-        # Send the ACK.  If the endpoint number is incorrect, go back and
-        # wait again.
-        fsm.act("SEND_ACK_WRITE",
-            self.n_debug_in_progress.eq(0),
-            If(usb_core.endp != 0,
-                NextState("WAIT_SEND_ACK_START")
-            ),
-            self.send_ack.eq(usb_core.endp == 0),
-            If(usb_core.end,
-               If( byte_counter != length, 
-                   NextValue(not_first_byte, 0),
-                   NextValue(self.data_phase, ~self.data_phase),
-                   NextState("RECEIVE_DATA"),
-                ).Else(
-                   NextState("IDLE"),
-                )
-            ),
-        )
-        
         if cdc:
             wb_cd_bridge.act("IDLE",
                 If(usb_to_wb.o,
@@ -330,54 +263,51 @@ class USBWishboneBridge(Module, AutoDoc):
         addr_to_wishbone = [
             self.wishbone.adr.eq(address[2:]),
             self.wishbone.dat_w.eq(data),
-            self.wishbone.sel.eq(2**len(self.wishbone.sel) - 1),
+            self.wishbone.sel.eq(2**len(self.wishbone.sel) - 1)
         ]
         if relax_timing:
             self.sync += addr_to_wishbone
         else:
             self.comb += addr_to_wishbone
 
+        fsm.act("WRITE_DATA",
+            self.n_debug_in_progress.eq(0),
+            transfer_active.eq(1),
+            If(reply_from_wishbone,
+                NextState("WAIT_SEND_ACK_START"),
+            )
+        )
+
         fsm.act("READ_DATA",
             self.n_debug_in_progress.eq(0),
             transfer_active.eq(1),
             If(reply_from_wishbone,
-                NextState("SEND_DATA_WAIT_START"),
+                NextState("SEND_DATA_WAIT_START")
             )
         )
 
         fsm.act("SEND_DATA_WAIT_START",
             self.n_debug_in_progress.eq(0),
+            byte_counter_reset.eq(1),
             If(usb_core.start,
                 NextState("SEND_DATA"),
             ),
         )
-        fsm.act("SEND_DATA_BURST_WAIT",
-            self.n_debug_in_progress.eq(0),
-            self.sink_valid.eq(usb_core.endp == 0),
-            If(reply_from_wishbone,
-               NextState("SEND_DATA"),
-            )
-        )
         self.comb += \
-            chooser(rd_data, byte_counter[0:2], self.sink_data, n=4, reverse=False)
+            chooser(rd_data, byte_counter, self.sink_data, n=4, reverse=False)
         fsm.act("SEND_DATA",
             self.n_debug_in_progress.eq(0),
             If(usb_core.endp != 0,
                 NextState("SEND_DATA_WAIT_START"),
             ),
+
             # Keep sink_valid high during the packet, which indicates we have data
             # to send.  This also causes an "ACK" to be transmitted.
             self.sink_valid.eq(usb_core.endp == 0),
             If(usb_core.data_send_get,
-                NextValue(not_first_byte, 1),
                 byte_counter_ce.eq(1),
-                If( ((byte_counter & 3) == 3) & ((byte_counter + 1) != length),
-                    send_to_wishbone.eq(1),
-                    address_inc.eq(1),
-                    NextState("SEND_DATA_BURST_WAIT"),
-                )
             ),
-            If( (byte_counter == length) | (((byte_counter & 0x3F) == 0x00) & not_first_byte),
+            If(byte_counter == 4,
                 NextState("WAIT_SEND_ACK_START")
             ),
             If(usb_core.end,
@@ -391,15 +321,7 @@ class USBWishboneBridge(Module, AutoDoc):
         fsm.act("WAIT_SEND_ACK_START",
             self.n_debug_in_progress.eq(0),
             If(usb_core.start,
-               NextState("SEND_ACK")
-            ),
-            If(usb_core.end & (byte_counter != length),
-               #byte_counter_ce.eq(1),
-               send_to_wishbone.eq(1),
-               #address_inc.eq(1),
-               NextValue(not_first_byte, 0),
-               NextValue(self.data_phase, ~self.data_phase),
-               NextState("READ_DATA"),
+                NextState("SEND_ACK")
             ),
         )
 
