@@ -166,10 +166,9 @@ class USBWishboneBurstBridge(Module, AutoDoc):
 
         self.burstcount = Signal(16)
         addr_to_wb = Signal(32)
-        self.comb += [
-            addr_to_wb.eq(self.address_synchronizer.o + self.burstcount),
-            self.wishbone.adr.eq(addr_to_wb[2:])
-        ]
+        self.sync += addr_to_wb.eq(self.address_synchronizer.o + self.burstcount) # must register this to meet timing
+        self.comb += self.wishbone.adr.eq(addr_to_wb[2:])
+        
         wbmanager = FSM(reset_state="IDLE") # in sys domain
         self.submodules += wbmanager
         wbmanager.act("IDLE",
@@ -205,8 +204,12 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             If(self.wishbone.ack | self.wishbone.err,
                 self.read_fifo.we.eq(1),
                 NextValue(self.burstcount, self.burstcount + 4),
-                NextState("READER"),
+                NextState("READER_ADDR_WAIT"),
             )
+        )
+        wbmanager.act("READER_ADDR_WAIT",
+                # one cycle dead state to allow the burst count address to propagate
+                NextState("READER")
         )
         wbmanager.act("WRITER",
             If(self.burstcount < self.length_sys,
