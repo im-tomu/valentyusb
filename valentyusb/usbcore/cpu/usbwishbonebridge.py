@@ -69,6 +69,8 @@ class USBWishboneBridge(Module, AutoDoc):
                 ]}
         """)
         # # #
+        self.data_phase = Signal()
+        self.comb += self.data_phase.eq(0)  # unused tiedown in this core; used in variants with burst support
 
         byte_counter = Signal(3, reset_less=True)
         byte_counter_reset = Signal()
