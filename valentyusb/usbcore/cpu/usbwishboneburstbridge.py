@@ -182,7 +182,7 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         wb_cyc = Signal()
-        self.comb += self.wishbone.cyc.eq(wb_cyc & ~(self.wishbone.ack | self.wishbone.err))
+        self.comb += self.wishbone.cyc.eq(wb_cyc) # & ~(self.wishbone.ack | self.wishbone.err))
         wbmanager.act("READER",
             If(self.burstcount < self.length_sys,
                 If(self.read_fifo.writable,
