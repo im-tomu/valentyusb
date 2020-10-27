@@ -18,6 +18,7 @@ from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
 from ..sm.transfer import UsbTransfer
 from .usbwishbonebridge import USBWishboneBridge
+from .usbwishboneburstbridge import USBWishboneBurstBridge
 
 """
 Register Interface:
@@ -89,7 +90,7 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         master for you to connect to your desired Wishbone bus.
     """
 
-    def __init__(self, iobuf, debug=False, cdc=False, relax_timing=False):
+    def __init__(self, iobuf, debug=False, burst=False, cdc=False, relax_timing=False):
 
         self.background = ModuleDoc(title="USB Device Tri-FIFO", body="""
             This is a three-FIFO USB device.  It presents one FIFO each for ``IN``, ``OUT``, and
@@ -218,14 +219,22 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
 
         # Generate debug signals, in case debug is enabled.
         debug_packet_detected = Signal()
+        debug_phase = Signal()
 
         # Wire up debug signals if required
-        if debug:
+        if debug and not burst:
             self.submodules.debug_bridge = debug_bridge = USBWishboneBridge(self.usb_core,
                                                                             cdc=cdc,
                                                                             relax_timing=relax_timing)
             self.comb += [
                 debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
+                debug_phase.eq(self.debug_bridge.data_phase),
+            ]
+        elif debug and burst:
+            self.submodules.debug_bridge = debug_bridge = USBWishboneBurstBridge(self.usb_core)
+            self.comb += [
+                debug_packet_detected.eq(~self.debug_bridge.n_debug_in_progress),
+                debug_phase.eq(self.debug_bridge.data_phase),
             ]
 
         ems = []
@@ -307,9 +316,21 @@ class TriEndpointInterface(Module, AutoCSR, AutoDoc):
         # If a debug packet comes in, the DTB should be 1.  Otherwise, the DTB should
         # be whatever the in_handler says it is.
         if cdc:
-            self.comb += usb_core.dtb.eq(in_handler.dtb_12 | debug_packet_detected)
+            self.comb += [
+                If(debug_packet_detected,
+                   usb_core.dtb.eq( 1 ^ debug_phase ),
+                ).Else(
+                    usb_core.dtb.eq(in_handler.dtb_12),
+                )
+            ]
         else:
-            self.comb += usb_core.dtb.eq(in_handler.dtb | debug_packet_detected)
+            self.comb += [
+                If(debug_packet_detected,
+                   usb_core.dtb.eq( 1 ^ debug_phase ),
+                ).Else(
+                    usb_core.dtb.eq(in_handler.dtb),
+                )
+            ]
         usb_core_reset = Signal()
 
         self.submodules.stage = stage = ResetInserter()(ClockDomainsRenamer("usb_12")(FSM(reset_state="IDLE")))
