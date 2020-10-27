@@ -182,16 +182,13 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         wb_cyc = Signal()
-        self.comb += self.wishbone.cyc.eq(wb_cyc) # & ~(self.wishbone.ack | self.wishbone.err))
+        self.comb += self.wishbone.cyc.eq(wb_cyc) # & ~(self.wishbone.ack | self.wishbone.err)) # not needed, but a reminder
         wbmanager.act("READER",
             If(self.burstcount < self.length_sys,
                 If(self.read_fifo.writable,
                     NextValue(self.wishbone.stb, 1),
                     NextValue(self.wishbone.we, 0),
                     NextValue(wb_cyc, 1),
-                    #self.wishbone.stb.eq(1),
-                    #self.wishbone.we.eq(0),
-                    #self.wishbone.cyc.eq(1),
                     NextState("READER_WAIT")
                 )
             ).Else(
@@ -199,10 +196,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         wbmanager.act("READER_WAIT",
-            # self.wishbone.stb.eq(1),
-            # self.wishbone.we.eq(0),
-            # self.wishbone.cyc.eq(1),
-
             If(self.wishbone.ack | self.wishbone.err,
                 NextValue(self.wishbone.stb, 0),
                 NextValue(wb_cyc, 0),
@@ -221,9 +214,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                     NextValue(self.wishbone.stb, 1),
                     NextValue(self.wishbone.we, 1),
                     NextValue(wb_cyc, 1),
-                    # self.wishbone.stb.eq(1),
-                    # self.wishbone.we.eq(1),
-                    # self.wishbone.cyc.eq(1),
                     NextState("WRITER_WAIT"),
                 )
             ).Else(
@@ -231,10 +221,6 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         wbmanager.act("WRITER_WAIT",
-            # self.wishbone.stb.eq(1),
-            # self.wishbone.we.eq(1),
-            # self.wishbone.cyc.eq(1),
-
             If(self.wishbone.ack | self.wishbone.err,
                 NextValue(self.wishbone.stb, 0),
                 NextValue(self.wishbone.we, 0),
