@@ -123,14 +123,11 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         self.rd_data = Signal(32)
         rx_data_ce = Signal()
 
-        # wishbone_response = Signal(32, reset_less=True)
         self.sync.usb_12 += [
             If(cmd_ce, cmd.eq(usb_core.data_recv_payload[7:8])),
             If(address_ce,
                 address.eq(Cat(address[8:32], usb_core.data_recv_payload)),
-            ),#.Elif(address_inc,
-            #    address.eq(address + 4),
-            #),
+            ),
             If(length_ce, length.eq(Cat(length[8:16],usb_core.data_recv_payload))),
             If(rx_data_ce,
                 data.eq(Cat(data[8:32], usb_core.data_recv_payload))
@@ -168,7 +165,9 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         addr_to_wb = Signal(32)
         self.sync += addr_to_wb.eq(self.address_synchronizer.o + self.burstcount) # must register this to meet timing
         self.comb += self.wishbone.adr.eq(addr_to_wb[2:])
-        
+
+        self.comb += self.wishbone.cti.eq(0),  # classic cycle
+
         wbmanager = FSM(reset_state="IDLE") # in sys domain
         self.submodules += wbmanager
         wbmanager.act("IDLE",
@@ -182,13 +181,14 @@ class USBWishboneBurstBridge(Module, AutoDoc):
                 self.write_fifo.re.eq(1),
             )
         )
+        wb_cyc = Signal()
+        self.comb += self.wishbone.cyc.eq(wb_cyc) # & ~(self.wishbone.ack | self.wishbone.err)) # not needed, but a reminder
         wbmanager.act("READER",
             If(self.burstcount < self.length_sys,
                 If(self.read_fifo.writable,
-                    self.wishbone.stb.eq(1),
-                    self.wishbone.we.eq(0),
-                    self.wishbone.cyc.eq(1),
-                    self.wishbone.cti.eq(0),  # classic cycle
+                    NextValue(self.wishbone.stb, 1),
+                    NextValue(self.wishbone.we, 0),
+                    NextValue(wb_cyc, 1),
                     NextState("READER_WAIT")
                 )
             ).Else(
@@ -196,12 +196,9 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         wbmanager.act("READER_WAIT",
-            self.wishbone.stb.eq(1),
-            self.wishbone.we.eq(0),
-            self.wishbone.cyc.eq(1),
-            self.wishbone.cti.eq(0),  # classic cycle
-
             If(self.wishbone.ack | self.wishbone.err,
+                NextValue(self.wishbone.stb, 0),
+                NextValue(wb_cyc, 0),
                 self.read_fifo.we.eq(1),
                 NextValue(self.burstcount, self.burstcount + 4),
                 NextState("READER_ADDR_WAIT"),
@@ -214,10 +211,9 @@ class USBWishboneBurstBridge(Module, AutoDoc):
         wbmanager.act("WRITER",
             If(self.burstcount < self.length_sys,
                 If(self.write_fifo.readable,
-                    self.wishbone.stb.eq(1),
-                    self.wishbone.we.eq(1),
-                    self.wishbone.cyc.eq(1),
-                    self.wishbone.cti.eq(0),  # classic cycle
+                    NextValue(self.wishbone.stb, 1),
+                    NextValue(self.wishbone.we, 1),
+                    NextValue(wb_cyc, 1),
                     NextState("WRITER_WAIT"),
                 )
             ).Else(
@@ -225,12 +221,10 @@ class USBWishboneBurstBridge(Module, AutoDoc):
             )
         )
         wbmanager.act("WRITER_WAIT",
-            self.wishbone.stb.eq(1),
-            self.wishbone.we.eq(1),
-            self.wishbone.cyc.eq(1),
-            self.wishbone.cti.eq(0),  # classic cycle
-                      
             If(self.wishbone.ack | self.wishbone.err,
+                NextValue(self.wishbone.stb, 0),
+                NextValue(self.wishbone.we, 0),
+                NextValue(wb_cyc, 0),
                 self.write_fifo.re.eq(1),
                 NextValue(self.burstcount, self.burstcount + 4),
                 NextState("WRITER")
