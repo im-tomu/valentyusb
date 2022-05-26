@@ -19,6 +19,7 @@ class IoBuf(Module):
 
         self.usb_p_rx = Signal()
         self.usb_n_rx = Signal()
+        self.usb_ls_rx = Signal()
 
         self.usb_p_rx_io = Signal()
         self.usb_n_rx_io = Signal()
@@ -50,6 +51,9 @@ class IoBuf(Module):
             If(self.usb_tx_en,
                 self.usb_p_rx.eq(0b1),
                 self.usb_n_rx.eq(0b0),
+            ).Elif(self.usb_ls_rx,
+                self.usb_p_rx.eq(usb_n_t_i),
+                self.usb_n_rx.eq(usb_p_t_i),
             ).Else(
                 self.usb_p_rx.eq(usb_p_t_i),
                 self.usb_n_rx.eq(usb_n_t_i),

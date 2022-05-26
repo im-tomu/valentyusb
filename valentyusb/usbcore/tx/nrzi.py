@@ -39,6 +39,10 @@ class TxNRZIEncoder(Module):
         Overrides value of o_data when asserted and indicates that SE0 state
         should be asserted on USB. Qualified by o_valid.
 
+    i_low_speed : Signal(1)
+        Indicates that low speed encoding of J and K should be used.
+
+
     Output Ports
     ------------
     o_usbp : Signal(1)
@@ -55,6 +59,7 @@ class TxNRZIEncoder(Module):
         self.i_valid = Signal()
         self.i_oe = Signal()
         self.i_data = Signal()
+        self.i_low_speed = Signal()
 
         # Simple state machine to perform NRZI encoding.
         self.submodules.nrzi = nrzi = FSM()
@@ -151,6 +156,6 @@ class TxNRZIEncoder(Module):
 
         self.sync += [
             self.o_oe.eq(oe),
-            self.o_usbp.eq(usbp),
-            self.o_usbn.eq(usbn),
+            self.o_usbp.eq(Mux(self.i_low_speed, usbn, usbp)),
+            self.o_usbn.eq(Mux(self.i_low_speed, usbp, usbn)),
         ]

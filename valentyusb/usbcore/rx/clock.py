@@ -52,7 +52,7 @@ class RxClockDataRecovery(Module):
         Represents SE1 on the incoming USB data pair.
         Qualify with line_state_valid.
     """
-    def __init__(self, usbp_raw, usbn_raw):
+    def __init__(self, usbp_raw, usbn_raw, low_speed=None):
         if False:
             #######################################################################
             # Synchronize raw USB signals
@@ -133,7 +133,7 @@ class RxClockDataRecovery(Module):
 
         # We 4x oversample, so make the line_state_phase have
         # 4 possible values.
-        line_state_phase = Signal(2)
+        line_state_phase = Signal(2 if low_speed is None else 5)
 
         self.line_state_valid = Signal()
         self.line_state_dj = Signal()
@@ -150,6 +150,10 @@ class RxClockDataRecovery(Module):
 
                 # make sure we never assert valid on a transition
                 self.line_state_valid.eq(0),
+            ).Elif(low_speed is not None and ~low_speed,
+                # keep tracking the clock by incrementing the phase
+		# (with a reduced period for full speed mode)
+                line_state_phase.eq((line_state_phase + 1) & 3),
             ).Else(
                 # keep tracking the clock by incrementing the phase
                 line_state_phase.eq(line_state_phase + 1)
