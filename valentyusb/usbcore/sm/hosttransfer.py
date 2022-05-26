@@ -6,7 +6,6 @@ from migen.genlib.cdc import MultiReg
 
 from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
-from ..rx.speed_detect import RxSpeedDetect
 from ..rx.pipeline import RxPipeline
 from ..tx.pipeline import TxPipeline
 from ..sm.header import PacketHeaderDecode

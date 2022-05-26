@@ -16,7 +16,7 @@ from litex.soc.cores.gpio import GPIOOut
 from ..endpoint import EndpointType, EndpointResponse
 from ..pid import PID, PIDTypes
 from ..sm.hosttransfer import UsbHostTransfer
-from ..rx.speed_detect import RxSpeedDetect
+from ..rx.pullup_detect import RxPullUpDetect
 
 """
 Register Interface:
@@ -40,8 +40,8 @@ class SimpleHostUsb(Module, AutoCSR, AutoDoc):
         self.submodules.transfer = transfer = TransferHandler(usb_core, cdc=cdc)
         ems.append(transfer.ev)
 
-        self.submodules.speed_detect = speed_detect = SpeedDetector(usb_core, cdc=cdc)
-        ems.append(speed_detect.ev)
+        self.submodules.pullup_detect = pullup_detect = PullUpDetector(usb_core, cdc=cdc)
+        ems.append(pullup_detect.ev)
 
         self.submodules.ev = ev.SharedIRQ(*ems)
 
@@ -272,35 +272,35 @@ class TransferHandler(Module, AutoCSR):
                 ) for f in cmd.fields.fields
             ]
 
-class SpeedDetector(Module, AutoCSR):
+class PullUpDetector(Module, AutoCSR):
 
     def __init__(self, usb_core, cdc=False):
-        speed_detect = RxSpeedDetect()
-        self.submodules.speed_detect = speed_detect = ClockDomainsRenamer("usb_48")(speed_detect)
-        ls_detect = Signal()
-        fs_detect = Signal()
-        self.speed = CSRStatus(
+        pullup_detect = RxPullUpDetect()
+        self.submodules.pullup_detect = pullup_detect = ClockDomainsRenamer("usb_48")(pullup_detect)
+        j_pullup_detect = Signal()
+        k_pullup_detect = Signal()
+        self.pullup = CSRStatus(
             fields=[
-                CSRField("low_speed", 1, description="``1`` if a low speed device is detected"),
-                CSRField("full_speed", 1, description="``1`` if a full speed device is detected")
+                CSRField("j", 1, description="``1`` if a pull-up to state J is detected"),
+                CSRField("k", 1, description="``1`` if a pull-up to state K is detected")
             ])
         self.specials += [
-            MultiReg(speed_detect.o_ls_detect, ls_detect),
-            MultiReg(speed_detect.o_fs_detect, fs_detect),
+            MultiReg(pullup_detect.o_j_pullup_detect, j_pullup_detect),
+            MultiReg(pullup_detect.o_k_pullup_detect, k_pullup_detect),
         ]
         self.comb += [
-            speed_detect.i_d_p.eq(usb_core.iobuf.usb_p_rx),
-            speed_detect.i_d_n.eq(usb_core.iobuf.usb_n_rx),
-            speed_detect.i_tx_en.eq(usb_core.tx.o_oe)
+            pullup_detect.i_d_p.eq(usb_core.iobuf.usb_p_rx),
+            pullup_detect.i_d_n.eq(usb_core.iobuf.usb_n_rx),
+            pullup_detect.i_tx_en.eq(usb_core.tx.o_oe)
         ]
         self.sync += [
-            self.speed.fields.low_speed.eq(ls_detect),
-            self.speed.fields.full_speed.eq(fs_detect),
+            self.pullup.fields.j.eq(j_pullup_detect),
+            self.pullup.fields.k.eq(k_pullup_detect),
         ]
         self.submodules.ev = ev.EventManager()
-        self.ev.submodules.speed_change = ev.EventSourcePulse(name="speed_change")
+        self.ev.submodules.pullup_change = ev.EventSourcePulse(name="pullup_change")
         self.ev.finalize()
         self.comb += [
-            self.ev.speed_change.trigger.eq((self.speed.fields.low_speed ^ ls_detect) |
-                                            (self.speed.fields.full_speed ^ fs_detect))
+            self.ev.pullup_change.trigger.eq((self.pullup.fields.j ^ j_pullup_detect) |
+                                             (self.pullup.fields.k ^ k_pullup_detect))
         ]
