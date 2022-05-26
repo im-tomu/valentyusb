@@ -14,13 +14,13 @@ from ..sm.send import TxPacketSend
 
 class UsbHostTransfer(Module):
 
-    def __init__(self, iobuf, auto_crc=True, cdc=False):
+    def __init__(self, iobuf, auto_crc=True, cdc=False, low_speed_support=False):
         self.submodules.iobuf = iobuf = ClockDomainsRenamer("usb_48")(iobuf)
         if iobuf.usb_pullup is not None:
             self.comb += iobuf.usb_pullup.eq(0)
-        self.submodules.tx = tx = TxPipeline()
+        self.submodules.tx = tx = TxPipeline(low_speed_support=low_speed_support)
         self.submodules.txstate = txstate = TxPacketSend(tx, auto_crc=auto_crc, token_support=True)
-        self.submodules.rx = rx = RxPipeline()
+        self.submodules.rx = rx = RxPipeline(low_speed_support=low_speed_support)
         self.submodules.rxstate = rxstate = PacketHeaderDecode(rx)
         self.comb += [
             tx.i_bit_strobe.eq(rx.o_bit_strobe),
@@ -68,9 +68,21 @@ class UsbHostTransfer(Module):
         reset_out = Signal()
         self.specials += MultiReg(self.i_reset, reset_out, odomain="usb_48")
 
+        if low_speed_support:
+            self.i_low_speed = Signal()
+            low_speed = Signal()
+            self.comb += [
+                low_speed.eq(self.i_low_speed | low_speed_override),
+                rx.i_low_speed.eq(low_speed),
+                tx.i_low_speed.eq(low_speed),
+            ]
+        else:
+            low_speed = 0
+
         self.comb += [
             rx.i_usbp.eq(iobuf.usb_p_rx),
             rx.i_usbn.eq(iobuf.usb_n_rx),
+            iobuf.usb_ls_rx.eq(low_speed),
             iobuf.usb_tx_en.eq(tx.o_oe | reset_out),
             iobuf.usb_p_tx.eq(tx.o_usbp & ~reset_out),
             iobuf.usb_n_tx.eq(tx.o_usbn & ~reset_out),
@@ -164,12 +176,19 @@ class UsbHostTransfer(Module):
         fsm.act('RECV_DATA',
                 self.data_recv_put.eq(rx.o_data_strobe),
                 If(rx.o_pkt_end,
-                   # FIXME: Discard if CRC16 is incorrect
-                   self.o_got_data0.eq(rxstate.o_pid == PID.DATA0),
-                   self.o_got_data1.eq(rxstate.o_pid == PID.DATA1),
-                   If (cmd_iso,
-                      NextState('IDLE')
-                   ).Else (NextState('ACK'))))
+                   If (True,
+                      NextState('END_DATA_LS')
+                   ).Else (NextState('END_DATA'))))
+
+        fsm.delayed_enter('END_DATA_LS', 'END_DATA', 8)
+
+        fsm.act('END_DATA',
+                # FIXME: Discard if CRC16 is incorrect
+                self.o_got_data0.eq(rxstate.o_pid == PID.DATA0),
+                self.o_got_data1.eq(rxstate.o_pid == PID.DATA1),
+                If (cmd_iso,
+                    NextState('IDLE')
+                ).Else (NextState('ACK')))
 
         fsm.act('ACK',
                 txstate.i_pkt_start.eq(1),

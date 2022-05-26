@@ -29,7 +29,7 @@ class SimpleHostUsb(Module, AutoCSR, AutoDoc):
 
     def __init__(self, iobuf, cdc=False):
         # USB Core
-        self.submodules.usb_core = usb_core = UsbHostTransfer(iobuf, cdc=cdc)
+        self.submodules.usb_core = usb_core = UsbHostTransfer(iobuf, cdc=cdc, low_speed_support=True)
         self.iobuf = iobuf = usb_core.iobuf
 
         ems = []
@@ -45,13 +45,20 @@ class SimpleHostUsb(Module, AutoCSR, AutoDoc):
 
         self.submodules.ev = ev.SharedIRQ(*ems)
 
-        self.reset = CSRStorage(
-            fields=[CSRField("reset", 1, description="Set to ``1`` to reset the USB bus.")])
+        self.ctrl = CSRStorage(
+            fields=[CSRField("reset", 1, description="Set to ``1`` to reset the USB bus."),
+                    CSRField("low_speed", 1, description="Set to ``1`` to switch root port to low speed mode.")])
 
         if cdc:
-            self.specials += MultiReg(self.reset.fields.reset, self.usb_core.i_reset, odomain="usb_12")
+            self.specials += [
+                MultiReg(self.ctrl.fields.reset, self.usb_core.i_reset, odomain="usb_12"),
+                MultiReg(self.ctrl.fields.low_speed, self.usb_core.i_low_speed, odomain="usb_12"),
+            ]
         else:
-            self.comb += self.crc_core.i_reset.eq(self.reset.fields.reset)
+            self.comb += [
+                self.crc_core.i_reset.eq(self.ctrl.fields.reset),
+                self.crc_core.i_low_speed.eq(self.ctrl.fields.low_speed),
+            ]
 
         self.comb += [
             transfer.data_out_advance.eq(usb_core.data_send_get),
