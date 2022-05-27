@@ -24,6 +24,7 @@ class TxPipeline(Module):
 
         if low_speed_support:
             self.i_low_speed = Signal()
+            self.i_keepalive = Signal()
 
         self.o_usbp = Signal()
         self.o_usbn = Signal()
@@ -171,7 +172,8 @@ class TxPipeline(Module):
         self.specials += [cdc_dat, cdc_oe]
         if low_speed_support:
             cdc_low_speed = cdc.MultiReg(self.i_low_speed, nrzi.i_low_speed, odomain="usb_48", n=3)
-            self.specials += cdc_low_speed
+            cdc_keepalive = cdc.MultiReg(self.i_keepalive, nrzi.i_keepalive, odomain="usb_48", n=3)
+            self.specials += [cdc_low_speed, cdc_keepalive]
 
         self.comb += [
             nrzi.i_valid.eq(self.i_bit_strobe),

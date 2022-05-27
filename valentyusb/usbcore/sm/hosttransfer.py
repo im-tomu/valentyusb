@@ -96,7 +96,9 @@ class UsbHostTransfer(Module):
         fsm.act('IDLE',
                 NextValue(low_speed_override, 0),
                 If (sof_latch,
-                   NextState('SOF')
+                    If (low_speed,
+                        NextState('KA' if low_speed_support else 'SOF')
+                    ).Else (NextState('SOF'))
                 ).Elif (self.i_cmd_setup | self.i_cmd_in | self.i_cmd_out,
                    If (self.i_cmd_pre,
                        NextState('PREAMBLE')
@@ -194,6 +196,19 @@ class UsbHostTransfer(Module):
                 txstate.i_pid.eq(PID.ACK),
                 If (txstate.o_pkt_end,
                     NextState('IDLE')))
+
+        if low_speed_support:
+            fsm.act('KA',
+                    NextValue(tx.i_keepalive, 1),
+                    NextState('KA_WAIT1'))
+            fsm.delayed_enter('KA_WAIT1', 'KA_MID', 10)
+            fsm.act('KA_MID',
+                    NextValue(tx.i_keepalive, 0),
+                    NextState('KA_WAIT2'))
+            fsm.delayed_enter('KA_WAIT2', 'KA_END', 10)
+            fsm.act('KA_END',
+                    NextValue(sof_latch, 0),
+                    NextState('IDLE'))
 
         self.comb += [
             self.data_recv_payload.eq(rx.o_data_payload),

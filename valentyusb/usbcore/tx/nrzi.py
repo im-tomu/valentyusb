@@ -35,9 +35,9 @@ class TxNRZIEncoder(Module):
     i_data : Signal(1)
         Data bit to be transmitted on USB. Qualified by o_valid.
 
-    i_se0 : Signal(1)
-        Overrides value of o_data when asserted and indicates that SE0 state
-        should be asserted on USB. Qualified by o_valid.
+    i_keepalive : Signal(1)
+        Send a keepalive signal consisting of two SE0 bits.
+        Qualified by o_valid.
 
     i_low_speed : Signal(1)
         Indicates that low speed encoding of J and K should be used.
@@ -59,6 +59,7 @@ class TxNRZIEncoder(Module):
         self.i_valid = Signal()
         self.i_oe = Signal()
         self.i_data = Signal()
+        self.i_keepalive = Signal()
         self.i_low_speed = Signal()
 
         # Simple state machine to perform NRZI encoding.
@@ -79,7 +80,9 @@ class TxNRZIEncoder(Module):
                     # first bit of sync always forces a transition, we idle
                     # in J so the first output bit is K.
                     NextState("DK")
-                )
+                ).Elif(self.i_keepalive,
+                    NextState("SE0A")
+		)
             )
         )
 
