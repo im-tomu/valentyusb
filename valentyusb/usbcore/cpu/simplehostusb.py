@@ -47,17 +47,22 @@ class SimpleHostUsb(Module, AutoCSR, AutoDoc):
 
         self.ctrl = CSRStorage(
             fields=[CSRField("reset", 1, description="Set to ``1`` to reset the USB bus."),
-                    CSRField("low_speed", 1, description="Set to ``1`` to switch root port to low speed mode.")])
+                    CSRField("low_speed", 1, description="Set to ``1`` to switch root port to low speed mode."),
+                    CSRField("sof_enable", 1, description="Set to ``1`` to enable transmission of SOF packets.")])
+
+        sof_enabled = Signal()
 
         if cdc:
             self.specials += [
                 MultiReg(self.ctrl.fields.reset, self.usb_core.i_reset, odomain="usb_12"),
                 MultiReg(self.ctrl.fields.low_speed, self.usb_core.i_low_speed, odomain="usb_12"),
+                MultiReg(self.ctrl.fields.sof_enable, sof_enabled, odomain="usb_12")
             ]
         else:
             self.comb += [
                 self.crc_core.i_reset.eq(self.ctrl.fields.reset),
                 self.crc_core.i_low_speed.eq(self.ctrl.fields.low_speed),
+                sof_enabled.eq(self.ctrl.fields.sof_enable)
             ]
 
         self.comb += [
@@ -70,7 +75,7 @@ class SimpleHostUsb(Module, AutoCSR, AutoDoc):
 
         self.comb += [
             usb_core.i_frame.eq(sof.frame),
-            usb_core.i_sof.eq(sof.sof_pulse),
+            usb_core.i_sof.eq(sof.sof_pulse & sof_enabled),
             usb_core.i_addr.eq(transfer.command.addr),
             usb_core.i_ep.eq(transfer.command.epno),
             usb_core.i_cmd_setup.eq(transfer.command.setup),
