@@ -17,7 +17,7 @@ from ..test.common import BaseUsbTestCase
 
 
 class TxPacketSend(Module):
-    def __init__(self, tx, auto_crc=True):
+    def __init__(self, tx, auto_crc=True, token_support=False):
         self.submodules.tx = tx
 
         self.i_pkt_start = Signal()
@@ -32,6 +32,11 @@ class TxPacketSend(Module):
         self.specials += cdc.MultiReg(tx.o_oe, o_oe12, odomain="usb_12", n=1)
 
         pid = Signal(4)
+
+        if token_support:
+            self.i_addr = Signal(7)
+            self.i_ep = Signal(4)
+            self.i_frame = Signal(11)
 
         fsm = FSM()
         self.submodules.fsm = fsm = ClockDomainsRenamer("usb_12")(fsm)
@@ -65,6 +70,8 @@ class TxPacketSend(Module):
                     NextState('WAIT_TRANSMIT'),
                 ).Elif(pid & PIDTypes.TYPE_MASK == PIDTypes.DATA,
                     NextState('QUEUE_DATA0'),
+                ).Elif(pid & PIDTypes.TYPE_MASK == PIDTypes.TOKEN,
+                    NextState('QUEUE_TOKEN0' if token_support else 'ERROR'),
                 ).Else(
                     NextState('ERROR'),
                 ),
@@ -122,6 +129,38 @@ class TxPacketSend(Module):
                     NextState('WAIT_TRANSMIT'),
                 ),
             )
+
+        if token_support:
+            token_data = Signal(11)
+            crc5 = Signal(5)
+            crc5_cnt = Signal(4, reset=0)
+            self.sync.usb_12 += [
+                # Prepare the 11 bit token data and 5 bit CRC
+                If (fsm.before_entering('QUEUE_SYNC'),
+                    crc5_cnt.eq(3)),
+                If (crc5_cnt != 0,
+                    crc5_cnt.eq(crc5_cnt + 1),
+                    If (crc5_cnt == 4,
+                        crc5.eq(0b11111),
+                        token_data.eq(Mux(pid == PID.SOF, self.i_frame,
+                                          Cat(self.i_addr, self.i_ep)))
+                    ).Else (
+                        crc5.eq(Mux(crc5[0] ^ token_data[0],
+                                    (crc5 >> 1) ^ 0b10100,
+                                    (crc5 >> 1))),
+                        token_data.eq(Cat(token_data[1:], token_data[0]))
+                    ))
+            ]
+            fsm.act('QUEUE_TOKEN0',
+                tx.i_data_payload.eq(token_data[:8]),
+                If(tx.o_data_strobe,
+                    NextState('QUEUE_TOKEN1')
+                ))
+            fsm.act('QUEUE_TOKEN1',
+                tx.i_data_payload.eq(Cat(token_data[8:], ~crc5)),
+                If(tx.o_data_strobe,
+                    NextState('WAIT_TRANSMIT')
+                ))
 
         fsm.act('WAIT_TRANSMIT',
             NextValue(tx.i_oe, 0),

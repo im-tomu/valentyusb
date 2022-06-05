@@ -15,7 +15,7 @@ from ..test.common import BaseUsbTestCase
 
 
 class RxPipeline(Module):
-    def __init__(self):
+    def __init__(self, low_speed_support=False):
         self.reset = Signal()
 
         # 12MHz USB alignment pulse in 48MHz clock domain
@@ -24,6 +24,12 @@ class RxPipeline(Module):
         # Reset state is J
         self.i_usbp = Signal(reset=1)
         self.i_usbn = Signal(reset=0)
+
+        if low_speed_support:
+            self.i_low_speed = Signal()
+            low_speed_48 = Signal()
+        else:
+            low_speed_48 = None
 
         self.o_data_strobe = Signal()
         self.o_data_payload = Signal(8)
@@ -34,11 +40,14 @@ class RxPipeline(Module):
 
         # 48MHz domain
         # Clock recovery
-        clock_data_recovery = RxClockDataRecovery(self.i_usbp, self.i_usbn)
+        clock_data_recovery = RxClockDataRecovery(self.i_usbp, self.i_usbn,
+                                                  low_speed_48)
         self.submodules.clock_data_recovery = ClockDomainsRenamer("usb_48")(clock_data_recovery)
         self.comb += [
             self.o_bit_strobe.eq(clock_data_recovery.line_state_valid),
         ]
+        if low_speed_support:
+            self.specials += cdc.MultiReg(self.i_low_speed, low_speed_48, odomain="usb_48")
 
         # A reset condition is one where the device is in SE0 for more
         # than 2.5 uS, which is ~30 bit times.

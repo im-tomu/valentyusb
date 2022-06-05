@@ -14,7 +14,7 @@ from ..test.common import BaseUsbTestCase
 
 
 class TxPipeline(Module):
-    def __init__(self):
+    def __init__(self, low_speed_support=False):
         self.i_bit_strobe = Signal()
 
         self.i_data_payload = Signal(8)
@@ -22,17 +22,21 @@ class TxPipeline(Module):
 
         self.i_oe = Signal()
 
+        if low_speed_support:
+            self.i_low_speed = Signal()
+            self.i_keepalive = Signal()
+
         self.o_usbp = Signal()
         self.o_usbn = Signal()
         self.o_oe = Signal()
 
         self.o_pkt_end = Signal()
 
-        tx_pipeline_fsm = FSM()
+        tx_pipeline_fsm = CEInserter()(FSM())
         self.submodules.tx_pipeline_fsm = ClockDomainsRenamer("usb_12")(tx_pipeline_fsm)
         shifter = TxShifter(width=8)
         self.submodules.shifter = ClockDomainsRenamer("usb_12")(shifter)
-        bitstuff = TxBitstuffer()
+        bitstuff = CEInserter()(TxBitstuffer())
         self.submodules.bitstuff = ClockDomainsRenamer("usb_12")(bitstuff)
         nrzi = TxNRZIEncoder()
         self.submodules.nrzi = ClockDomainsRenamer("usb_48")(nrzi)
@@ -57,21 +61,35 @@ class TxPipeline(Module):
         da_stalled_reset = Signal()
         bitstuff_valid_data = Signal()
 
+        if low_speed_support:
+            new_bit = Signal()
+            bit_strobe_sync = cdc.PulseSynchronizer('usb_48', 'usb_12')
+            self.submodules += bit_strobe_sync
+            self.comb += [
+                bit_strobe_sync.i.eq(self.i_bit_strobe),
+                new_bit.eq(Mux(self.i_low_speed, bit_strobe_sync.o, 1))
+            ]
+        else:
+            new_bit = C(0b1)
+
         # Keep a Gray counter around to smoothly transition between states
         state_gray = Signal(2)
         state_data = Signal()
         state_sync = Signal()
 
         self.comb += [
+            tx_pipeline_fsm.ce.eq(new_bit),
+
             shifter.i_data.eq(self.i_data_payload),
             # Send a data strobe when we're two bits from the end of the sync pulse.
             # This is because the pipeline takes two bit times, and we want to ensure the pipeline
             # has spooled up enough by the time we're there.
 
             shifter.reset.eq(da_reset_shifter | sp_reset_shifter),
-            shifter.ce.eq(~stall),
+            shifter.ce.eq(new_bit & ~stall),
 
             bitstuff.reset.eq(da_reset_bitstuff),
+            bitstuff.ce.eq(new_bit),
             bitstuff.i_data.eq(shifter.o_data),
             stall.eq(bitstuff.o_stall),
 
@@ -89,7 +107,7 @@ class TxPipeline(Module):
 
             fit_oe.eq(state_data | state_sync),
             fit_dat.eq((state_data & shifter.o_data & ~bitstuff.o_stall) | sp_bit),
-            self.o_data_strobe.eq((state_data & shifter.o_get & ~stall & self.i_oe) | sp_o_data_strobe),
+            self.o_data_strobe.eq(((state_data & shifter.o_get & ~stall & self.i_oe) | sp_o_data_strobe) & new_bit),
         ]
 
         # If we reset the shifter, then o_empty will go high on the next cycle.
@@ -101,7 +119,8 @@ class TxPipeline(Module):
             # da_reset_shifter.eq(~stall & shifter.o_empty & ~da_stalled_reset),
             # da_stalled_reset.eq(da_reset_shifter),
             # da_reset_bitstuff.eq(~stall & da_reset_shifter),
-            bitstuff_valid_data.eq(~stall & shifter.o_get & self.i_oe),
+            If(new_bit,
+               bitstuff_valid_data.eq(~stall & shifter.o_get & self.i_oe)),
         ]
 
         tx_pipeline_fsm.act('IDLE',
@@ -151,6 +170,10 @@ class TxPipeline(Module):
         cdc_dat = cdc.MultiReg(fit_dat, nrzi_dat, odomain="usb_48", n=3)
         cdc_oe  = cdc.MultiReg(fit_oe, nrzi_oe, odomain="usb_48", n=3)
         self.specials += [cdc_dat, cdc_oe]
+        if low_speed_support:
+            cdc_low_speed = cdc.MultiReg(self.i_low_speed, nrzi.i_low_speed, odomain="usb_48", n=3)
+            cdc_keepalive = cdc.MultiReg(self.i_keepalive, nrzi.i_keepalive, odomain="usb_48", n=3)
+            self.specials += [cdc_low_speed, cdc_keepalive]
 
         self.comb += [
             nrzi.i_valid.eq(self.i_bit_strobe),
